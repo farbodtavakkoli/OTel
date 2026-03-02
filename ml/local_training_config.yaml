@@ -1,0 +1,24 @@
+attn_implementation: flash_attention_2
+distribution_strategy: fsdp
+freeze_keywords:
+- vision_model
+- vision_tower
+- multi_modal_projector
+- visual
+full_parameter_training: false
+gradient_accumulation_steps: 4
+gradient_checkpointing: true
+hf_repo_id: farbodtavakkoli/scalarlm-test
+hf_upload_token: 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
+lora_alpha: 16
+lora_dropout: 0.05
+optimizer_type: adamw
+r: 8
+target_modules:
+- q_proj
+- k_proj
+- v_proj
+- o_proj
+training_mode: language_model
+upload_to_hf: false
+use_lora: true
