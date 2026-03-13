@@ -9,6 +9,7 @@ load_dotenv('dev.env')
 
 
 # Training config 
+
 # Make sure to at least modify one setting in the config before submitting a new job otherwise the system would recognize your 
 # job as already included. You can simply modify the max_steps to a different number and submit a job
 def get_args():
