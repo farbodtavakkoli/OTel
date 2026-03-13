@@ -14,7 +14,7 @@ def log_param_gradients(model):
     log_if_main_rank(f"Parameter summary: {trainable_count:,} trainable out of {total_count:,} total")
 
 
-def create_llama_tokenformer_model(model, device, train_lm_head=None, adapter_type='lora'): 
+def create_llama_tokenformer_model(model, device, train_lm_head, adapter_type): 
     overall_start = time.time()
 
     if adapter_type == 'lora':

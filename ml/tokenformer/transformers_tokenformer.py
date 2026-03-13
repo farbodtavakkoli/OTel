@@ -8,8 +8,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Change made here - This file was modified to ensure it will work with TokenFormer for attention layers of Gemma3 architecture
-
 # class TransformersTokenformerAttentionAdapter(TokenformerAttentionAdapter):
 #     def __init__(self, layer, hidden_size, device: torch.device):
 #         self.is_sliding = layer.is_sliding ## Change made here
