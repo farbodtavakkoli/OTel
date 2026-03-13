@@ -1,0 +1,12 @@
+[
+{"text": "High packet loss detected on the backbone link between NYC and DC routers; optical signal level is below threshold indicating a potential fiber micro-bend.", "label": "C1"},
+{"text": "Sudden spike in latency for 5G core signaling traffic traced back to an oversized routing table update causing CPU exhaustion on the primary gateway.", "label": "C2"},
+{"text": "Authentication failures increasing for roaming subscribers due to a database synchronization lag between the HSS and the local VLR.", "label": "C3"},
+{"text": "VoLTE call drops observed in sector 3 of cell site 4022; diagnostic logs show hardware failure in the remote radio head (RRH) power supply.", "label": "C4"},
+{"text": "BGP prefix hijacking detected; traffic destined for internal subnet 10.44.0.0/16 is being incorrectly diverted to an unauthorized peer autonomous system.", "label": "C5"},
+{"text": "Intermittent connectivity issues reported by enterprise clients; root cause identified as a misconfigured MTU size on the edge switch causing fragment drops.", "label": "C6"},
+{"text": "Optical transport network alarm triggered by a total loss of signal on the primary fiber path following construction activity near the main distribution frame.", "label": "C7"},
+{"text": "Network congestion on the S1-U interface during peak hours attributed to insufficient bandwidth allocation for the evolved packet core (EPC) backhaul.", "label": "C8"},
+{"text": "DHCP lease timeouts for broadband customers caused by a software bug in the recent firmware update of the BRAS router.", "label": "C1"},
+{"text": "Severe jitter on IPTV streams across the metro network caused by a faulty line card in the distribution layer switch incorrectly prioritizing best-effort traffic.", "label": "C2"}
+]

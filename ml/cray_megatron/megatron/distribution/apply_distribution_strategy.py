@@ -3,6 +3,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from cray_infra.training.distribution_strategy.fsdp.fsdp import SimpleFSDP
 from gpu_aware_mpi import get_size, get_rank
 from ml.get_local_job_config import load_local_training_config
+from ml.cray_megatron.collectives.main_rank_only import log_if_main_rank
 import logging
 import os
 import socket
@@ -72,26 +73,27 @@ def get_device():
     local_rank = int(os.environ.get('LOCAL_RANK', '0'))
     node_rank = int(os.environ.get('NODE_RANK', '0'))
     
-    logger.info(f"=" * 80)
-    logger.info(f"DEVICE SELECTION DIAGNOSTICS - Rank {rank}/{world_size}")
-    logger.info(f"Hostname: {hostname}")
-    logger.info(f"LOCAL_RANK (from env): {local_rank}")
-    logger.info(f"NODE_RANK (from env): {node_rank}")
-    logger.info(f"CUDA available: {torch.cuda.is_available()}")
+    # log_if_main_rank(f"=" * 70)
+    # logger.info(f"DEVICE SELECTION DIAGNOSTICS - Rank {rank}/{world_size}")
+    # logger.info(f"Hostname: {hostname}")
+    # logger.info(f"LOCAL_RANK (from env): {local_rank}")
+    # logger.info(f"NODE_RANK (from env): {node_rank}")
+    # logger.info(f"CUDA available: {torch.cuda.is_available()}")
     
     if torch.cuda.is_available():
         gpu_count = torch.cuda.device_count()
-        logger.info(f"GPU count on this node: {gpu_count}")
-        logger.info(f"Total GPUs for training job: {world_size}")
+        # logger.info(f"GPU count on this node: {gpu_count}")
+        # logger.info(f"Total GPUs for training job: {world_size}")
+        log_if_main_rank(f"Total GPUs for training job: {world_size}")
         
         # List all available GPUs
         for i in range(gpu_count):
             props = torch.cuda.get_device_properties(i)
-            logger.info(f"  GPU {i}: {props.name}, Memory: {props.total_memory / 1024**3:.2f} GB")
+            log_if_main_rank(f"Memory Per GPU: {props.total_memory / 1024**3:.2f} GB")
         
         # Calculate which GPU this rank should use
         selected_gpu = rank % gpu_count
-        logger.info(f"Calculated selected_gpu: {selected_gpu} (rank {rank} % gpu_count {gpu_count})")
+        # logger.info(f"Calculated selected_gpu: {selected_gpu} (rank {rank} % gpu_count {gpu_count})")
         
         # Create device
         device = torch.device(f"cuda:{selected_gpu}")
@@ -99,14 +101,14 @@ def get_device():
         # Set as current device for this process
         torch.cuda.set_device(device)
         current = torch.cuda.current_device()
-        logger.info(f"Set current device to: cuda:{current}")
-        logger.info(f"Returning device: {device}")
-        logger.info(f"=" * 80)
+        # log_if_main_rank(f"Set current device to: cuda:{current}")
+        # logger.info(f"Returning device: {device}")
+        # log_if_main_rank(f"=" * 70)
         
         return device
     else:
         logger.info("CUDA not available, using CPU")
-        logger.info(f"=" * 80)
+        # log_if_main_rank(f"=" * 70)
         return torch.device("cpu")
 
 

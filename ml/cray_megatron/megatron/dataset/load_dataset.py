@@ -13,7 +13,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Change made here - Added this function for extracting max_position_embedding from gemma3, etc.
 def get_max_position_embeddings(config):
     """Get max_position_embeddings from config, handling nested configs like Gemma3."""
     if hasattr(config, 'max_position_embeddings'):
@@ -25,14 +24,15 @@ def get_max_position_embeddings(config):
     raise AttributeError(f"Cannot find max_position_embeddings in {type(config)}")
 
 def load_dataset(model, tokenizer, epoch):
-    """Load dataset for either language model or embedding model training."""
+    """Load dataset for either language model, embedding, or classification training."""
     job_config = load_local_training_config()
-    #print("job_config in load_dataset.py", job_config)
     training_mode = job_config.get("training_mode", "language_model")
 
     if training_mode == "embedding":
         return load_embedding_dataset(model, tokenizer, epoch)
-    else:
+    elif training_mode == "classification":
+        return load_classification_dataset(model, tokenizer, epoch)
+    elif training_mode == "language_model":
         return load_language_model_dataset(model, tokenizer, epoch)
 
 
@@ -99,6 +99,33 @@ def load_embedding_dataset(model, tokenizer, epoch):
     return torch_dataset
 
 
+def load_classification_dataset(model, tokenizer, epoch):
+    """Load dataset for classification model training."""
+    hf_dataset = datasets.IterableDataset.from_generator(
+        make_dataset_generator(),
+        features=datasets.Features(
+            {
+                "text": datasets.Value(dtype="string"),
+                "label": datasets.Value(dtype="int64"),
+            }
+        ),
+    )
+    shuffled_dataset = hf_dataset.shuffle(seed=42 + epoch, buffer_size=256)
+    split_dataset = split_dataset_by_node(shuffled_dataset)
+
+    tokenized_dataset = split_dataset.map(
+        get_tokenize_function_classification(model, tokenizer),
+        batched=True,
+        remove_columns=[
+            "text",
+        ],
+    )
+
+    torch_dataset = tokenized_dataset.with_format("torch")
+
+    return torch_dataset
+
+
 def make_dataset_generator():
     def read_dataset():
         dataset_path = get_dataset_path()
@@ -111,6 +138,13 @@ def make_dataset_generator():
 
 
 def get_dataset_path():
+    """Get the dataset path, using custom_data_path if specified in local config."""
+    local_config = load_local_training_config()
+    custom_path = local_config.get("custom_data_path")
+    
+    if custom_path:
+        return custom_path
+    
     job_config = get_job_config()
     return job_config["training_data_path"]
 
@@ -128,11 +162,6 @@ def split_dataset_by_node(dataset):
     )
 
     return filtered_dataset
-
- 
-def get_tokenize_function(model, tokenizer):
-    """Deprecated: Use get_tokenize_function_lm for language models."""
-    return get_tokenize_function_lm(model, tokenizer)
 
 
 def get_tokenize_function_lm(model, tokenizer):
@@ -163,6 +192,40 @@ def get_tokenize_function_lm(model, tokenizer):
 
         return tokens
 
+    return tokenize
+
+
+def get_tokenize_function_classification(model, tokenizer):
+    """Tokenize function for classification model training.
+    
+    Uses left padding which is required for decoder-only models doing classification.
+    """
+    job_config = get_job_config()
+    max_length = job_config["max_token_block_size"]
+    
+    # Ensure left padding for decoder models
+    original_padding_side = tokenizer.padding_side
+    tokenizer.padding_side = "left"
+    
+    # Ensure pad token is set
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+    
+    def tokenize(dataset):
+        tokens = tokenizer(
+            dataset["text"],
+            truncation=True,
+            max_length=max_length,
+            padding="max_length",
+        )
+        
+        # Keep labels as-is (already integer class indices)
+        tokens["labels"] = dataset["label"]
+        
+        return tokens
+    
     return tokenize
 
 
@@ -241,7 +304,7 @@ def get_pack_function(model):
     job_config = get_job_config()
 
     block_size = min(
-        get_max_position_embeddings(model.config), job_config["max_token_block_size"] # Change made here
+        get_max_position_embeddings(model.config), job_config["max_token_block_size"]
         #model.config.max_position_embeddings, job_config["max_token_block_size"]
     )
 

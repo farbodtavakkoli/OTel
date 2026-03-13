@@ -12,10 +12,11 @@ import os
 import warnings
 from gpu_aware_mpi import finalize_mpi
 
-
+# Perhaps only print on rank 1
 def print_exception():
-    exc_type, exc_value, exc_traceback = sys.exc_info()
-    traceback.print_exception(exc_type, exc_value, exc_traceback)
+    if get_rank() != 0:
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        traceback.print_exception(exc_type, exc_value, exc_traceback)
 
 
 try:
@@ -46,7 +47,7 @@ def main():
         harness.update_status(
             status=TrainingJobStatus.FAILED, metadata={"error": str(e)}
         )
-        raise e
+        #raise e
 
     finalize_mpi()
 

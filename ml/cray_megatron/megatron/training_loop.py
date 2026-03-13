@@ -116,7 +116,9 @@ class TrainingLoop:
         
         if training_mode == "embedding":
             self.training_step_embedding(batch)
-        else:
+        elif training_mode == "classification":
+            self.training_step_classification(batch)
+        elif training_mode == "language_model":
             self.training_step_language_model(batch)
 
     def training_step_language_model(self, batch):
@@ -134,6 +136,77 @@ class TrainingLoop:
             attention_mask=batch["attention_mask"].to(device),
             labels=batch["labels"].to(device),
         ).loss
+        
+        # Scale loss for gradient accumulation
+        loss = loss / accumulation_steps
+
+        # Synchronize loss across all ranks
+        loss, avg_loss = self.sync_loss(loss)
+        
+        # Determine if this is an accumulation step or optimizer step
+        is_accumulating = (self.training_state.current_step + 1) % accumulation_steps != 0
+        model = self.training_state.model_info["model"]
+
+        # backward pass - use no_sync if accumulating and model supports it
+        if is_accumulating and hasattr(model, "no_sync"):
+            with model.no_sync():
+                loss.backward()
+        else:
+            loss.backward()
+
+        # Only step optimizer on final accumulation step
+        if not is_accumulating:
+            
+            if hasattr(self.training_state.model_info["model"], "backward_sync"):
+                self.training_state.model_info["model"].backward_sync()
+
+            torch.nn.utils.clip_grad_norm_(
+                self.training_state.model_info["model"].parameters(),
+                get_gradient_clip_value(),
+            )
+            self.training_state.optimizer.step()
+            self.training_state.scheduler.step()
+            self.training_state.optimizer.zero_grad()
+
+        # log loss (scale back for logging)
+        self.update_history(avg_loss * accumulation_steps)
+
+        self.print_training_step_info(avg_loss * accumulation_steps, start_time)
+
+    def training_step_classification(self, batch):
+        """Training step for sequence classification."""
+        job_config = load_local_training_config()
+        accumulation_steps = job_config.get("gradient_accumulation_steps", 1)
+        label_smoothing = job_config.get("label_smoothing", 0.0)
+        
+        device = self.training_state.model_info["distribution_strategy"]["device"]
+
+        start_time = time.time()
+
+        # Forward pass - classification model returns loss when labels provided
+        outputs = self.training_state.model_info["model"](
+            input_ids=batch["input_ids"].to(device),
+            attention_mask=batch["attention_mask"].to(device),
+            labels=batch["labels"].to(device),
+        )
+        
+        loss = outputs.loss
+        
+        # Apply label smoothing if configured (manual implementation)
+        if label_smoothing > 0:
+            num_labels = outputs.logits.size(-1)
+            log_probs = F.log_softmax(outputs.logits, dim=-1)
+            targets = batch["labels"].to(device)
+            
+            # One-hot encode targets
+            smooth_targets = torch.zeros_like(log_probs).scatter_(
+                -1, targets.unsqueeze(-1), 1.0
+            )
+            # Apply label smoothing
+            smooth_targets = smooth_targets * (1 - label_smoothing) + label_smoothing / num_labels
+            
+            # Compute smoothed loss
+            loss = -(smooth_targets * log_probs).sum(dim=-1).mean()
         
         # Scale loss for gradient accumulation
         loss = loss / accumulation_steps
@@ -221,6 +294,7 @@ class TrainingLoop:
     def sync_loss(self, loss):
         device = self.training_state.model_info["distribution_strategy"]["device"]
         if get_size() > 1:
+            loss = loss.float()
             local_loss = allreduce_op(loss)
             avg_loss = local_loss.item() / get_size()
         else:
@@ -249,8 +323,6 @@ class TrainingLoop:
         logger.info(
             f"Training finished successfully after {time.time() - self.training_state.start_time} seconds"
         )
-        # Can also save it here "self.training_state.model_info["model"]"
-        # to_hf to save the model here if user wants it. 
         for callback in self.callbacks:
             if hasattr(callback, "on_train_end"):
                 callback.on_train_end()
