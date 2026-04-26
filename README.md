@@ -12,7 +12,7 @@ This repository has been built on top of **ScalarLM**, a GPU-agnostic, open-sour
 
 ## 🎯 Project Overview
 
-The OTel models are fine-tuned language models, embedding models, and rerankers optimized for RAG and agentic applications in telecommunications. Our models are trained high-quality data points curated by 200+ telecom domain experts from organizations including AT&T, GSMA, Purdue University, Khalifa University, University of Leeds, Yale University, and others.
+The OTel models are fine-tuned language models, embedding models, and rerankers optimized for RAG and agentic applications in telecommunications. Our models are trained high-quality data points curated by 100+ telecom domain experts from organizations including AT&T, Microsoft, AMD, GSMA, RelationalAI, Essential AI, Purdue University, Khalifa University, University of Leeds, Yale University, The University of Texas at Dallas, NetoAI, and MantisNLP.
 
 **Training Data Sources:**
 - GSMA Permanent Reference Documents
