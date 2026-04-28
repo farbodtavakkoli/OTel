@@ -73,6 +73,9 @@ All models are available on [HuggingFace](https://huggingface.co/farbodtavakkoli
 | OTel_Reranker_4B | 4B | Qwen3-4B |
 | OTel_Reranker_8B | 8B | Qwen3-8B |
 
+### Language Model with a Classification Head
+| OTel_LLM_8.3B_Classification | 8.3B | RNJ-1 |
+
 ## 🚀 Quick Start
 
 ### Installation
