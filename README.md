@@ -1,80 +1,102 @@
-# OTel Family of Models — LLM, Embedding & Reranker Suite
+# Open Telco (OTel) AI — Datasets, Benchmarks, and Models
 
 <p align="center">
   <a href="https://huggingface.co/farbodtavakkoli">🤗 HuggingFace</a> •
   <a href="https://huggingface.co/collections/farbodtavakkoli/otel-llm">LLM Collection</a> •
   <a href="https://huggingface.co/collections/farbodtavakkoli/otel-embedding">Embedding Collection</a> •
-  <a href="https://huggingface.co/collections/farbodtavakkoli/otel-reranker">Reranker Collection</a>
-  <a href="https://huggingface.co/farbodtavakkoli/datasets">Datasets</a>
+  <a href="https://huggingface.co/collections/farbodtavakkoli/otel-reranker">Reranker Collection</a> •
+  <a href="https://huggingface.co/farbodtavakkoli/datasets">Datasets</a> •
+  <a href="https://github.com/farbodtavakkoli/OTel/blob/main/docs/media_coverage.md">Media Coverage</a>
 </p>
 
-This repository has been built on top of **ScalarLM**, a GPU-agnostic, open-source framework for training, inference, and deployment. This repository contains the training and inference code for the OTel models, a collaborative effort to build industry-standard AI models for the global telecommunications sector.
+This repository contains the training and inference code for the **Open Telco (OTel) AI** project — an open-source initiative delivering curated telecom datasets, evaluation partitions, and a family of telecom-specialized embedding, reranker, and language models. The repository is built on top of **[ScalarLM](https://www.scalarlm.com)**, a GPU-agnostic open-source framework for training, inference, and deployment across both AMD and NVIDIA hardware.
 
 ## 🎯 Project Overview
 
-The OTel models are fine-tuned language models, embedding models, and rerankers optimized for RAG and agentic applications in telecommunications. Our models are trained high-quality data points curated by 100+ telecom domain experts from organizations including AT&T, Microsoft, AMD, GSMA, RelationalAI, Essential AI, Purdue University, Khalifa University, University of Leeds, Yale University, The University of Texas at Dallas, NetoAI, and MantisNLP.
+The OTel models are full-parameter post-trained language models, embedding models, and rerankers optimized for retrieval-augmented generation (RAG) and agentic applications in telecommunications. They are trained on high-quality data curated by 100+ telecom domain experts and contributed by specific institutional partners:
 
-**Training Data Sources:**
-- GSMA Permanent Reference Documents
-- 3GPP Specifications
-- O-RAN Documentation
-- RFC Series
-- eSIM, terminals, security, networks, roaming, APIs
-- Industry whitepapers and telecom academic papers
+| Source | Contributor | Raw samples |
+|---|---|---:|
+| arXiv telecom papers, 3GPP standards, telecom Wikipedia, telecom Common Crawl pages | Yale University | 681,172 |
+| GSMA Permanent Reference Documents (PRDs), Discover portal, mixed telecom documents | GSMA | 158,006 |
+| IETF RFC series | NetoAI | 100,751 |
+| Industry whitepapers | Khalifa University | 62,000 |
+| O-RAN specifications across working groups 1, 2, 4, 5, 6, 7, 8, 9, 10 | University of Leeds | 58,565 |
+| O-RAN documents across working groups | The University of Texas at Dallas | 42,000 |
+| **Total raw samples** | | **~1,102,494** |
+
+After a four-stage cleaning pipeline (heuristic filtering, reranker-based semantic filtering, embedding-based semantic filtering, and deduplication), the corpus was reduced to **326,767** higher-confidence examples released across four datasets.
+
+> As of May 2026, the released OTel models have been downloaded over **16 million times** and the project has received **157+ pieces of media coverage** worldwide.
 
 ## 📦 Model Zoo
 
-All models are available on [HuggingFace](https://huggingface.co/farbodtavakkoli) and have been full-parameter trained on both AMD and NVIDIA GPUs.
+All models are available on [HuggingFace](https://huggingface.co/farbodtavakkoli) and have been full-parameter post-trained on both AMD and NVIDIA GPUs.
+
+### Datasets
+
+| Dataset | Purpose |
+|---|---|
+| [OTel-LLM](https://huggingface.co/datasets/farbodtavakkoli/OTel-LLM) | Context-grounded instruction tuning for telecom RAG generation |
+| [OTel-Embedding](https://huggingface.co/datasets/farbodtavakkoli/OTel-Embedding) | Bi-encoder retrieval training (MNRL, 5 hard negatives per anchor) |
+| [OTel-Reranker](https://huggingface.co/datasets/farbodtavakkoli/OTel-Reranker) | Pointwise cross-encoder reranking with continuous relevance scores |
+| [OTel-Safety](https://huggingface.co/datasets/farbodtavakkoli/OTel-Safety) | Abstention training for refusing answers when context is insufficient |
 
 ### Language Models (LLMs)
 
 | Model | Parameters | Base Model |
 |-------|------------|------------|
-| OTel_LLM_270M_IT | 270M | gemma-3-270m-it |
-| OTel_LLM_0.6B_IT | 0.6B | Qwen3-0.6B |
-| OTel_LLM_1.2B_IT | 1.2B | LFM2.5-1.2B-Instruct |
-| OTel_LLM_1B_IT | 1B | gemma-3-1b-it |
-| OTel_LLM_1.7B_IT | 1.7B | Qwen3-1.7B |
-| OTel_LLM_3B_IT | 3B | Mistral-3-3B |
-| OTel_LLM_4B_IT | 4B | gemma-3-4b-it |
-| OTel_LLM_7B_IT | 7B | OLMo-3-7B |
-| OTel_LLM_8.2B_IT | 8.2B | Qwen3-8B |
-| OTel_LLM_8.3B_IT | 8.3B | RNJ-1-Instruct |
-| OTel_LLM_8.3B_Safety | 8.3B | RNJ-1-Instruct |
-| OTel_LLM_12B_IT | 12B | gemma-3-12b-it |
-| OTel_LLM_12B_Safety | 12B | gemma-3-12b-it |
-| OTel_LLM_14B_IT | 14B | Qwen3-14B |
-| OTel_LLM_20B_IT | 20B | GPT-OSS-20B |
-| OTel_LLM_20B_Reasoning | 20B | GPT-OSS-20B |
-| OTel_LLM_24B_IT | 24B | LFM2-24B-A2B |
-| OTel_LLM_27B_IT | 27B | gemma-3-27b-it |
-| OTel_LLM_32B_IT | 32B | OLMo-3-32B |
+| OTel-LLM-270M-IT | 270M | gemma-3-270m-it |
+| OTel-LLM-0.6B-IT | 0.6B | Qwen3-0.6B |
+| OTel-LLM-1B-IT | 1B | gemma-3-1b-it |
+| OTel-LLM-1.2B-IT | 1.2B | LFM2.5-1.2B-Instruct |
+| OTel-LLM-1.7B-IT | 1.7B | Qwen3-1.7B |
+| OTel-LLM-3B-IT | 3B | Mistral-3-3B |
+| OTel-LLM-4B-IT | 4B | gemma-3-4b-it |
+| OTel-LLM-7B-IT | 7B | OLMo-3-7B |
+| OTel-LLM-8.2B-IT | 8.2B | Qwen3-8B |
+| OTel-LLM-8.3B-IT | 8.3B | RNJ-1-Instruct |
+| OTel-LLM-12B-IT | 12B | gemma-3-12b-it |
+| OTel-LLM-14B-IT | 14B | Qwen3-14B |
+| OTel-LLM-20B-IT | 20B | GPT-OSS-20B |
+| OTel-LLM-20B-Reasoning | 20B | GPT-OSS-20B |
+| OTel-LLM-24B-IT | 24B | LFM2-24B-A2B |
+| OTel-LLM-27B-IT | 27B | gemma-3-27b-it |
+| OTel-LLM-32B-IT | 32B | OLMo-3-32B |
 
 ### Embedding Models
 
 | Model | Parameters | Base Model |
 |-------|------------|------------|
-| OTel_Embedding_22M | 22M | all-MiniLM-L6-v2 |
-| OTel_Embedding_33M | 33M | BAAI/bge-small-en-v1.5 |
-| OTel_Embedding_34M | 34M | all-MiniLM-L12-v2 |
-| OTel_Embedding_109M | 109M | all-mpnet-base-v2 |
-| OTel_Embedding_300M | 300M | Gemma3-Embedding-300M |
-| OTel_Embedding_335M | 335M | BAAI/bge-large-en-v1.5 |
-| OTel_Embedding_568M | 568M | BAAI/bge-m3 |
-| OTel_Embedding_600M | 600M | Qwen3-Embedding-0.6B |
-| OTel_Embedding_4B | 4B | Qwen3-Embedding-4B |
-| OTel_Embedding_8B | 8B | Qwen3-Embedding-8B |
+| OTel-Embedding-22M | 22M | all-MiniLM-L6-v2 |
+| OTel-Embedding-33M | 33M | BAAI/bge-small-en-v1.5 |
+| OTel-Embedding-34M | 34M | all-MiniLM-L12-v2 |
+| OTel-Embedding-109M | 109M | all-mpnet-base-v2 |
+| OTel-Embedding-300M | 300M | Gemma3-Embedding-300M |
+| OTel-Embedding-335M | 335M | BAAI/bge-large-en-v1.5 |
+| OTel-Embedding-568M | 568M | BAAI/bge-m3 |
+| OTel-Embedding-600M | 600M | Qwen3-Embedding-0.6B |
+| OTel-Embedding-4B | 4B | Qwen3-Embedding-4B |
+| OTel-Embedding-8B | 8B | Qwen3-Embedding-8B |
 
 ### Reranker Models
 
 | Model | Parameters | Base Model |
 |-------|------------|------------|
-| OTel_Reranker_0.6B | 0.6B | Qwen3-0.6B |
-| OTel_Reranker_4B | 4B | Qwen3-4B |
-| OTel_Reranker_8B | 8B | Qwen3-8B |
+| OTel-Reranker-0.6B | 0.6B | Qwen3-0.6B |
+| OTel-Reranker-4B | 4B | Qwen3-4B |
+| OTel-Reranker-8B | 8B | Qwen3-8B |
 
-### Language Model with a Classification Head
-| OTel_LLM_8.3B_Classification | 8.3B | RNJ-1 |
+### Auxiliary Models
+
+These are released alongside the core 30-model OTel baseline family but are discussed separately in the paper appendix.
+
+| Model | Parameters | Base Model | Purpose |
+|-------|------------|------------|---------|
+| OTel-LLM-8.3B-Safety | 8.3B | RNJ-1-Instruct | Abstention-focused safety variant |
+| OTel-LLM-12B-Safety | 12B | gemma-3-12b-it | Abstention-focused safety variant |
+| OTel-LLM-8.3B-Classification | 8.3B | RNJ-1 | Classification head for the TeleLogs 5G root-cause-analysis benchmark |
+| OTel-LLM-8.3B-QnA | 8.3B | RNJ-1-Instruct | Non-abstention QnA variant for direct context-free telecom QA |
 
 ## 🚀 Quick Start
 
@@ -187,8 +209,11 @@ scalarlm logs --model={model_id}
 {
   "anchor": "Query text",
   "positive": "Relevant passage",
-  "negative_1": "Hard negative passage 1",
-  "negative_2": "Hard negative passage 2"
+  "negative_1": "Hard negative 1",
+  "negative_2": "Hard negative 2",
+  "negative_3": "Hard negative 3",
+  "negative_4": "Hard negative 4",
+  "negative_5": "Hard negative 5"
 }
 ```
 
@@ -201,15 +226,14 @@ scalarlm logs --model={model_id}
 
 ```bibtex
 @misc{otel2026,
-  title={OTel: Open Telco AI Models},
-  author={Tavakkoli, Farbod and Diamos, Gregory and Paulk, Roderic and Terrazas, Jorden},
-  year={2026},
-  url={https://huggingface.co/farbodtavakkoli}
+  title  = {OTel: Open Telco AI Datasets, Benchmarks, and Models},
+  author = {Tavakkoli, Farbod and others},
+  year   = {2026},
+  note   = {Manuscript in preparation},
+  url    = {https://huggingface.co/farbodtavakkoli}
 }
 ```
 
 ## 📬 Contact
 
 If you have any technical questions, please feel free to reach out to farbod.tavakkoli@att.com or farbodtavakoli@gmail.com
-
-Authors: [Farbod Tavakkoli](https://www.linkedin.com/in/farbodtavakkoli/),  [Gregory Diamos](https://www.linkedin.com/in/gregory-diamos-1a8b9083/), [Roderic Paulk](https://www.linkedin.com/in/roderic-paulk-64a30718/), [Jorden Terrazas](https://www.linkedin.com/in/jorden-terrazas-4a440714a/).
