@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+title: "OTel: Open Telco AI Datasets, Benchmarks, and Models"
+message: "If you use OTel, please cite this work."
+type: software
+authors:
+  - family-names: Tavakkoli
+    given-names: Farbod
+    affiliation: AT&T
+  - name: "OTel Contributors"
+year: 2026
+url: "https://huggingface.co/farbodtavakkoli"
+repository-code: "https://github.com/farbodtavakkoli/OTel"
+license: Apache-2.0
