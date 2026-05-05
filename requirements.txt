@@ -1,0 +1,18 @@
+# Core
+datasets>=3.0.0
+transformers>=4.45.0
+torch>=2.4.0
+accelerate>=1.0.0
+
+# Embeddings & rerankers
+sentence-transformers>=3.0.0
+
+# LLM-as-judge
+openai>=1.50.0
+
+# Config / env
+python-dotenv>=1.0.0
+pyyaml>=6.0
+
+# Training (ScalarLM)
+scalarlm
