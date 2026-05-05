@@ -13,7 +13,7 @@ This repository contains the training and inference code for the **Open Telco (O
 
 ## 🎯 Project Overview
 
-The OTel models are full-parameter post-trained language models, embedding models, and rerankers optimized for retrieval-augmented generation (RAG) and agentic applications in telecommunications. They are trained on high-quality data curated by 100+ telecom domain experts and contributed by specific institutional partners:
+The OTel models are full-parameter post-trained embedding models, rerankers, and language models optimized for retrieval-augmented generation (RAG) and agentic applications in telecommunications. They are trained on high-quality data curated by 100+ telecom domain experts and contributed by specific institutional partners:
 
 | Source | Contributor | Raw samples |
 |---|---|---:|
