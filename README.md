@@ -242,12 +242,12 @@ scalarlm logs --model={model_id}
 ## Citation
 
 ```bibtex
-@misc{otel2026,
-  title  = {OTel: Open Telco AI Datasets, Benchmarks, and Models},
+@misc{otel_code_2026,
+  title  = {{OTel}: Open Telco AI Datasets, Benchmarks, and Models},
   author = {Tavakkoli, Farbod and others},
   year   = {2026},
-  note   = {Manuscript in preparation},
-  url    = {https://huggingface.co/farbodtavakkoli}
+  note   = {Open Telco (OTel) code release},
+  url    = {https://github.com/farbodtavakkoli/OTel}
 }
 ```
 
