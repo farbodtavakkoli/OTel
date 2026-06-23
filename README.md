@@ -27,7 +27,7 @@ The OTel models are full-parameter post-trained embedding models, rerankers, and
 
 After a four-stage cleaning pipeline (heuristic filtering, reranker-based semantic filtering, embedding-based semantic filtering, and deduplication), the corpus was reduced to **326,767** higher-confidence examples released across four datasets.
 
-> As of May 2026, the released OTel models have been downloaded over **16 million times** and the project has received **157+ pieces of media coverage** worldwide.
+> As of June 2026, the released OTel models have been downloaded over **18 million times** and the project has received **157+ pieces of media coverage** worldwide.
 
 ## 📦 Model Zoo
 
