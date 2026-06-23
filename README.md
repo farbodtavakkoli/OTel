@@ -143,6 +143,23 @@ python3 inference.py --model_name {model_id} --model_type llama3
 python3 inference.py --inference_mode embedding --test_data_path data/embedding_training_sample.json
 ```
 
+### Evaluation
+
+Reproduce the held-out OTel results for any of the three benchmarked model families with a single command:
+
+```bash
+# Embedding NDCG@10 (90/10 split, seed 42)
+python eval.py --mode embedding --model farbodtavakkoli/OTel-Embedding-300M
+
+# Reranker MRR@10 (95/5 split, seed 42)
+python eval.py --mode reranker --model farbodtavakkoli/OTel-Reranker-0.6B
+
+# LLM correctness via LLM-as-judge (90/10 split, seed 42)
+python eval.py --mode llm --model farbodtavakkoli/OTel-LLM-1.2B-IT
+```
+
+Embedding and reranker modes need only `HF_TOKEN`. LLM mode also requires `OPENAI_API_KEY` (the LLM-as-judge defaults to `gpt-4.1`; override with `--judge gpt-4o-mini`). Place both tokens in a `dev.env` file at the repo root — see `dev.env.example`.
+
 ### View Training Logs
 
 ```bash
@@ -225,12 +242,12 @@ scalarlm logs --model={model_id}
 ## Citation
 
 ```bibtex
-@misc{otel_code_2026,
-  title  = {{OTel}: Open Telco AI Datasets, Benchmarks, and Models},
+@misc{otel2026,
+  title  = {OTel: Open Telco AI Datasets, Benchmarks, and Models},
   author = {Tavakkoli, Farbod and others},
   year   = {2026},
-  note   = {Open Telco (OTel) code release},
-  url    = {https://github.com/farbodtavakkoli/OTel}
+  note   = {Manuscript in preparation},
+  url    = {https://huggingface.co/farbodtavakkoli}
 }
 ```
 
