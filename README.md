@@ -396,11 +396,7 @@ redistribution.
 
 ## Collaboration
 
-Open Telco AI was launched by GSMA as a broad industry collaboration. Within that
-initiative, OTel is AT&T's model family. GSMA provided core telecom standards data, and
-AT&T developed and trained or post-trained every OTel model, including OTel 2.0.
-
-Other contributors supplied different parts of the system. Pleias contributed to the
+Contributors supplied different parts of the system. GSMA and Pleias contributed to the
 open telecom corpus; Red Hat supported synthetic-data generation and OSFT; Microsoft
 supplied managed compute for large-scale data processing; AMD supplied accelerators and
 ROCm; Dell Technologies supplied on-premises training infrastructure; and MLCommons,
