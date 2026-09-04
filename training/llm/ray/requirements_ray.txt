@@ -1,0 +1,99 @@
+# Environment for train_llm_ray.py (Ray Train orchestration of an HF/TRL SFT fine-tune).
+# Python 3.10-3.12. Install into a dedicated venv; nothing here needs git or source builds.
+#
+#   python3.12 -m venv ~/.venv-ray && source ~/.venv-ray/bin/activate
+#   pip install -r requirements_ray.txt
+#
+# ---------------------------------------------------------------------------------------
+# NVIDIA / CUDA (TESTED: 1x H100 80GB, CUDA 13.0, driver 580.173.02, Python 3.12.3,
+#                August 2026, single-GPU smoke -- see readme_ray.md 8.2)
+# ---------------------------------------------------------------------------------------
+# The `torch==2.11.0` pin below has NO cu130 wheel. On a CUDA-13 box install current stable
+# torch instead, then the rest of the stack WITHOUT re-resolving torch (so it isn't clobbered):
+#
+#   python3.12 -m venv .env_ray && source .env_ray/bin/activate
+#   pip install --upgrade pip
+#   pip install torch numpy                    # -> torch 2.13.0+cu130 (native CUDA 13)
+#   pip install ray[train]==2.57.0 transformers==5.5.0 trl==0.27.0 peft==0.18.1 \
+#               datasets==4.3.0 accelerate==1.14.0 python-dotenv 'pyarrow>=23.0.1'
+#   python -c "import torch;print(torch.__version__, torch.version.cuda)"   # re-verify: 2.13.0+cu130 13.0
+#
+# Resulting versions: torch 2.13.0+cu130, ray 2.57.0, trl 0.27.0, transformers 5.5.0,
+# peft 0.18.1, datasets 4.3.0, accelerate 1.14.0, pyarrow 25.0.1. (2nd install downgrades
+# fsspec to 2025.9.0 for datasets -- harmless. `kernels` is NOT pulled in.)
+#
+# CUDA GPU SCOPING -- the reversal of the ROCm recipe below:
+#   export CUDA_VISIBLE_DEVICES=<your gpus>    # Ray SEES only these; assigns one worker each.
+#   # DO NOT set RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES -- unneeded on CUDA. Ray Core and
+#   # Ray Train both scope on CUDA_VISIBLE_DEVICES, so the ROCm two-variable bug does not occur.
+#   # Drop HIP_VISIBLE_DEVICES / RAY_EXPERIMENTAL_NOSET_HIP_VISIBLE_DEVICES (ROCm-only).
+# flash-attn: the script hard-codes attn_implementation="sdpa" (no flag), so FA2 is not used.
+#
+# ---------------------------------------------------------------------------------------
+# AMD / ROCm (TESTED: 2x + 8x MI355X, ROCm 7.2.4, Python 3.12.3, August 2026 -- see readme 8.1)
+# ---------------------------------------------------------------------------------------
+# The `torch==2.11.0` pin below is the CUDA build. On ROCm, do NOT `pip install -r` this
+# file directly -- install the ROCm torch wheel FIRST so pip never resolves the CUDA one:
+#
+#   python3.12 -m venv .env_ray && source .env_ray/bin/activate
+#   pip install --upgrade pip
+#   pip install --index-url https://download.pytorch.org/whl/rocm7.2 torch==2.11.0
+#   pip install ray[train]==2.57.0 transformers==5.5.0 trl==0.27.0 peft==0.18.1 \
+#               datasets==4.3.0 accelerate==1.14.0 python-dotenv 'pyarrow>=23.0.1'
+#
+# Resulting versions: torch 2.11.0+rocm7.2, ray 2.57.0, trl 0.27.0, transformers 5.5.0.
+# Every other pin in this file is unchanged on ROCm -- only torch differs.
+#
+# TWO ROCm RUNTIME REQUIREMENTS (not pip packages, but the run fails without them):
+#   export HIP_VISIBLE_DEVICES=5,6          # Ray scopes AMD GPUs with HIP_VISIBLE_DEVICES,
+#                                           # NOT ROCR_VISIBLE_DEVICES. Autodetect does the rest.
+#   export RAY_EXPERIMENTAL_NOSET_HIP_VISIBLE_DEVICES=1
+#                                           # REQUIRED for --num_workers > 1. Without it every
+#                                           # rank but 0 dies with "invalid device ordinal",
+#                                           # because Ray Core narrows HIP_VISIBLE_DEVICES while
+#                                           # Ray Train computes device ordinals from
+#                                           # CUDA_VISIBLE_DEVICES. See readme_ray.md 8.1.
+#
+# Do NOT install flash-attn on ROCm; the script uses sdpa attention and does not need it.
+#
+# IMPORTANT: every node in the cluster must have an IDENTICAL environment -- same Ray
+# version, same Python minor version, same torch/CUDA. Ray refuses to connect a worker
+# whose Ray version differs from the head's, and a torch mismatch surfaces later as an
+# NCCL or pickling error. Build one image/venv and ship it to every node.
+
+# --- Ray Train (the orchestrator). [train] pulls in the Train + Tune deps. ---
+# 2.43+ is required for the Train V2 API used by this script (FailureConfig-based
+# recovery, no Trainer.restore). V2 is default-on from ~2.57; on 2.43-2.56 you must
+# ALSO export RAY_TRAIN_V2_ENABLED=1 -- see readme section 5.
+ray[train]==2.57.0
+
+# --- Training stack (runs inside the Ray worker) ---
+# NVIDIA/CUDA build. NOTE: on CUDA 13 (H100, tested) this pin has NO cu130 wheel -- use the
+# current stable torch instead (`pip install torch numpy` -> 2.13.0+cu130); see NVIDIA header.
+# On ROCm replace with the rocm7.2 index install shown in the header:
+#   pip install --index-url https://download.pytorch.org/whl/rocm7.2 torch==2.11.0
+torch==2.11.0                  # CUDA-12 build; see headers for CUDA-13 (2.13.0+cu130) & ROCm
+transformers==5.5.0
+trl==0.27.0                    # SFTTrainer / SFTConfig
+peft==0.18.1                   # LoRA adapters (--use_lora)
+datasets==4.3.0
+accelerate==1.14.0
+
+# --- Utilities ---
+python-dotenv                  # loads dev.env for HF_TOKEN
+pyarrow>=23.0.1                # Ray Train's storage layer (pyarrow.fs); also a CVE floor
+
+# --- OPTIONAL: cloud checkpoint storage ---
+# REQUIRED in practice for multi-node runs, which cannot use head-node local disk.
+# s3:// is handled by pyarrow's bundled S3FileSystem, so no extra package is strictly
+# needed; boto3 is still useful for credentials/inspection on AWS.
+# boto3>=1.34
+
+# --- OPTIONAL: experiment tracking ---
+# tensorboard==2.21.0
+# wandb>=0.28.0
+
+# --- OPTIONAL: flash-attention ---
+# The script uses attn_implementation="sdpa" so this is NOT needed. If you switch to
+# FA2, it needs --no-build-isolation and a matching CUDA toolkit (CUDA_HOME set).
+# flash-attn==2.8.3

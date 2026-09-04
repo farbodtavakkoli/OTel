@@ -1,0 +1,42 @@
+# Qwen3-32B training cluster. emptyDir tmpfs for /dev/shm (isolates
+# SHM across pods), hostPort on API for LoadBalancer-less access.
+
+image:
+  tag: v1.05
+
+model: Qwen/Qwen3-32B
+gpu_memory_utilization: 0.92
+
+replicaCounts:
+  inference: 0
+  training: 2
+
+storage:
+  jobs:
+    size: 100Gi
+  cache:
+    kind: pvc
+    size: 70Gi
+    storageClass: longhorn
+
+api:
+  hostPort: true
+  extraEnv:
+    NVIDIA_VISIBLE_DEVICES: "none"
+
+megatron:
+  hostIPC: true
+  extraCapabilities:
+    - SYS_PTRACE
+    - IPC_OWNER
+  extraResources:
+    rdma/hca: 1
+  dshm:
+    kind: emptyDir
+    sizeLimit: 64Gi
+
+vllm:
+  enabled: false
+
+cloudflared:
+  enabled: true

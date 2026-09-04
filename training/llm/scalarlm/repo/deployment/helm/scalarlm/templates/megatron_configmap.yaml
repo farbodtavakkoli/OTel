@@ -1,0 +1,11 @@
+{{- if .Values.megatron.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-megatron-configmap
+  labels:
+    {{- include "scalarlm.megatronlabels" . | nindent 4 }}
+data:
+  cray-config.yaml: |
+{{ include "scalarlm.crayConfig" (dict "root" . "serverList" "megatron" "extra" dict) | indent 4 }}
+{{- end }}

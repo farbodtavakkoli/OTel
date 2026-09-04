@@ -1,0 +1,17 @@
+{{- if eq .Values.storage.cache.kind "pvc" }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-cache
+  labels:
+    {{- include "scalarlm.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - {{ .Values.storage.cache.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.cache.size }}
+  storageClassName: {{ .Values.storage.cache.storageClass }}
+{{- end }}

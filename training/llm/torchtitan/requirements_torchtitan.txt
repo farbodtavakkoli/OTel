@@ -1,0 +1,135 @@
+# Environment for train_llm_torchtitan.py (torchtitan continued pre-training / SFT).
+# Install into a DEDICATED venv - torchtitan tracks PyTorch nightly and will fight
+# with the pinned torch in the other trainers in this repo.
+#
+# ---------------------------------------------------------------------------
+# 1. torchtitan itself is a SOURCE install, not a PyPI install for this use case.
+#    Upstream ships stable wheels, but the Python-config surface used by
+#    recipe_torchtitan.py (--module/--config, torchtitan_recipes) lives on main,
+#    and the checkpoint-conversion scripts only exist in the git tree. Clone it:
+#
+#      git clone https://github.com/pytorch/torchtitan
+#      cd torchtitan
+#      pip install -r requirements.txt
+#      pip install --pre torchdata --index-url https://download.pytorch.org/whl/nightly/cpu
+#      pip install -e . --no-deps        # only if you need to import it from elsewhere
+#
+#    Do NOT also `pip install torchtitan` from PyPI into the same venv; the
+#    stable wheel pins its own torch/torchao nightlies and will shadow the clone.
+# ---------------------------------------------------------------------------
+# 2. PyTorch NIGHTLY is required by torchtitan main (FSDP2 / DTensor / DCP APIs
+#    move fast). Install it FIRST, before anything below, and pick the CUDA build
+#    that matches your driver:
+#
+#      pip3 install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu130
+#
+#    torchdata must also come from the nightly index (see above) when torch is a
+#    nightly - the PyPI torchdata is built against stable torch.
+#
+#    NVIDIA / CUDA 13 variant: VERIFIED 2026-08-22 on 1x H100 80GB (Hopper cc9.0) /
+#    CUDA 13.0 / driver 580.173.02 / Python 3.12.3, upstream torchtitan commit
+#    03be241 (same commit as the AMD run), no fork, no patches. See
+#    readme_torchtitan.md section 7.3. Single-GPU smoke (multi-GPU deferred - shared box).
+#
+#      python3.12 -m venv .env_torchtitan
+#      source .env_torchtitan/bin/activate
+#      export CUDA_VISIBLE_DEVICES=5      # the ONE assigned GPU; NO HIP_VISIBLE_DEVICES on NVIDIA
+#
+#      # 1. CUDA NIGHTLY torch -> installed torch 2.15.0.dev20260822+cu130 (cuda 13.0, hip None).
+#      #    download.pytorch.org is proxy-blocked here: `unset HTTP_PROXY HTTPS_PROXY ALL_PROXY
+#      #    http_proxy https_proxy all_proxy` before this line, then it returns 200.
+#      pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu130
+#
+#      # 2. torchtitan from source, PINNED to the tested commit (fresh HEAD drifts, below):
+#      git clone https://github.com/pytorch/torchtitan .env_torchtitan/torchtitan_src
+#      git -C .env_torchtitan/torchtitan_src checkout 03be241
+#      pip install -r .env_torchtitan/torchtitan_src/requirements.txt
+#      pip install torchdata                     # 0.11.0 from PyPI worked fine with the nightly
+#
+#      # 3. this file
+#      pip install -r requirements_torchtitan.txt
+#
+#    The NIGHTLY IS MANDATORY on CUDA too, and that was verified rather than assumed:
+#    stable `pip install torch` -> torch 2.13.0+cu130 builds the mesh, applies FSDP2,
+#    and runs step 1, then dies at trainer.py:1062 set_pg_timeouts ->
+#      AttributeError: module 'torch.distributed' has no attribute 'set_timeout'
+#    (a torchtitan-main-vs-torch API gap; a DIFFERENT missing symbol than the AMD
+#    fully_shard/dp_mesh_dims one, same conclusion). A FRESH clone (HEAD 304fd88 at
+#    test time) ALSO breaks: recipe_torchtitan.py's
+#    `from torchtitan.components.checkpoint import CheckpointManager` -> ModuleNotFound;
+#    pin 03be241. Do NOT install flash-attn on CUDA either - torchtitan uses SDPA /
+#    FlexAttention (FlexAttention triton-autotunes on first step, adds ~10-15s once).
+#    If a later pip step swaps torch for a stable wheel, reinstall from the nightly cu130 index.
+#
+#    AMD / ROCm variant: upstream's README says the CUDA index can be swapped for
+#    an AMD one. TESTED 2026-08-19 on 2x Instinct MI355X (gfx950) / ROCm 7.2.4 /
+#    Python 3.12.3 — this exact sequence, upstream torchtitan (commit 03be241),
+#    no AMD fork, no patches. See readme_torchtitan.md section 7.1.
+#
+#      python3.12 -m venv .env_train_llm_torchtitan
+#      source .env_train_llm_torchtitan/bin/activate
+#      export HIP_VISIBLE_DEVICES=0,1 CUDA_VISIBLE_DEVICES=0,1   # never set these to ""
+#
+#      # 1. ROCm NIGHTLY torch -> installed torch 2.15.0.dev20260818+rocm7.2
+#      pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/rocm7.2
+#
+#      # 2. torchtitan from source (kept inside the git-ignored venv dir here)
+#      git clone https://github.com/pytorch/torchtitan .env_train_llm_torchtitan/torchtitan_src
+#      pip install -r .env_train_llm_torchtitan/torchtitan_src/requirements.txt
+#      pip install --pre torchdata --index-url https://download.pytorch.org/whl/nightly/cpu
+#
+#      # 3. this file
+#      pip install -r requirements_torchtitan.txt
+#
+#    The NIGHTLY IS MANDATORY, and that was verified rather than assumed: stable
+#    torch 2.13.0+rocm7.2 (latest on the stable rocm7.2 index, alongside 2.12.1 /
+#    2.12.0 / 2.11.0) imports torchtitan fine but dies wrapping the model —
+#      ValueError: When dp_mesh_dims is provided, all parameters must be DTensors
+#      on the full SPMD mesh ... Got plain tensor for parameter 'weight'
+#    raised from torchtitan/distributed/fsdp.py:188 -> torch fully_shard. That is a
+#    torchtitan-main-vs-torch API gap, not an AMD gap. Stable wheels remain valid
+#    only for an older, matching torchtitan release:
+#      pip3 install torch --index-url https://download.pytorch.org/whl/rocm7.2
+#    Do NOT install flash-attn on ROCm; torchtitan uses SDPA / FlexAttention, both
+#    of which work as shipped on gfx950. If a later pip step swaps torch for a CUDA
+#    wheel (torch.version.hip becomes None), force-reinstall from the ROCm index.
+#    AMD also ships torchtitan inside the rocm/primus images and maintains an
+#    optimized fork (github.com/AMD-AGI/torchtitan-amd) — neither was needed.
+# ---------------------------------------------------------------------------
+# 3. Everything below is safe to install from PyPI on top of that.
+
+# Hugging Face stack: dataset loading, tokenizers, safetensors checkpoint I/O.
+# NOTE: torchtitan's own requirements.txt caps this at "datasets < 4.8.0" — install
+# torchtitan's requirements AFTER this file, or pin, so the cap wins.
+# Versions proven together on MI355X / ROCm 7.2 (2026-08-19): datasets 4.7.0,
+# transformers 5.15.0, tokenizers 0.22.2, safetensors 0.8.0, huggingface_hub 1.28.0,
+# tyro 1.0.15, tensorboard 2.21.0, torchdata 0.11.0, einops 0.8.2, spmd_types 0.2.3.
+# Versions proven together on H100 / CUDA 13 (2026-08-22, torch 2.15.0.dev+cu130):
+# datasets 4.7.0, transformers 5.15.1, tokenizers 0.22.2, safetensors 0.8.0,
+# tyro 1.0.16, torchdata 0.11.0, grain 0.2.18, triton 3.8.0 (see readme section 7.3).
+datasets>=4.0.0
+transformers>=4.56.0
+tokenizers>=0.21.0
+safetensors>=0.4.5
+huggingface_hub>=0.34.0
+
+# CLI/config parsing used by torchtitan's entrypoint.
+tyro>=0.9.0
+
+# Metrics logging (torchtitan writes TensorBoard by default; wandb is optional).
+tensorboard>=2.18.0
+# wandb>=0.18.0
+
+# Utilities used by this launcher.
+python-dotenv>=1.0.1
+
+# ---------------------------------------------------------------------------
+# NOT required, and deliberately not pinned here:
+#   torchao      - only needed for float8 / MXFP8 / NVFP4 training. It must match
+#                  your torch nightly, so install it from the same nightly index
+#                  if you enable a quantization converter.
+#   flash-attn   - torchtitan uses PyTorch SDPA / FlexAttention, not flash-attn.
+#   --no-build-isolation - not needed for anything in this file. It IS needed if
+#                  you build torchao or flash-attn from source against a nightly
+#                  torch, because build isolation would pull a different torch.
+# ---------------------------------------------------------------------------

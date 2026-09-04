@@ -1,0 +1,111 @@
+# LLM Foundry -- 8x MI355X (ROCm 7.2) FSDP SFT smoke config.
+#
+# This is the 1-GPU recipe (yamls/finetune_chat_sft.yaml) with the ROCm changes from
+# readme_llmfoundry.md 8a baked in, plus a batch geometry that divides by 8 ranks.
+# The 1-GPU YAML is deliberately left untouched (it keeps the NVIDIA defaults).
+#
+# Differences vs finetune_chat_sft.yaml -- see 8a "8-GPU run":
+#   - attn_implementation: sdpa      (flash_attention_2 has no ROCm build here)
+#   - init_device: mixed             (KEPT -- valid now that FSDP is real at 8 ranks)
+#   - global_train_batch_size: 32    (divisible by 8; 4/rank)
+#   - device_train_microbatch_size: 1 -> grad accum 4
+#   - max_duration: 20ba, eval disabled (smoke run)
+#   - no save_folder / no hf_checkpointer (nothing large lands on disk)
+#   - data_local points at a replicated 1280-row copy of the shipped 10-row sample,
+#     written OUTSIDE the repo. Pipeline proof, NOT a learning result.
+#
+# Run: composer -n 8 --master_port 29750 \
+#        .env_train_llm_llmfoundry/llm-foundry/scripts/train/train.py \
+#        yamls/finetune_chat_sft_8gpu.yaml
+
+variables:
+  global_seed: 17
+  max_seq_len: 2048
+  model_name: Qwen/Qwen3-0.6B
+  data_local: /mnt/data_1.5t/outputs/train_llm_llmfoundry/gpu8/data
+  train_file: OTel_LLM_sample_1280.jsonl
+
+max_seq_len: ${variables.max_seq_len}
+
+run_name: mi355x-8gpu-fsdp
+
+model:
+  name: hf_causal_lm
+  pretrained: true
+  pretrained_model_name_or_path: ${variables.model_name}
+  attn_implementation: sdpa       # ROCm: no flash_attention_2 wheel for gfx950
+  use_auth_token: true
+  init_device: mixed              # rank0 real weights, others meta; FSDP syncs outward
+
+tokenizer:
+  name: ${variables.model_name}
+  kwargs:
+    model_max_length: ${variables.max_seq_len}
+
+train_loader:
+  name: finetuning
+  dataset:
+    hf_name: json
+    hf_kwargs:
+      data_files: ${variables.data_local}/${variables.train_file}
+    split: train
+    preprocessing_fn: llmfoundry.data.finetuning.tasks:messages_format_preprocessor
+    max_seq_len: ${variables.max_seq_len}
+    allow_pad_trimming: false
+    decoder_only_format: true
+    shuffle: true
+    target_prompts: none
+    target_responses: last
+  drop_last: true
+  num_workers: 4
+  pin_memory: false
+  prefetch_factor: 2
+  persistent_workers: true
+  timeout: 0
+
+scheduler:
+  name: cosine_with_warmup
+  t_warmup: 5ba
+  alpha_f: 0.1
+
+optimizer:
+  name: decoupled_adamw
+  lr: 1.0e-5
+  betas:
+  - 0.9
+  - 0.95
+  eps: 1.0e-8
+  weight_decay: 0.0
+
+algorithms:
+  gradient_clipping:
+    clipping_type: norm
+    clipping_threshold: 1.0
+
+max_duration: 20ba
+global_train_batch_size: 32       # 8 ranks x 4 per rank
+
+seed: ${variables.global_seed}
+device_train_microbatch_size: 1   # -> grad accum 4
+precision: amp_bf16
+
+fsdp_config:
+  sharding_strategy: FULL_SHARD
+  mixed_precision: PURE
+  activation_checkpointing: true
+  activation_checkpointing_reentrant: false
+  activation_cpu_offload: false
+  limit_all_gathers: true
+  state_dict_type: full
+
+progress_bar: false
+log_to_console: true
+console_log_interval: 2ba
+
+callbacks:
+  speed_monitor:
+    window_size: 5
+  lr_monitor: {}
+  memory_monitor: {}
+  runtime_estimator: {}
+# no hf_checkpointer and no save_folder: this is a smoke run, nothing large should land.

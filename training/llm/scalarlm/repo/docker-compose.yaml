@@ -1,0 +1,108 @@
+services:
+
+    cray: &cray
+        image: cray:latest
+        command: /app/cray/scripts/start_one_server.sh
+        # Multi-GPU training maps its MPI/UCX shared-memory segments out of
+        # /dev/shm, one set per rank. Docker's 64MB default is far too small:
+        # ranks die with SIGBUS (signal 7, "Bus error") the moment the segment
+        # can't be mapped, and Slurm then relaunches the job in a loop. Measured
+        # on 8x MI355X: 8 ranks exhausted a 16GB /dev/shm. 64GB carries an
+        # 8-rank job with headroom; raise it further for more ranks per node.
+        shm_size: 64gb
+        # Compose only forwards variables declared here; `SCALARLM_FOO=x
+        # docker compose up` reaches build args and ${} interpolation, never
+        # the server. Each `${VAR:-fallback}` below is always set, so the
+        # fallback overrides default_config.Config and IS the effective
+        # default -- keep them identical to Config.
+        environment:
+            - SCALARLM_ENABLE_LORA=${SCALARLM_ENABLE_LORA:-false}
+            - SCALARLM_ENABLE_TOKENFORMER=${SCALARLM_ENABLE_TOKENFORMER:-true}
+            # Which model the server loads. Exposed so one image can be
+            # verified against several models without a rebuild.
+            - SCALARLM_MODEL=${SCALARLM_MODEL:-tiny-random/gemma-4-dense}
+        build:
+            context: .
+            dockerfile: Dockerfile
+            platforms:
+                - ${DOCKER_PLATFORM:-linux/arm64}
+            args:
+                - TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}
+                - BASE_NAME=${BASE_NAME}
+                - VLLM_TARGET_DEVICE=${VLLM_TARGET_DEVICE}
+                # These are passed explicitly, so they OVERRIDE the ARG
+                # defaults in the Dockerfile — the fallbacks here are what
+                # actually gets built, not the Dockerfile's. They must be kept
+                # in sync with the Dockerfile's VLLM_* ARG block; they were not,
+                # so every `scalarlm up` on this branch built
+                # supermassive-intelligence/vllm-fork main (v0.19.0 base, no
+                # diffusion_gemma.py, missing the Tokenformer serving fixes)
+                # while the Dockerfile said otherwise.
+                - VLLM_SOURCE=${VLLM_SOURCE:-remote}
+                - VLLM_BRANCH=${VLLM_BRANCH:-main}
+                - VLLM_REPO=${VLLM_REPO:-https://github.com/supermassive-intelligence/vllm-fork.git}
+                # Unset: use the Dockerfile's verified v0.27.1 pin. Setting
+                # VLLM_COMMIT (including explicitly empty) overrides it.
+                - VLLM_COMMIT
+        ports:
+            - "8000:8000"
+            - "8001:8001"
+        volumes:
+            - type: bind
+              source: ./models
+              target: /root/.cache/huggingface
+            - type: bind
+              source: ./infra/cray_infra
+              target: /app/cray/infra/cray_infra
+            - type: bind
+              source: ./scripts
+              target: /app/cray/scripts
+            - type: bind
+              source: ./ml
+              target: /app/cray/ml
+            - type: bind
+              source: ./test
+              target: /app/cray/test
+        networks:
+            - cray-network
+
+
+    cray-nvidia:
+        <<: *cray
+        runtime: nvidia
+        #restart: unless-stopped
+        cap_add:
+          - SYS_PTRACE
+        deploy:
+            resources:
+                reservations:
+                    devices:
+                        - driver: nvidia
+                          capabilities: [gpu]
+
+    cray-spark:
+        <<: *cray
+        runtime: nvidia
+        restart: unless-stopped
+        cap_add:
+          - SYS_PTRACE
+        deploy:
+            resources:
+                reservations:
+                    devices:
+                        - driver: nvidia
+                          capabilities: [gpu]
+
+    cray-amd:
+        <<: *cray
+        devices:
+          - /dev/kfd
+          - /dev/dri
+        security_opt:
+          - seccomp:unconfined
+        cap_add:
+          - SYS_PTRACE
+
+networks:
+  cray-network:
+    name: cray_network

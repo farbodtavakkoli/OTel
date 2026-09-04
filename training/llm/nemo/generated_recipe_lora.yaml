@@ -1,0 +1,73 @@
+recipe: TrainFinetuneRecipeForNextTokenPrediction
+dist_env:
+  backend: nccl
+  timeout_minutes: 30
+rng:
+  _target_: nemo_automodel.components.training.rng.StatefulRNG
+  seed: 42
+  ranked: true
+model:
+  _target_: nemo_automodel.NeMoAutoModelForCausalLM.from_pretrained
+  pretrained_model_name_or_path: Qwen/Qwen3-0.6B
+  torch_dtype: auto
+  trust_remote_code: false
+  attn_implementation: sdpa
+distributed:
+  _target_: nemo_automodel.components.distributed.fsdp2.FSDP2Manager
+  dp_size: 1
+  tp_size: 1
+  pp_size: 1
+  cp_size: 1
+  ep_size: null
+  sequence_parallel: false
+step_scheduler:
+  global_batch_size: 2
+  local_batch_size: 1
+  max_steps: 12
+  num_epochs: 4
+  val_every_steps: 6
+  ckpt_every_steps: 12
+optimizer:
+  _target_: torch.optim.Adam
+  lr: 0.0001
+  weight_decay: 0.01
+  betas:
+  - 0.9
+  - 0.999
+  eps: 1.0e-08
+lr_scheduler:
+  lr_decay_style: cosine
+  lr_warmup_steps: 2
+checkpoint:
+  enabled: true
+  model_save_format: safetensors
+  checkpoint_dir: /mnt/data_1.5t/outputs/train_llm_nemo/checkpoints_lora
+  save_consolidated: true
+dataset:
+  _target_: nemo_automodel.components.datasets.llm.chat_dataset.ChatDataset
+  path_or_dataset_id: data/OTel_LLM_sample_10_split_train.jsonl
+  seq_length: 512
+  padding: do_not_pad
+  truncation: longest_first
+validation_dataset:
+  _target_: nemo_automodel.components.datasets.llm.chat_dataset.ChatDataset
+  path_or_dataset_id: data/OTel_LLM_sample_10_split_val.jsonl
+  seq_length: 512
+  padding: do_not_pad
+  truncation: longest_first
+dataloader:
+  _target_: torchdata.stateful_dataloader.StatefulDataLoader
+  collate_fn: nemo_automodel.components.datasets.utils.default_collater
+  shuffle: true
+validation_dataloader:
+  _target_: torchdata.stateful_dataloader.StatefulDataLoader
+  collate_fn: nemo_automodel.components.datasets.utils.default_collater
+loss_fn:
+  _target_: nemo_automodel.components.loss.masked_ce.MaskedCrossEntropy
+peft:
+  _target_: nemo_automodel.components._peft.lora.PeftConfig
+  dim: 16
+  alpha: 32
+  dropout: 0.0
+  target_modules: '*_proj'
+  use_triton: true

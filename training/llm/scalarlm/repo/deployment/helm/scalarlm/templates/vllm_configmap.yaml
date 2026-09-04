@@ -1,0 +1,11 @@
+{{- if .Values.vllm.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-vllm-configmap
+  labels:
+    {{- include "scalarlm.vllmlabels" . | nindent 4 }}
+data:
+  cray-config.yaml: |
+{{ include "scalarlm.crayConfig" (dict "root" . "serverList" "vllm" "extra" dict) | indent 4 }}
+{{- end }}

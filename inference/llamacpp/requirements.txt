@@ -1,0 +1,103 @@
+# Shared client environment for inference/llamacpp — llama.cpp llama-server serving
+# a Qwen3.8-27B GGUF LLM, EmbeddingGemma-300M embeddings, and Qwen3-Reranker-0.6B.
+#
+# llama.cpp is a C++/HIP build, NOT a pip package: there is no `pip install llama.cpp`.
+# This file therefore records (a) the BUILD toolchain that was verified, and
+# (b) the small python client dependencies shared by all three leaf clients
+# (llm/, embedding/, reranker/).
+#
+# ---------------------------------------------------------------------------
+# (a) BUILD TOOLCHAIN — verified 2026-08-20 on 8x AMD Instinct MI355X (gfx950)
+# ---------------------------------------------------------------------------
+# One llama.cpp build serves all three leaves. The campaign's build tree was
+# removed with the venvs in the 2026-08 reorg; rebuild with the commands below
+# (documented cold build: 40.6 s wall with -j 32). See ../README.md "Build".
+#
+# System packages (apt):
+#   cmake        3.28.3
+#   ninja        1.11.1          (generator; the Makefiles generator also works)
+#   gcc/g++      13.3.0          (host C/C++ compiler)
+#   libssl-dev   3.0.13          <-- REQUIRED, see NOTE 2
+#   libcurl4-openssl-dev 8.5.0   (installed first; NOT what the current revision uses)
+#   ROCm         7.2.4 at /opt/rocm
+#   hipcc / HIP  7.2.53211-97f5574fe2, AMD clang 22.0.0
+#
+# Source:
+#   git clone --depth 1 https://github.com/ggml-org/llama.cpp
+#   commit d59d455fd8ea09e5a2e87ce2a9d668267ffb5ccd  (Wed Aug 19 2026)
+#   llama-server version 0.1.2-dev (build 1) / ggml version 0.20.2
+#
+# EXACT cmake flags that worked (cold build 40.6s wall with -j 32, 18m26s CPU):
+#   cmake -S . -B build -G Ninja \
+#     -DGGML_HIP=ON \
+#     -DGPU_TARGETS=gfx950 \
+#     -DCMAKE_BUILD_TYPE=Release \
+#     -DLLAMA_OPENSSL=ON
+#   cmake --build build --config Release -j 32
+#
+# NOTE 1 (arch flag): `GPU_TARGETS` is the canonical variable in this revision.
+#   `AMDGPU_TARGETS` is still accepted but is only forwarded to GPU_TARGETS for
+#   back-compat (ggml/src/ggml-hip/CMakeLists.txt:36). Omitting it also builds,
+#   but then ggml compiles for every arch present on the box, which is slower.
+#   No source patch was needed for gfx950 — MI355X builds clean out of the box.
+#
+# NOTE 2 (OpenSSL is mandatory for `-hf`): this revision no longer downloads via
+#   libcurl; it uses the bundled cpp-httplib, which needs a TLS provider. Without
+#   libssl-dev, cmake prints "OpenSSL not found, HTTPS support disabled" and every
+#   `-hf` model pull fails at runtime with:
+#       get_repo_commit: error: HTTPS is not supported. Please rebuild with ...
+#       srv load_model: failed to load model, ''
+#   Alternatives to -DLLAMA_OPENSSL=ON are -DLLAMA_BUILD_BORINGSSL=ON or
+#   -DLLAMA_BUILD_LIBRESSL=ON. The bare `cmake -B build -DGGML_HIP=ON`
+#   recipe is NOT sufficient if you want the `-hf` convenience downloader.
+#
+# ---------------------------------------------------------------------------
+# (a2) BUILD TOOLCHAIN — verified 2026-08-22 on 1x NVIDIA H100 80GB HBM3 (Hopper cc 9.0)
+# ---------------------------------------------------------------------------
+# Only the backend flag changes vs the MI355X recipe above; every llama-server/client
+# command in the three leaves is byte-for-byte identical. See ../README.md
+# "NVIDIA (H100 / CUDA) — verified".
+#
+# System / toolchain (this box):
+#   CUDA        13.0.88   (nvcc at /usr/local/cuda/bin/nvcc; export it as CUDACXX)
+#   driver      580.173.02
+#   gcc/g++     13.3.0    (host compiler; CUDA 13 accepts it)
+#   libssl-dev  3.0.13    <-- STILL REQUIRED (NOTE 2 is vendor-neutral)
+#   cmake       4.4.2  }  NOT preinstalled on this box (only make/g++). Installed via pip
+#   ninja       1.13.0 }  into a throwaway venv, then put <venv>/bin on PATH:
+#                          python3 -m venv <venv> && <venv>/bin/python -m pip install cmake ninja
+#
+# Source: github.com/ggml-org/llama.cpp @ commit 70adb1b (Aug 23 2026)
+#   llama-server 0.2.0-dev (build 1) / ggml 0.21.0
+#
+# EXACT cmake flags that worked (cold build 100 s wall with -j 32; 691 ninja targets,
+# no source patch; cmake auto-detected CMAKE_CUDA_ARCHITECTURES=90-real for Hopper):
+#   export PATH=/usr/local/cuda/bin:$PATH CUDACXX=/usr/local/cuda/bin/nvcc
+#   cmake -S . -B build -G Ninja \
+#     -DGGML_CUDA=ON \
+#     -DCMAKE_BUILD_TYPE=Release \
+#     -DLLAMA_OPENSSL=ON \
+#     -DLLAMA_CURL=OFF        # optional: forces the OpenSSL/cpp-httplib -hf path
+#   cmake --build build --config Release -j 32
+#
+# NOTE 1c (arch flag): unlike the MI355X recipe, NO explicit arch flag is needed — cmake
+#   picks up the native Hopper arch (90-real). Set -DCMAKE_CUDA_ARCHITECTURES=90 to pin it.
+# NOTE 2c (OpenSSL): -DLLAMA_OPENSSL=ON is vendor-neutral and MANDATORY for `-hf` on both
+#   backends. Configure log must print "OpenSSL found: 3.0.13".
+# NOTE 3c (filesystem): the /mnt/gsma share rejects pip/rename ops (Errno 1) — build tree
+#   and LLAMA_CACHE were placed on tmpfs (/dev/shm); HF_HOME still points at the share.
+# NOTE 4c (fallback): if no toolchain is available, a prebuilt CUDA llama.cpp release
+#   binary works too; the 100 s source build here made it unnecessary.
+#
+# ---------------------------------------------------------------------------
+# (b) PYTHON CLIENT DEPENDENCIES — shared by all three leaf clients
+# ---------------------------------------------------------------------------
+# Python 3.12.3. Install into ONE shared venv at this software root:
+#   python3 -m venv .env_llamacpp
+#   .env_llamacpp/bin/pip install -r requirements.txt
+#
+# The clients are deliberately dependency-light: the server speaks the OpenAI REST
+# API, so plain `requests` is enough — no openai/torch/transformers/numpy needed
+# (the embedding client computes cosine similarity with the stdlib `math` module).
+requests==2.34.2
+python-dotenv==1.2.3

@@ -1,0 +1,74 @@
+# Environment for train_llm_llamafactory.py (LLaMA-Factory post-training front-end).
+# Written against upstream docs as of August 2026. Versions are NOT a tested set; the
+# ranges below mirror upstream's own requirement table, which lags the code.
+#
+# IMPORTANT: LLaMA-Factory itself is installed from a SOURCE CHECKOUT, not from this file.
+# The `llamafactory` PyPI wheel exists but the repo's examples/, data/ and
+# examples/deepspeed/*.json live only in the git tree, and config_sft_full.yaml references
+# examples/deepspeed/ds_z3_config.json. Clone and install editable (readme sec. 1):
+#
+#   git clone --depth 1 https://github.com/hiyouga/LLaMA-Factory.git
+#   cd LLaMA-Factory && pip install -e .
+#   pip install -r requirements/metrics.txt          # optional: BLEU/ROUGE eval
+#   pip install -r requirements/deepspeed.txt        # optional: ZeRO multi-GPU
+#
+# `pip install -e .` resolves the core stack below, so pin here only if you need to.
+
+# core training stack (upstream requirement table: minimum torch 2.0.0, recommended 2.6.0)
+torch>=2.6.0
+torchvision>=0.21.0
+transformers>=4.50.0
+datasets>=3.2.0
+accelerate>=1.2.1
+peft>=0.15.1
+trl>=0.9.6
+
+# direct deps of this folder's launcher
+python-dotenv>=1.0.0     # load_dotenv("dev.env") for HF_TOKEN
+PyYAML>=6.0              # the launcher parses the config to validate it before running
+
+# optional / feature-gated
+deepspeed>=0.16.4        # required by config_sft_full.yaml (ZeRO-3). From requirements/deepspeed.txt
+bitsandbytes>=0.43.1     # required by config_sft_qlora.yaml (quantization_method: bnb)
+# flash-attn>=2.7.2      # for flash_attn: fa2. Build with --no-build-isolation and CUDA_HOME set;
+#                        # the upstream docker image ships it prebuilt, which is easier.
+# liger-kernel           # only if you set enable_liger_kernel: true
+# vllm>=0.8.2            # only for `llamafactory-cli api ... infer_backend=vllm` inference
+# tensorboard            # only if you set report_to: tensorboard
+
+# NVIDIA / CUDA variant — TESTED 2026-08-22 on 1x H100 80GB (Hopper cc 9.0), CUDA 13.0,
+# driver 580.173.02, Python 3.12. Single-GPU LoRA SFT: finite decreasing loss + saved adapter.
+# Unlike ROCm, torch does NOT need to precede `pip install -e .` on CUDA — the default PyPI
+# torch is already cu130 and the editable install keeps it (adds matching tv/ta cu130 wheels).
+# Exact pip/venv sequence that worked:
+#   pip install torch numpy                     # -> torch 2.13.0+cu130 (NO --index-url needed)
+#   git clone --depth 1 https://github.com/hiyouga/LLaMA-Factory.git
+#   cd LLaMA-Factory && pip install -e .        # resolved: llamafactory 0.9.6.dev0,
+#                                               # transformers 5.8.0, peft 0.18.1,
+#                                               # trl 0.24.0, accelerate 1.11.0, datasets 4.0.0
+#   pip install python-dotenv                   # launcher dep, not pulled by upstream
+#   python -c "import torch;print(torch.__version__,torch.version.cuda)"  # RE-VERIFY: 2.13.0+cu130 13.0
+# Verified stack: torch 2.13.0+cu130 (+ torchvision 0.28.0+cu130, torchaudio 2.11.0+cu130).
+# flash-attn on H100: the PREBUILT wheel installs (flash-attn 2.8.3.post1) but FAILS TO IMPORT
+# against torch 2.13/cu130 — "undefined symbol: _ZN3c104impl3cow23materialize_cow_storage..."
+# (older libc10 ABI). Use `flash_attn: sdpa` in the YAML (trains fine), or build flash-attn
+# from source against 2.13/cu130 for `flash_attn: fa2`. `kernels` was NOT pulled (no 0.12 trap).
+#
+# AMD / ROCm variant — TESTED 2026-08-19 on MI355X (gfx950), ROCm 7.2.4, Python 3.12.
+# (Upstream README documents ROCm via docker/docker-rocm and links AMD's own guide at
+# rocm.docs.amd.com; there is no ROCm pip extra. The docker route was NOT tried here.)
+# Exact pip/venv sequence that worked — ROCm torch/torchvision/torchaudio MUST go in
+# BEFORE `pip install -e .` (upstream depends on all three; otherwise pip pulls CUDA
+# wheels over the ROCm torch):
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm7.2
+#   git clone --depth 1 https://github.com/hiyouga/LLaMA-Factory.git
+#   cd LLaMA-Factory && pip install -e .        # resolved: llamafactory 0.9.6.dev0,
+#                                               # transformers 5.8.0, peft 0.18.1,
+#                                               # trl 0.24.0, accelerate 1.11.0
+#   pip install python-dotenv                   # launcher dep, not pulled by upstream
+# Verified stack: torch 2.13.0+rocm7.2. Do NOT install flash-attn on ROCm — set
+# `flash_attn: sdpa` in the YAML instead (verified: SDPA path trains with finite loss).
+# bitsandbytes >=0.50.0 ships ROCm binaries (gfx950 load verified elsewhere in this
+# repo), so the QLoRA pin above is plausible on ROCm but untested in this folder.
+# Ascend NPU is also documented upstream: pip install -r requirements/npu.txt plus the
+# CANN toolkit (see the upstream README's NPU section).

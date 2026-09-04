@@ -1,0 +1,176 @@
+# Environment for train_llm_rapidfire.py -- originally written against upstream docs (August 2026);
+# since VERIFIED on AMD MI355X (SFT grid sweeps, 1 and 8 GPUs) AND on NVIDIA H100 (1-GPU SFT
+# sweep) -- see readme_rapidfire.md.
+# RapidFire AI pins Python 3.12.x specifically; 3.13 is not supported upstream.
+#
+# NVIDIA/CUDA per upstream: requires an NVIDIA GPU (compute capability 7.x/8.x) and CUDA
+# Toolkit 11.8+; there is no documented ROCm path.
+#
+# NVIDIA/CUDA UPDATE (verified 2026-08-22 on 1x H100 80GB / Hopper cc9.0 / CUDA 13.0 / driver
+# 580.173.02 / Python 3.12.3). Verdict: WORKS WITH CHANGES. The verified CUDA 13 stack:
+#   torch==2.13.0+cu130 (plain `pip install torch`; NO --index-url needed on CUDA 13)
+#   transformers==5.5.0  trl==1.10.0  peft==0.20.0  accelerate==1.14.0  datasets==5.0.1
+#   rapidfireai==0.16.1  python-dotenv==1.2.2  bitsandbytes==0.50.1  numpy==2.0.2
+# TWO changes vs upstream's init-pinned stack were REQUIRED to train a modern (transformers-5.x)
+# cached model such as LiquidAI/LFM2.5-350M:
+#   (a) `rapidfireai init --train` pins transformers 4.57.6 / trl 0.21.0 / datasets 3.6.0 --
+#       too old to load a `TokenizersBackend` tokenizer or a `Lfm2ForCausalLM` config. Upgrade
+#       to transformers 5.5.0 + trl 1.10.0 + peft 0.20.0 AFTER init (see H100 section in readme).
+#   (b) UNINSTALL `kernels`. transformers 5.x's kernels integration attaches an unpicklable
+#       local closure (`_create_func_module.<locals>.Func`) to the model, which RapidFire cannot
+#       move through its shared-memory worker transfer -> `Can't pickle local object`. With
+#       `kernels` absent (is_kernels_available()==False) the model pickles and training runs.
+# On CUDA the `rapidfireai init --train` torch-clobber (torch==2.8.0 from a cu129 index) FAILS
+# on this offline node (the pytorch download endpoint is unreachable), so torch 2.13.0+cu130
+# SURVIVES untouched. On a NET-CONNECTED CUDA box, init WOULD replace torch with 2.8.0+cu129 --
+# reinstall `pip install torch` afterwards, exactly as the ROCm repair does for its ROCm wheel.
+# See the "NVIDIA H100 (CUDA 13) -- attempted" section of readme_rapidfire.md for full evidence.
+#
+# AMD/ROCm UPDATE (verified 2026-08-19 on 1x MI355X / gfx950 / ROCm 7.2.4 / Python 3.12.3):
+# every pin below RESOLVES AND WORKS on ROCm. See the "ROCm reality" block at the bottom of
+# this file for the one blocking line and the exact repair. Verdict: works with changes.
+
+# Core: installs the RapidFire controller, dispatcher, scheduler, CLI and dashboard.
+# IMPORTANT: after `pip install`, you must also run `rapidfireai init --train` -- that is
+# what pulls the fine-tuning/post-training dependency set (TRL, PEFT, transformers, etc).
+# The bare `rapidfireai init` installs the RAG/evals dependency set instead; the two are
+# NOT interchangeable and mixing them usually means recreating the venv.
+rapidfireai==0.16.1
+
+# PyTorch 2.8.0+ with CUDA binaries matching your driver.
+#   CUDA 13 (H100, verified 2026-08-22): plain `pip install torch` gives torch 2.13.0+cu130 --
+#     NO --index-url needed. bf16 matmul confirmed on-GPU (Hopper cc9.0). Re-verify AFTER
+#     `rapidfireai init --train`: on a net-connected box init clobbers this with 2.8.0+cu129,
+#     so `pip install torch` again if `torch.version.cuda != '13.0'`.
+#   Older CUDA: install from the matching PyTorch index, e.g.
+#     pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cu126
+torch>=2.8.0
+
+# Read by train_llm_rapidfire.py to load dev.env (HF_TOKEN).
+python-dotenv==1.2.2
+
+# The TRL/PEFT/transformers stack that the RF* classes wrap. Normally installed for you by
+# `rapidfireai init --train`; listed here so the versions are visible and pin-able.
+# Let `rapidfireai init --train` resolve these first, and only pin them if it conflicts.
+# NOTE: train_llm_rapidfire.py imports `datasets` and (inside create_model) `transformers`
+# directly, so `rapidfireai init --train` is REQUIRED before running it -- pip alone does
+# not give you a working environment.
+# trl>=0.24.0
+# peft>=0.20.0
+# transformers>=5.5.0
+# datasets>=4.3.0
+# accelerate>=1.14.0
+
+# Optional: 8-bit optimizers (optim="adamw_8bit") and 4-bit QLoRA base models.
+bitsandbytes>=0.50.0
+
+# Optional: `evaluate` + `rouge_score` are only needed if you add a compute_metrics
+# function that reports ROUGE/BLEU (this script does not by default).
+# evaluate>=0.4.3
+# rouge_score>=0.1.2
+
+# --- Known upstream install notes -------------------------------------------------
+# 1. hf-xet: upstream README currently instructs `pip uninstall -y hf-xet` after install,
+#    to work around https://github.com/huggingface/xet-core/issues/527 (HF downloads hang).
+#    Check whether that workaround is still listed before applying it.
+# 2. flash-attn, if you add it, must be built with --no-build-isolation:
+#      pip install flash-attn==2.8.3 --no-build-isolation
+#    It is not required by this script (SDPA is the default attention path).
+# 3. vllm is only needed for the RAG/evals workflow (RFvLLMModelConfig), not for fit mode.
+
+# --- CUDA reality (NVIDIA H100, Hopper cc9.0, CUDA 13.0 — tested 2026-08-22) ----------
+#
+# WHAT RESOLVES ON CUDA 13 — all of it, and unlike ROCm the init GPU probe SUCCEEDS.
+#   torch                 plain `pip install torch` -> 2.13.0+cu130 (native CUDA 13). bf16
+#                         matmul verified on-GPU. NO --index-url needed.
+#   rapidfireai==0.16.1   OK. `rapidfireai init --train` correctly DETECTS "CUDA 13.0" (prints
+#                         "Detected CUDA 13.0, using cu129") -- the ROCm "Using CPU" bug does
+#                         NOT occur. It then tries to force torch==2.8.0 from a cu129 index.
+#                         On this OFFLINE box that download FAILS (tunnel error), so torch
+#                         2.13.0+cu130 SURVIVES. On a connected box it WOULD downgrade torch
+#                         -> reinstall `pip install torch` after init. init installs the fit
+#                         set: trl 0.21.0, peft 0.18.1, transformers 4.57.6, datasets 3.6.0,
+#                         accelerate 1.14.0. rf_mode.txt correctly reads "fit".
+#   numpy                 pin "numpy<2.1" after init (init widens it to 2.2.6; pin -> 2.0.2).
+#
+# THE TWO CHANGES REQUIRED to train a transformers-5.x cached model (e.g. LiquidAI/LFM2.5-350M,
+# arch Lfm2ForCausalLM, tokenizer_class TokenizersBackend):
+#   (1) UPGRADE the init-pinned stack (4.57.6 cannot load TokenizersBackend/Lfm2):
+#         pip install "transformers==5.5.0" "trl>=0.24.0" "peft>=0.20.0"
+#       -> transformers 5.5.0, trl 1.10.0, peft 0.20.0, datasets 5.0.1, hf-hub 1.28.0.
+#       (trl 0.21.0 is INCOMPATIBLE with transformers 5.x: it imports
+#        MODEL_FOR_VISION_2_SEQ_MAPPING_NAMES, removed in tf5 -> RuntimeError. Bumping trl fixes it.)
+#   (2) UNINSTALL kernels:  pip uninstall -y kernels
+#       transformers 5.x's kernels integration attaches a local closure
+#       (_create_func_module.<locals>.Func) to the model; RapidFire's shared-memory worker
+#       transfer deep-copies/pickles the model -> "Can't pickle local object". With kernels
+#       absent the model pickles and the scheduler runs. (Do NOT just pin kernels<0.13 here --
+#       any importable kernels triggers it; it must be absent.)
+#   pip check afterwards flags rapidfireai wanting datasets==3.6.0 / hf-hub<1.0.0 -- BENIGN,
+#   rapidfireai imports and trains fine under datasets 5.0.1 + hf-hub 1.28.0.
+#
+# flash-attn: NOT installed here. LFM2 (Lfm2ForCausalLM) is a hybrid conv/attn arch; SDPA
+#   (transformers default) worked. flash-attn does build on H100 if a model needs it.
+#
+# EVIDENCE: 2-config SFT grid (lr 2e-4,5e-5 x LoRA r=8) on LiquidAI/LFM2.5-350M, both runs
+# reached 20/20 steps (40 optimizer steps total), exit 0; per-config train_loss fell
+# 1.338 -> 0.733 as the scheduler cycled 2 configs through 2 chunks on ONE GPU
+# (Scheduled run N ... chunk 0/1; Run N completed steps 3/20 -> 20/20). A 1-chunk run wrote a
+# loadable PEFT adapter (adapter_model.safetensors, r=8 alpha=16 q/k/v/o_proj) to disk.
+# GPU-7-ONLY residency confirmed by nvidia-smi PID (worker held ~2.0GB on GPU7, GPUs 4-6 idle).
+# GPU PINNING (differs from ROCm!): RapidFire has NO --gpus knob; controller.py:64 grabs ALL of
+# torch.cuda.device_count() and spawns one worker per GPU (worker.py:267 re-pins each to
+# CUDA_VISIBLE_DEVICES=str(worker_id)). On CUDA there is no HIP var, so to restrict to ONE GPU
+# you MUST `export CUDA_VISIBLE_DEVICES=<idx>` before launch (device_count()->1 -> 1 worker).
+# This is the OPPOSITE of the ROCm rule (leave both unset): unset here => device_count()==8 =>
+# it would spawn workers onto every GPU. Full write-up: readme_rapidfire.md,
+# "NVIDIA H100 (CUDA 13) — attempted".
+
+# --- ROCm reality (AMD MI355X, gfx950, ROCm 7.2 — tested 2026-08-19) -----------------
+#
+# WHAT RESOLVES ON ROCm — all of it. Nothing in this file is CUDA-only:
+#   rapidfireai==0.16.1   OK. Pure-Python (flask/mlflow/trackio/datasets); no CUDA extension,
+#                         no nvcc build step. Installs without touching torch.
+#   python-dotenv==1.2.2  OK.
+#   bitsandbytes>=0.50.0  OK — resolved to 0.50.1; the stock wheel auto-loads its ROCm binary.
+#   torch>=2.8.0          OK, but NOT from PyPI. Use the ROCm index:
+#                           pip install torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 \
+#                             --index-url https://download.pytorch.org/whl/rocm7.2
+#                         Verified: torch 2.11.0+rocm7.2, torch.cuda.is_available() True,
+#                         get_device_name(0) 'AMD Instinct MI355X', get_device_capability (9,5).
+#   trl / peft / transformers / datasets / accelerate  OK — `rapidfireai init --train` pins
+#                         trl 0.21.0, peft 0.18.1, transformers 4.57.6, datasets 3.6.0,
+#                         accelerate 1.14.0, ray 2.49.0. All train fine on gfx950.
+#   flash-attn            DO NOT INSTALL on ROCm. SDPA is the attention path; this script
+#                         never requests flash-attn. (Upstream only adds it for --evals.)
+#
+# THE BLOCKING LINE — it is not a pin in this file, it is the mandatory CLI step:
+#
+#     rapidfireai init --train        <-- THIS is what breaks AMD
+#
+#   Its only GPU probe is nvidia-smi/nvcc (rapidfireai/utils/gpu_info.py:8 and cli.py:124).
+#   On ROCm both are absent, so cli.py:302-315 forces cuda_major=0, and cli.py:~437 takes the
+#   `if ... cuda_major == 0:` branch, prints "Using CPU", and installs torch==2.8.0 /
+#   torchvision==0.23.0 / torchaudio==2.8.0 from PLAIN PYPI with --upgrade. That REPLACES
+#   torch 2.11.0+rocm7.2 with torch 2.8.0+cu128 (hip=None, is_available()=False).
+#   First failure afterwards is in transformers, not RapidFire:
+#     transformers/training_args.py:1747 ValueError: Your setup doesn't support bf16/gpu.
+#   This is an NVIDIA-ASSUMPTION check, NOT a hard CUDA dependency — nothing in the fit path
+#   asserts on compute capability, and controller.py:64 (torch.cuda.device_count()) is happy
+#   with ROCm's HIP devices.
+#
+# REPAIR — run AFTER `rapidfireai init --train`, every time you run it (no upstream patching):
+#   pip install --force-reinstall --no-deps torch==2.11.0 torchvision==0.26.0 \
+#     torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
+#   # init also leaves a CUDA `triton` shadowing ROCm's, plus ~15 nvidia-cu12 wheels (~2GB):
+#   pip uninstall -y triton $(pip list | grep -iE '^nvidia-' | grep -v nvidia-ml-py | awk '{print $1}')
+#   pip install --force-reinstall --no-deps "triton-rocm==3.6.0" \
+#     --index-url https://download.pytorch.org/whl/rocm7.2
+#   # constraints the torch reinstall widens back out:
+#   pip install "numpy<2.1" "setuptools<80" "fsspec[http]<=2025.3.0" "pillow<12.0.0"
+#   pip check   # -> No broken requirements found.
+#
+# EVIDENCE: 4-config SFT grid (2 LR x 2 LoRA r) on Qwen/Qwen3-0.6B reached 40/40 steps on all
+# four runs, exit 0; train_loss 1.17-1.84; rocm-smi GPU use to 59% with VRAM cycling
+# 5.4GB <-> 14.3GB (RapidFire's chunk-boundary model swap). Only SFT was exercised; DPO/GRPO
+# untested on AMD. Full write-up: readme_rapidfire.md, "AMD MI355X (ROCm 7.2) — attempted".

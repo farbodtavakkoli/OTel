@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "scalarlm.fullname" . }}-healthcheck
+  labels:
+    {{- include "scalarlm.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  containers:
+    - name: curl
+      image: curlimages/curl:8.10.1
+      command:
+        - sh
+        - -c
+        - |
+          set -eu
+          url="http://{{ include "scalarlm.fullname" . }}:{{ .Values.service.api_port }}/v1/health"
+          echo "GET $url"
+          body=$(curl -fsS --max-time 10 "$url")
+          echo "$body"
+          echo "$body" | grep -q '"all":"up"' || {
+            echo "health endpoint did not report all:up" >&2
+            exit 1
+          }

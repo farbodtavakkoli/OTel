@@ -1,0 +1,35 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'scalarlm'
+
+scrape_configs:
+  # ScalarLM API server (port 8000)
+  - job_name: 'scalarlm-api'
+    static_configs:
+      - targets: ['host.docker.internal:8000']
+    metrics_path: '/v1/metrics'
+    scrape_interval: 15s
+
+  # vLLM server (port 8001)
+  - job_name: 'vllm'
+    static_configs:
+      - targets: ['host.docker.internal:8001']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  # DCGM GPU metrics exporter (port 9400)
+  - job_name: 'dcgm'
+    static_configs:
+      - targets: ['host.docker.internal:9400']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+rule_files:
+  - 'alerts.yml'

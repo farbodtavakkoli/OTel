@@ -1,0 +1,17 @@
+{{- if .Values.vllm.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "scalarlm.vllmname" . }}
+  labels:
+    {{- include "scalarlm.vllmlabels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.vllm_port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "scalarlm.vllmSelectorLabels" . | nindent 4 }}
+{{- end }}

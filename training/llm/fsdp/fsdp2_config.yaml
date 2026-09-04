@@ -1,0 +1,42 @@
+# accelerate config for PyTorch-native FSDP2 (`fully_shard`) on a single 8-GPU node.
+# Used as: accelerate launch --config_file fsdp2_config.yaml train_llm_fsdp.py ...
+#
+# Portable across NVIDIA CUDA, AMD ROCm and Intel XPU: accelerate picks the
+# available accelerator and its collective backend (nccl / rccl / xccl); nothing
+# in this file is vendor-specific.
+compute_environment: LOCAL_MACHINE
+debug: false
+distributed_type: FSDP
+downcast_bf16: 'no'
+machine_rank: 0
+main_training_function: main
+mixed_precision: bf16
+num_machines: 1
+num_processes: 8
+rdzv_backend: static
+same_network: true
+tpu_use_cluster: false
+tpu_use_sudo: false
+use_cpu: false
+fsdp_config:
+  # 2 selects FSDP2 (fully_shard). 1 (the accelerate default) is legacy FSDP1.
+  fsdp_version: 2
+  # Wrap each transformer block in its own communication group so all-gathers
+  # overlap with compute. Left unset, the layer class is read from the model's
+  # _no_split_modules; override with e.g.
+  #   fsdp_transformer_layer_cls_to_wrap: LlamaDecoderLayer
+  fsdp_auto_wrap_policy: TRANSFORMER_BASED_WRAP
+  # true  = free the unsharded params after forward, re-all-gather in backward
+  #         (lowest memory; the ZeRO-3 equivalent)
+  # false = keep them gathered (faster steps, higher peak memory; ~ZeRO-2)
+  fsdp_reshard_after_forward: true
+  # Move params/grads/optimizer state to CPU. Slower; only if you are out of HBM.
+  fsdp_offload_params: false
+  # FULL_STATE_DICT writes one consolidated, directly loadable HF checkpoint.
+  # SHARDED_STATE_DICT is faster for very large models but only reloads into FSDP.
+  fsdp_state_dict_type: FULL_STATE_DICT
+  # Only rank 0 reads the checkpoint from disk; other ranks get it by broadcast.
+  fsdp_cpu_ram_efficient_loading: true
+  # Keep false and use the script's --gradient_checkpointing instead: enabling
+  # both activation checkpointing paths at once is an error.
+  fsdp_activation_checkpointing: false

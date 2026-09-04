@@ -1,0 +1,72 @@
+# Pinned environment for train_llm_deepspeed.py — tested set (Python 3.12, CUDA 13.0, H100).
+# Multi-GPU HF Transformers + DeepSpeed (ZeRO) trainer: SFT / DPO / GRPO.
+#
+# NVIDIA CUDA variant (TESTED 2026-08-22, SFT+LoRA+ZeRO-2 single-GPU on 1×H100 80GB,
+# Hopper cc9.0, driver 580.173.02, CUDA 13.0 — see readme_deepspeed.md
+# "H100 (CUDA 13.0) — tested"): install torch/torchvision from plain PyPI FIRST, then the
+# rest of this file. NO --index-url is needed on CUDA 13 — the pins below ARE the cu130
+# build:
+#   pip install torch==2.11.0 torchvision==0.26.0 numpy   # -> torch 2.11.0+cu130, torchvision 0.26.0+cu130
+#   pip install -r <this file minus the torch/torchvision lines>
+#   python -c "import torch;print(torch.__version__,torch.version.cuda)"  # re-check: NOT clobbered
+# No version deviation on CUDA (the exact pins resolve to +cu130; the base
+# `pip install torch numpy` recipe gives the same cu130 line). deepspeed==0.19.4 installs
+# from PyPI as a pure-python wheel and JIT-compiled NOTHING for ZeRO-2 + adamw_torch on
+# H100 (no nvcc build at install). Do NOT pip-install flash-attn: the script hard-blocks
+# flash_attention_2 for gemma-4 (head_dim > 256) — use --flash_attention sdpa. Multi-GPU
+# (2/8×H100) is deferred, expected to scale with no package/pin change (as it did on ROCm).
+#
+# Core training stack
+torch==2.11.0
+torchvision==0.26.0
+deepspeed==0.19.4
+
+# AMD ROCm variant (TESTED 2026-08-19 on 2×MI355X AND on all 8×MI355X / gfx950,
+# ROCm 7.2.4 — see readme_deepspeed.md "MI355X (ROCm 7.2) — tested" and its
+# "8-GPU run" subsection; scaling to 8 ranks needed NO new package and NO pin
+# change): install torch/torchvision
+# from the ROCm wheel index FIRST, then the rest of this file:
+#   pip install torch==2.11.0 torchvision --index-url https://download.pytorch.org/whl/rocm7.2
+#   pip install -r <this file minus the torch/torchvision lines>
+# The rocm7.2 index satisfies the pins exactly (torch 2.11.0+rocm7.2,
+# torchvision 0.26.0+rocm7.2) — no version deviation. deepspeed==0.19.4 installs
+# from PyPI unchanged as a pure-python wheel (NO hipcc compile at install; ops
+# are JIT-only and none were needed for ZeRO-1/2/3 with adamw_torch).
+# bitsandbytes PyPI wheels include ROCm builds (Instinct gfx90a/gfx942/gfx950).
+# Do NOT pip-install flash-attn on ROCm — this trainer uses --flash_attention sdpa.
+#
+# DPO/GRPO extras (PLATFORM-INDEPENDENT, also needed on CUDA with these pins):
+# trl 0.24.0's optional-dependency probes misfire under transformers 5.5.0
+# (tuple return is always truthy), so importing DPOTrainer/GRPOTrainer requires:
+#   pip install mergekit            # then re-run: pip install accelerate==1.14.0
+#                                   # (mergekit downgrades accelerate; force the pin back)
+# plus tiny import stubs for llm_blender and weave in site-packages (the real
+# packages are incompatible with transformers 5.5.0) — see readme_deepspeed.md.
+
+# HF training stack
+transformers==5.5.0
+trl==0.24.0
+peft==0.20.0
+datasets==4.3.0
+accelerate==1.14.0
+bitsandbytes==0.50.0
+tokenizers==0.22.2
+huggingface_hub==1.27.0
+safetensors==0.8.0
+sentencepiece==0.2.2
+hf_transfer==0.1.9
+hf-xet==1.6.0
+
+# Logging / kernels DeepSpeed builds against
+tensorboard==2.21.0
+ninja==1.13.0
+einops==0.8.2
+
+# Utilities used directly by the script / data loading
+python-dotenv==1.2.2
+numpy==2.5.1
+protobuf==7.35.1
+tqdm==4.70.0
+PyYAML==6.0.3
+filelock==3.32.2
+packaging==26.3

@@ -1,3 +1,31 @@
+# keys in dev.env
+dev.env
+plot.py
+notes_taken.md
+keep.py
+H100_MERGE_VERIFICATION_PROMPT.md
+cluster_wide_job.py
+run_torchtitan.sh
+torchtitan/
+proposed_updated_readme.md
+ATT_ScalaerLM_Trainium_migration-main
+AWS_ScalarLM_port.md
+SCALARLM_CHANGES_SINCE_PUSH.md
+data/embedding_test_data.json
+data/test_data.json
+data/test_data_extra.json
+model_card_upload.py
+training/llm/unsloth/eval_unsloth.py
+training/llm/unsloth/grpo_rewards_gsma.py
+training/llm/unsloth/logs
+ml/local_training_config.yaml
+GSMA_prep
+others
+__pycache__
+commands.md
+infer_test.py
+unsloth_compiled_cache
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -5,9 +33,6 @@ __pycache__/
 
 # C extensions
 *.so
-
-# local config
-ml/local_training_config.yaml
 
 # Distribution / packaging
 .Python
@@ -139,7 +164,7 @@ celerybeat.pid
 
 # Environments
 .env
-dev.env
+.env_*/
 .envrc
 .venv
 env/
@@ -192,6 +217,10 @@ cython_debug/
 #  you could uncomment the following to ignore the entire vscode folder
 # .vscode/
 
+# Folder to keep some logs locally
+scalarlm_training/
+#data/
+
 # Ruff stuff:
 .ruff_cache/
 
@@ -209,3 +238,96 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+# nested secret config (root-anchored rule above misses this path)
+training/llm/scalarlm/ml/local_training_config.yaml
+# vendored upstream clone (has its own .git, 270M)
+training/llm/unsloth/unsloth_repo/
+
+# user-requested exclusions
+training/llm/unsloth/eval_unsloth.py
+training/llm/unsloth/grpo_rewards_gsma.py
+training/llm/unsloth/logs
+
+# MI355X bring-up artifacts (run outputs, staged data, downloaded weights)
+training/llm/redhat/data_output/
+training/llm/redhat/logs/
+training/llm/torchtune/assets/
+unsloth_compiled_cache/
+
+# ScalarLM recipe: symlink to the client venv (box-local, RAM-backed)
+.env_scalarlm
+
+# --- MI355X build workspace (local only, never committed) ---------------------
+# NOTE the leading slashes: these are ROOT-ANCHORED on purpose. An unanchored
+# `models/` matches every directory named models at any depth — including
+# training/llm/scalarlm/ml/cray_megatron/models/, which would silently drop
+# load_model.py (the FA2 downgrade and the embedding materializer) from the
+# commit and ship a broken tree.
+#
+# ScalarLM_greg is a full nested git clone of supermassive-intelligence/scalarlm
+# carrying the AMD integration. `git add -A` would otherwise stage it as a
+# gitlink — a submodule pointer to commits that exist on no remote, which clones
+# as an empty directory. It is a build input, not repo content.
+/ScalarLM_greg/
+# HF model cache created by the server runs; re-downloadable.
+/models/
+# Benchmark fixture generated for the DDP/FSDP comparison; archived under
+# /mnt/data_1.5t/scalarlm_amd_benchmark_2026-08-27/.
+/bench_data.jsonl
+
+# --- vendored ScalarLM server source -----------------------------------------
+# training/llm/scalarlm/repo/ is a VERBATIM upstream tree. This project's own
+# ignore rules are written for this project's files and must not reach into it:
+# unanchored patterns above (`plot.py`, `lib/`) otherwise silently drop real
+# upstream source — 9 files, including sdk/masint/cli/plot.py, ui/src/lib/*, and
+# cmd/lib/colors.sh — producing a vendored tree that looks complete and is not.
+!training/llm/scalarlm/repo/**
+
+# ...but never vendor build/run artifacts back in.
+training/llm/scalarlm/repo/**/__pycache__/
+training/llm/scalarlm/repo/**/*.pyc
+training/llm/scalarlm/repo/models/
+training/llm/scalarlm/repo/.venv/
+training/llm/scalarlm/repo/**/node_modules/
+
+# repo/ml/ is NOT source. There is exactly one ml/ tree in this repository —
+# training/llm/scalarlm/ml/ — and build_image.sh copies it into repo/ at build
+# time so the image always bakes the current recipe. Committing a second copy
+# here is what makes the two drift.
+training/llm/scalarlm/repo/ml/
+FSDP2_CHANGES_FOR_H100.md
+h100_needed_updates.md
+h100_new_bugs_found.md
+h100_new_bugs_v3.md
+h100_new_features-bugs.md
+h100_new_features-bugs_v2.md
+training/llm/scalarlm/scalarlm_amd_history.bundle
+training/llm/scalarlm/docs/
+
+# --- rules from the nvidia (H100) branch, merged 2026-09-03 ---
+.env_*
+github_commands.md
+repo_nccl_wrapper_test.py
+/scalarlm/
+scalarlm
+scalarlm_new_bug*
+training/llm/rapidfire/tutorial_notebooks/
+!/training/llm/scalarlm/
+!/training/llm/scalarlm/**
+/training/llm/scalarlm/**/dev.env
+/training/llm/scalarlm/dev.env
+/training/llm/scalarlm/docs/
+/training/llm/scalarlm/**/*.env
+/training/llm/scalarlm/.env_*
+/training/llm/scalarlm/.env_scalarlm
+/training/llm/scalarlm/ml/local_training_config.yaml
+/training/llm/scalarlm/models
+!/training/llm/scalarlm/repo/**
+# Build artifacts under the vendored server tree; must follow the repo/** re-include above.
+/training/llm/scalarlm/repo/ml/
+/training/llm/scalarlm/repo/models/
+/training/llm/scalarlm/repo/.deps/
+/training/llm/scalarlm/repo/.venv/
+/training/llm/scalarlm/repo/**/node_modules/
+/training/llm/scalarlm/**/*.pyc
+/training/llm/scalarlm/**/__pycache__/

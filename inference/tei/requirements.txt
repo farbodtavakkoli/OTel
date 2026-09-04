@@ -1,0 +1,107 @@
+# Requirements for inference/tei -- HF Text Embeddings Inference (TEI) serving
+# google/embeddinggemma-300m on AMD Instinct MI355X (gfx950).
+#
+# TEI is a RUST BINARY, not a pip package. There is nothing to `pip install` for the
+# server itself -- this file therefore documents (a) the BUILD toolchain that produced a
+# working ROCm router, and (b) the small python client deps for embedding/embed_tei.py.
+#
+# VERIFIED on 1x MI355X (gfx950), ROCm 7.2.4, 2026-08-20. See embedding/README.md
+# for the full evidence (warmup_rocm, dim=768, ~20 ms/request).
+#
+# VENV CONVENTION: python3 -m venv .env_tei  (at inference/tei/).
+# Per-campaign venvs (.env_inference_embedding_tei etc.) were removed in the 2026-08 reorg.
+
+# ==============================================================================
+# PART 1 - server build toolchain (AMD / ROCm)  -- TESTED
+# ==============================================================================
+# There is NO published AMD/ROCm image for TEI. ghcr.io/huggingface/text-embeddings-inference
+# publishes CUDA tags only (e.g. cuda-1.9) -- useless on ROCm. The router must be built
+# from source against a ROCm PyTorch base.
+#
+#   Base image used here : lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819
+#                          (chosen only because it was already on disk and carries ROCm 7.2
+#                           torch for gfx950; upstream's guide says rocm/pytorch:latest --
+#                           any ROCm PyTorch image with a matching HIP works)
+#   TEI source           : github.com/huggingface/text-embeddings-inference @ 0d124dc  (v1.9.3)
+#   Rust                 : rustc 1.92.0 (ded5c06cf 2025-12-08)   # NOT in the base image
+#   protoc               : libprotoc 35.1                        # NOT in the base image
+#   python (container)   : 3.10.12
+#   torch (container)    : 2.9.1+rocm7.2.0.git7e1940d4
+#   HIP                  : 7.2.26015-fc0010cf6a
+#   build time           : 3m 44s  ->  28 MB target/release/text-embeddings-router
+#   source patches       : NONE required for gfx950
+#
+# Build commands (inside the container):
+#   pip install --no-deps -r backends/python/server/requirements-amd.txt
+#   cargo build --release --bin text-embeddings-router -F python -F http --no-default-features
+#
+# Launch:
+#   ./target/release/text-embeddings-router \
+#       --model-id google/embeddinggemma-300m --dtype bfloat16 --port 8301
+#
+# NOTE: --dtype bfloat16 is deliberate. The EmbeddingGemma model card recommends BF16 or
+# FP32; do not force FP16.
+
+# ==============================================================================
+# PART 1b - upstream python-backend pins (installed with --no-deps, for reference)
+# ==============================================================================
+# From backends/python/server/requirements-amd.txt at commit 0d124dc. Installed INSIDE the
+# container only -- do NOT install these into the client venv, and note the file pins
+# `python_version < "3.13"`, so the container's 3.10 is required (the 3.12 host is fine
+# for the client below).
+#   accelerate==0.33.0        grpcio==1.58.0           numpy==1.26.4
+#   backoff==2.2.1            grpcio-reflection==1.58.0 opentelemetry-* (tracing)
+#   certifi==2023.7.22        grpcio-status==1.58.0     safetensors / tokenizers
+#   click==8.1.7              huggingface-hub==0.24.5   transformers
+#   loguru==0.6.0             jinja2==3.1.3             typer
+# Torch is NOT pinned there -- it comes from the ROCm base image.
+
+# ==============================================================================
+# PART 2 - python client deps for embedding/embed_tei.py  (host python 3.12)
+# ==============================================================================
+# python3 -m venv .env_tei
+# source .env_tei/bin/activate
+# pip install -r requirements.txt
+requests==2.34.2
+python-dotenv==1.2.3
+
+# ==============================================================================
+# PART 3 - NVIDIA H100 / Hopper variant  -- TESTED (verified 1x H100, 2026-08-22)
+# ==============================================================================
+# Unlike AMD, NVIDIA publishes prebuilt TEI images, so there is NO source build and NO
+# extra pip toolchain -- just pull-and-run the ARCH-SPECIFIC image. For H100 (Hopper,
+# compute capability 9.0) use the **hopper** tag; the generic `cuda-*` tag is the wrong arch.
+#
+#   Image  : ghcr.io/huggingface/text-embeddings-inference:hopper-1.9   # digest e3009cd9…, 8.17 GB
+#   Host   : NVIDIA H100 80GB HBM3, driver 580.173.02, CUDA 13.0, cc(9,0), Python 3.12.3 (host)
+#   Router : text-embeddings-router 1.9.3 (candle CUDA backend, Gemma3 on Cuda(CudaDevice))
+#   dtype  : float32   # the Hopper image REJECTS bfloat16 (accepts only float16/float32);
+#                      # EmbeddingGemma card warns against fp16, so fp32 is the correct choice.
+#   Result : dim=768, l2_norm=1.0, correct semantic ranking, ~19-35 ms/request, ~1.8 GB VRAM.
+#
+# Pull (proxy blocks ghcr.io -> unset it first):
+#   unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+#   sudo docker pull ghcr.io/huggingface/text-embeddings-inference:hopper-1.9
+#
+# Run (pin ONE GPU; TEI listens on :80 in-container; HF_HOME=/data -> cache at /data/hub):
+#   sudo docker run -d --name tei_h100 --gpus '"device=7"' -p 8090:80 \
+#     -v /mnt/gsma/gsma/gsma/models:/data -e HF_HOME=/data -e HF_TOKEN=<from dev.env> \
+#     ghcr.io/huggingface/text-embeddings-inference:hopper-1.9 \
+#     --model-id google/embeddinggemma-300m --dtype float32 --port 80
+#
+# The PART 2 client deps above (requests / python-dotenv) are UNCHANGED and were re-verified
+# on H100; only --port differs (8090 here). NOTE: the `.env_tei` venv fails on the /mnt share
+# (pip bootstrap can't write symlinks) -- build the client venv on local/tmpfs disk.
+#
+# Generic (non-Hopper) NVIDIA sketch, NOT tested here:
+#   docker run --rm --gpus all -p 8080:80 -v "$PWD/data":/data \
+#     ghcr.io/huggingface/text-embeddings-inference:cuda-1.9 --model-id google/embeddinggemma-300m
+
+# ==============================================================================
+# Scope note
+# ==============================================================================
+# TEI serves embeddings / sequence-classification only. There is deliberately no
+# inference/tei/llm (TEI has no generation path) and no inference/tei/reranker
+# (Qwen3-Reranker is decoder-only yes/no scoring, unsupported upstream; TEI's /rerank
+# targets XLM-RoBERTa / GTE / ModernBERT style cross-encoders). Use
+# inference/llamacpp/reranker or inference/vllm/reranker instead. See README.md.

@@ -1,0 +1,4 @@
+# The shared venv is reached through a SYMLINK here (it really lives in
+# inference_llm_lemonade/). The root .gitignore rule `.env_*/` only matches
+# directories, so a symlink needs this trailing-slash-free rule.
+.env_*

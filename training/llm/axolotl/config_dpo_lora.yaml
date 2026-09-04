@@ -1,0 +1,76 @@
+# Axolotl - DPO (preference tuning) with LoRA. Single node, 8x H100 80GB.
+# Launch: python3 train_llm_axolotl.py --config config_dpo_lora.yaml --num-processes 8
+# Data schema (`chat_template.default` DPO strategy): see readme_axolotl.md section 4.
+
+### model
+base_model: Qwen/Qwen3-8B
+trust_remote_code: false
+
+### RL method
+rl: dpo
+rl_beta: 0.1
+# dpo_loss_type: ["ipo"]   # same data, IPO loss instead of sigmoid DPO
+
+### data
+# dpo_sample.jsonl is a tiny SYNTHETIC smoke sample (rejected = truncated chosen).
+# Swap in real preference data before drawing any conclusions from a run.
+datasets:
+  - path: ./data/dpo_sample.jsonl
+    ds_type: json
+    split: train
+    type: chat_template.default
+    field_messages: messages
+    field_chosen: chosen
+    field_rejected: rejected
+    message_property_mappings:
+      role: role
+      content: content
+    roles:
+      user: ["user"]
+      assistant: ["assistant"]
+      system: ["system"]
+
+chat_template: tokenizer_default
+dataset_prepared_path: ./last_run_prepared
+output_dir: ./outputs/dpo-lora
+
+### sequence handling (no sample packing for preference training)
+sequence_len: 2048
+max_prompt_len: 1024
+
+### adapter - with a PEFT model TRL uses the adapter-disabled base as the implicit
+### reference model, so no second copy of the weights is loaded.
+adapter: lora
+lora_r: 32
+lora_alpha: 64
+lora_dropout: 0.0
+lora_target_linear: true
+# lora_model_dir: ./outputs/sft-lora   # continue DPO on top of an existing SFT adapter
+
+### batch / optimizer - each step holds chosen + rejected + reference activations,
+### so keep micro_batch_size small.
+micro_batch_size: 1
+gradient_accumulation_steps: 8
+num_epochs: 1
+learning_rate: 5.0e-6
+optimizer: adamw_torch_fused
+lr_scheduler: cosine
+warmup_ratio: 0.1
+max_grad_norm: 1.0
+
+### precision / kernels
+bf16: auto
+tf32: true
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+attn_implementation: flash_attention_2
+
+### distributed
+# deepspeed: deepspeed_configs/zero2.json
+
+### logging / checkpoints
+logging_steps: 10
+saves_per_epoch: 1
+save_total_limit: 2
+seed: 42

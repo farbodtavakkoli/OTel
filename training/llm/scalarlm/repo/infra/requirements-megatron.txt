@@ -1,0 +1,17 @@
+torchao>=0.17.0
+accelerate
+# Cap below 5.13: this layer installs with --no-deps, so it will not pull
+# safetensors up to satisfy a newer transformers. 5.13 requires safetensors>=0.8.0
+# while the image ships 0.7.0, which crash-loops the api server at startup.
+transformers>=5.5.0,<5.13
+# transformers 5.12.x hard-requires this range and checks it at import time, but
+# this layer installs with --no-deps so nothing else enforces it. Left unpinned,
+# tokenizers floats transitively and can break `import transformers` entirely.
+tokenizers>=0.22.0,<=0.23.0
+huggingface_hub>=0.37
+peft
+# InternVL (and other hub VLMs) ship custom modeling code whose vision tower
+# imports timm; without it AutoModel load raises "requires ... timm".
+timm
+# Required by training_mode: "embedding" (SentenceTransformer body, CoSENT loss).
+sentence_transformers>=5.0,<6

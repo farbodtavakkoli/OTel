@@ -1,0 +1,41 @@
+# ScalarLM .gitignore
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# ScalarLM specific
+models/*
+scripts/scalarlm
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+**/__pycache__/
+*.egg-info/
+build/
+dist/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Local vLLM clone for development
+vllm/***
+docker-compose.override.yaml
+docker-compose.override.yml

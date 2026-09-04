@@ -1,0 +1,71 @@
+# H100 smoke — SDPA fallback of config_sft_lora_smoke_h100.yaml.
+# Identical to the flash_attention_2 config except attn_implementation: sdpa.
+# Use this if the flash-attn build is unavailable / times out in your budget.
+# Launch: python3 train_llm_axolotl.py --config config_sft_lora_smoke_h100_sdpa.yaml --num-processes 1
+
+### model
+base_model: LiquidAI/LFM2.5-350M
+trust_remote_code: false
+
+### data
+datasets:
+  - path: ./data/OTel_LLM_sample_10.jsonl
+    ds_type: json
+    split: train
+    type: chat_template
+    field_messages: messages
+    message_property_mappings:
+      role: role
+      content: content
+    roles_to_train: ["assistant"]
+    train_on_eos: turn
+
+chat_template: tokenizer_default
+
+dataset_prepared_path: /dev/shm/h100/out/axolotl/last_run_prepared_smoke_sdpa
+val_set_size: 0
+output_dir: /dev/shm/h100/out/axolotl/sft-lora-smoke-sdpa
+
+### sequence handling
+sequence_len: 2048
+sample_packing: false
+pad_to_sequence_len: false
+long_sequences_strategy: truncate
+
+### adapter (LoRA)
+adapter: lora
+lora_r: 64
+lora_alpha: 128
+lora_dropout: 0.0
+lora_target_linear: true
+# LFM2 (hybrid conv+attention) breaks axolotl's auto LoRA QKV monkeypatch
+# ("Original QKV code not found"); disable the kernel optims — plain PEFT LoRA is fine.
+lora_mlp_kernel: false
+lora_qkv_kernel: false
+lora_o_kernel: false
+
+### batch / optimizer
+micro_batch_size: 1
+gradient_accumulation_steps: 1
+num_epochs: 3
+max_steps: 20
+learning_rate: 2.0e-4
+optimizer: adamw_torch_fused
+lr_scheduler: cosine
+warmup_ratio: 0.03
+weight_decay: 0.0
+max_grad_norm: 1.0
+
+### precision / kernels
+bf16: true
+tf32: true
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+attn_implementation: sdpa
+
+### logging / checkpoints
+logging_steps: 1
+saves_per_epoch: 1
+save_total_limit: 1
+seed: 42

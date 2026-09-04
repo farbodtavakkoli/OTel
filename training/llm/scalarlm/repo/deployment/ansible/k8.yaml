@@ -1,0 +1,257 @@
+- name: Install Kubernetes
+  hosts: localhost
+  become: yes
+  vars:
+    kubernetes_version: "v1.32"
+  tasks:
+
+    # ── System Prerequisites ────────────────────────────────────────────────
+
+    - name: Update package index
+      apt:
+        update_cache: yes
+
+    - name: Disable swap immediately
+      command: swapoff -a
+      changed_when: false
+
+    - name: Disable swap permanently in /etc/fstab
+      replace:
+        path: /etc/fstab
+        regexp: '^([^#].*\s+swap\s+.*)$'
+        replace: '#\1'
+
+    - name: Load required kernel modules
+      modprobe:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - overlay
+        - br_netfilter
+
+    - name: Persist kernel modules across reboots
+      copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: |
+          overlay
+          br_netfilter
+
+    - name: Set required sysctl parameters
+      sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        state: present
+        sysctl_file: /etc/sysctl.d/k8s.conf
+        reload: yes
+      loop:
+        - { name: net.bridge.bridge-nf-call-iptables,  value: "1" }
+        - { name: net.bridge.bridge-nf-call-ip6tables, value: "1" }
+        - { name: net.ipv4.ip_forward,                 value: "1" }
+
+    # ── Docker & containerd ─────────────────────────────────────────────────
+
+    - name: Install required base packages
+      apt:
+        state: present
+        install_recommends: false
+        update_cache: true
+        pkg:
+          - bridge-utils
+          - ca-certificates
+          - curl
+          - gnupg
+          - apt-transport-https
+
+    - name: Install Docker packages (includes containerd.io)
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: Start and enable Docker
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add ubuntu user to docker group
+      ansible.builtin.user:
+        name: ubuntu
+        groups: docker
+        append: true
+
+    - name: Generate default containerd config
+      shell: containerd config default > /etc/containerd/config.toml
+      args:
+        creates: /etc/containerd/config.toml
+
+    - name: Enable SystemdCgroup in containerd (required for Ubuntu 24.04)
+      replace:
+        path: /etc/containerd/config.toml
+        regexp: 'SystemdCgroup = false'
+        replace: 'SystemdCgroup = true'
+
+    - name: Restart and enable containerd
+      systemd:
+        name: containerd
+        state: restarted
+        enabled: yes
+        daemon_reload: yes          # fixed: was daemon-reload (invalid key)
+
+    # ── Helm ────────────────────────────────────────────────────────────────
+
+    - name: Install Helm if not present
+      unarchive:
+        src: https://get.helm.sh/helm-v3.11.0-linux-amd64.tar.gz
+        dest: /usr/local/bin
+        extra_opts: "--strip-components=1"
+        owner: root
+        group: root
+        mode: 0755
+        remote_src: true
+      args:
+        creates: /usr/local/bin/helm
+
+    # ── Kubernetes packages ─────────────────────────────────────────────────
+
+    - name: Add Kubernetes apt key
+      get_url:
+        url: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version }}/deb/Release.key"
+        dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
+        mode: "0644"
+        force: true
+
+    - name: Add Kubernetes APT repository
+      apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version }}/deb/ /"
+        state: present
+        update_cache: yes
+
+    - name: Install kubelet, kubeadm, and kubectl
+      apt:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl            # added: was missing from original
+        state: present
+        update_cache: yes
+
+    - name: Hold kubelet, kubeadm, kubectl at current version
+      dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop:                    # added: prevents accidental upgrades
+        - kubelet
+        - kubeadm
+        - kubectl
+
+    - name: Enable and start kubelet
+      service:
+        name: kubelet
+        state: started
+        enabled: yes
+
+    # ── Cluster Initialization ──────────────────────────────────────────────
+
+    - name: Initialize Kubernetes cluster
+      shell: kubeadm init --pod-network-cidr=192.168.0.0/16
+      args:
+        creates: /etc/kubernetes/admin.conf
+      # fixed: original had erroneous extra quotes around the command
+
+    - name: Create .kube directory for current user
+      file:
+        path: "{{ ansible_env.HOME }}/.kube"
+        state: directory
+        mode: '0755'
+
+    - name: Copy admin.conf to current user kubeconfig
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: "{{ ansible_env.HOME }}/.kube/config"
+        remote_src: yes
+        owner: "{{ ansible_env.USER }}"
+        group: "{{ ansible_env.USER }}"
+        mode: '0600'
+
+    - name: Create .kube directory for root
+      file:
+        path: /root/.kube
+        state: directory
+        mode: '0755'
+
+    - name: Copy admin.conf to root kubeconfig
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /root/.kube/config
+        remote_src: yes
+        mode: '0600'
+      # fixed: original used shell + creates with a list (invalid); split into proper file/copy tasks
+
+    # ── Single-node: Untaint Control Plane ─────────────────────────────────
+
+    - name: Untaint control plane to allow workload scheduling
+      shell: >
+        kubectl taint nodes --all node-role.kubernetes.io/control-plane-
+        --kubeconfig=/etc/kubernetes/admin.conf
+      register: untaint_result
+      failed_when:
+        - untaint_result.rc != 0
+        - '"not found" not in untaint_result.stderr'
+      changed_when: '"untainted" in untaint_result.stdout'
+      # added: required for single-node — without this, pods won't schedule
+
+    # ── Python prerequisites for Ansible k8s modules ────────────────────────
+
+    - name: Install Python prerequisites
+      pip:
+        name:
+          - pyyaml
+          - kubernetes
+
+    # ── Calico CNI ──────────────────────────────────────────────────────────
+
+    - name: Download Tigera Operator manifest
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/projectcalico/calico/v3.29.1/manifests/tigera-operator.yaml
+        dest: /tmp/tigera-operator.yaml
+        mode: '0664'
+
+    - name: Install Tigera Operator
+      kubernetes.core.k8s:
+        state: present
+        src: /tmp/tigera-operator.yaml
+        kubeconfig: /etc/kubernetes/admin.conf   # added: explicit kubeconfig
+
+    - name: Download Calico CNI custom resources manifest
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/projectcalico/calico/v3.29.1/manifests/custom-resources.yaml
+        dest: /tmp/calico.yaml
+        mode: '0664'
+
+    - name: Install Calico CNI
+      kubernetes.core.k8s:
+        state: present
+        src: /tmp/calico.yaml
+        kubeconfig: /etc/kubernetes/admin.conf   # added: explicit kubeconfig
+
+    # ── NVIDIA GPU Operator ─────────────────────────────────────────────────
+
+    - name: Add NVIDIA Helm repository
+      kubernetes.core.helm_repository:
+        name: nvidia
+        repo_url: "https://helm.ngc.nvidia.com/nvidia"
+
+    - name: Install NVIDIA GPU Operator
+      kubernetes.core.helm:
+        name: gpu-operator
+        release_namespace: gpu-operator
+        create_namespace: true
+        chart_ref: nvidia/gpu-operator
+        chart_version: v24.9.1
+        kubeconfig: /etc/kubernetes/admin.conf   # added: explicit kubeconfig

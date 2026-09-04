@@ -1,0 +1,23 @@
+# Shared environment for inference/transformers (all three leaves) -- the correctness
+# baseline stack. Verified on MI355X (ROCm 7.2.4), 2026-08.
+#   python3 -m venv .env_transformers && source .env_transformers/bin/activate
+#   AMD: pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/rocm7.2
+#   then: pip install -r requirements.txt
+#
+# NVIDIA H100 (CUDA 13.0) -- VERIFIED 2026-08-22, driver 580.173.02, Python 3.12.3:
+#   pip install torch numpy            # -> torch 2.13.0+cu130 (native CUDA 13; no --index-url)
+#   pip install -r requirements.txt    # torch/torchvision ROCm pins below are skipped/unused on CUDA
+#   Re-check: python -c "import torch;print(torch.__version__, torch.version.cuda)"  # 2.13.0+cu130 13.0
+#   The torch==2.11.0 pin has NO cu130 wheel; H100 uses the default stable 2.13.0+cu130 (documented deviation).
+#   torchvision is NOT needed for llm(LFM2.5)/embedding/reranker on H100 (only the multimodal Qwen3.8
+#   checkpoint pulls AutoProcessor image code); left unpinned there. flash-attn has no prebuilt cu130
+#   wheel and did not build in-budget -> all three leaves ran attn_implementation=sdpa.
+sentence-transformers==5.7.0
+torch==2.11.0                # AMD/ROCm pin. H100: install `torch` (resolves 2.13.0+cu130) instead.
+torchvision==0.26.0          # AMD only: AutoProcessor for the multimodal Qwen3.8 checkpoint (llm leaf). Not needed on H100 for LFM2.5/embed/rerank.
+transformers==5.5.0
+accelerate==1.14.0
+kernels>=0.12.0,<0.13        # llm leaf FP8 path. H100 resolved kernels==0.12.3 (0.16.0 crashes transformers 5.5.0 import).
+pillow==12.3.0               # AutoProcessor image support (llm leaf)
+python-dotenv==1.2.2
+numpy==2.5.1

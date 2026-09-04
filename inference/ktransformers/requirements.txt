@@ -1,0 +1,37 @@
+# Environment for inference/ktransformers — CPU-GPU heterogeneous MoE inference.
+# Verified on BOTH vendors, with different routes (full detail in README.md + llm/README.md):
+#   - NVIDIA H100 + Intel Xeon 8480C (AMX), CUDA 13.0, 2026-08-23: PyPI wheels, serving WORKS.
+#   - AMD MI355X + EPYC 9575F (AVX512), ROCm 7.2.4, 2026-08-22: kt-kernel SOURCE BUILD works
+#     (direct API); serving blocked (sglang-kt hard-pins CUDA-only deps).
+#
+# ============================ NVIDIA route (verified H100) ============================
+# python3 -m venv .env_ktransformers && source .env_ktransformers/bin/activate
+#   pip install torch numpy python-dotenv
+#   pip install kt-kernel==0.7.0            # prebuilt wheel: AMX/AVX512 CPU variants + CUDA SM80/86/89/90
+#   pip install sglang-kt==0.7.0            # kvcache-ai SGLang fork (NOT the official `sglang` package)
+#   pip install nvidia-cudnn-cu12==9.16.0.29  # sglang-kt guards against torch-2.9.1 + cuDNN<9.15 bug
+# Notes: unset box proxies first (403s pypi.nvidia.com / HF). kt-kernel/sglang-kt pull CUDA
+# torch 2.9.1+cu128 — expected; runs fine on a CUDA 13.0 / driver 580 host.
+#
+# ============================= AMD route (verified MI355X) ============================
+# The PyPI kt-kernel wheel is CUDA-only (statically linked cudart, no HIP path) — it silently
+# degrades to CPU-only on AMD. Build from source instead:
+#   python3 -m venv .env_ktransformers && source .env_ktransformers/bin/activate
+#   pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2   # torch FIRST
+#   pip install -r requirements.txt          # this file: client/probe deps below
+#   git clone https://github.com/kvcache-ai/ktransformers <src>; cd <src>/kt-kernel
+#   export CPUINFER_USE_ROCM=1 ROCM_PATH=/opt/rocm PYTORCH_ROCM_ARCH=gfx950
+#   export CPUINFER_CPU_INSTRUCT=NATIVE CPUINFER_ENABLE_AMX=OFF
+#   pip install . -v --no-build-isolation --no-deps
+# --no-deps is MANDATORY: kt-kernel's pyproject hard-pins torch==2.9.1 + triton and would
+# replace the ROCm torch with a CUDA wheel. Verified build: kt-kernel 0.7.0 @ 95009ea,
+# gcc 13.3.0, cmake 3.28.3, ~2 min at -j64, HIP-linked (libamdhip64.so.7).
+#
+# ============================ client/probe deps (both vendors) ========================
+python-dotenv==1.2.2
+numpy
+# torch is installed per-vendor above (CUDA wheel on NVIDIA; rocm7.2 wheel on AMD).
+# generate/kernel modes additionally use (AMD campaign pins):
+huggingface_hub
+transformers==5.15.1
+accelerate==1.14.0

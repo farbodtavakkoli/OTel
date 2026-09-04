@@ -1,0 +1,95 @@
+{{- if .Values.vllm.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "scalarlm.vllmname" . }}
+  labels:
+    {{- include "scalarlm.vllmlabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCounts.inference }}
+  selector:
+    matchLabels:
+      {{- include "scalarlm.vllmSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "scalarlm.vllmlabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/app/cray/scripts/start_one_server.sh"]
+          env:
+            {{- if .Values.vllm.extraArgs }}
+            - name: SCALARLM_VLLM_ARGS
+              value: {{ join " " .Values.vllm.extraArgs | quote }}
+            {{- end }}
+            {{- include "scalarlm.envFromMap" .Values.vllm.extraEnv | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.vllm_port }}
+              protocol: TCP
+          {{- if .Values.vllm.probes.enabled }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.vllm.probes.livenessPath }}
+              port: http
+            periodSeconds: {{ .Values.vllm.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.vllm.probes.startup.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.vllm.probes.readinessPath }}
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.vllm.probes.livenessPath }}
+              port: http
+            periodSeconds: 30
+            failureThreshold: 5
+          {{- end }}
+          volumeMounts:
+            - name: scalarlm-jobs
+              mountPath: /app/cray/jobs
+            - name: scalarlm-slurm-config
+              mountPath: /app/cray/nfs
+            - name: scalarlm-config
+              mountPath: /app/cray/cray-config.yaml
+              subPath: cray-config.yaml
+            {{- if ne .Values.storage.cache.kind "disabled" }}
+            - name: scalarlm-cache
+              mountPath: /root/.cache/huggingface
+            {{- end }}
+          resources:
+            {{- toYaml .Values.vllm.resources | nindent 12 }}
+      volumes:
+        - name: scalarlm-jobs
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-jobs
+        - name: scalarlm-slurm-config
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-slurm-config
+        - name: scalarlm-config
+          configMap:
+            name: {{ .Release.Name }}-vllm-configmap
+        {{- if eq .Values.storage.cache.kind "pvc" }}
+        - name: scalarlm-cache
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-cache
+        {{- else if eq .Values.storage.cache.kind "hostPath" }}
+        - name: scalarlm-cache
+          hostPath:
+            path: {{ .Values.storage.cache.hostPath }}
+            type: DirectoryOrCreate
+        {{- else if eq .Values.storage.cache.kind "emptyDir" }}
+        - name: scalarlm-cache
+          emptyDir: {}
+        {{- end }}
+      {{- include "scalarlm.nodeAffinity" .Values.vllm.nodeAffinityHostnames | nindent 6 }}
+{{- end }}

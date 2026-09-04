@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-slurm-config
+  labels:
+    {{- include "scalarlm.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - {{ .Values.storage.slurmConfig.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.slurmConfig.size }}
+  storageClassName: {{ .Values.storage.slurmConfig.storageClass }}

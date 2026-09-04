@@ -1,0 +1,25 @@
+# Client-side environment for train.py / inference.py (ScalarLM job submission).
+#
+# These scripts are thin CLIENTS: they format data locally and submit train/generate
+# jobs to a remote ScalarLM server (SCALARLM_API_URL). Heavy training deps (torch,
+# transformers, megatron, flash-attn, ...) live on the SERVER, not here — the client
+# only needs the scalarlm SDK plus a couple of stdlib-adjacent helpers.
+#
+# scalarlm is installed from the ScalarLM project, not pinned here:
+#   https://github.com/ft8861_ATT/ScalarLM   (fork of tensorwavecloud/ScalarLM)
+# Follow that repo's install (it also provides the `scalarlm` CLI/SDK).
+scalarlm
+
+# Client-side helpers used directly by train.py / inference.py
+python-dotenv==1.2.2
+PyYAML==6.0.3
+
+# NOTE: the ml/ subtree (cray_megatron, tokenformer) is the ScalarLM training
+# backend that runs SERVER-SIDE; its dependencies are managed by the ScalarLM
+# deployment, not by this file.
+#
+# Verified 2026-08 on Python 3.12.3 (MI355X/ROCm 7.2 box, CPU-only client test):
+# all pins install and import as-is — no Python 3.12 adjustments needed.
+# `pip install scalarlm` resolved to scalarlm 1.151 from PyPI (installs the
+# `masint` package + `scalarlm` CLI); pulls aiohttp/matplotlib/numpy et al.
+# as transitive deps. See readme_scalarlm.md "MI355X box — client test".

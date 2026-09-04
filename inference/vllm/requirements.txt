@@ -1,0 +1,32 @@
+# Shared client environment for inference/vllm (all three leaves).
+# The vLLM ENGINE runs in the ROCm container documented in README.md -- this venv is
+# only for the folder's client scripts hitting the OpenAI-compatible endpoints.
+#
+#   python3 -m venv .env_vllm && source .env_vllm/bin/activate
+#   pip install -r requirements.txt
+#
+# Verified on AMD MI355X (ROCm 7.2.4), 2026-08. NVIDIA H100 (CUDA 13.0): the same clients
+# work, and the ENGINE also installs natively via pip (verified 2026-08-22) -- see below.
+
+python-dotenv==1.2.2
+
+# The clients use only the standard library (urllib/json) plus python-dotenv; no other
+# packages are required. If you extend them with the `openai` SDK or `requests`, add
+# those here.
+
+# -----------------------------------------------------------------------------
+# NVIDIA H100 ENGINE (verified 2026-08-22, CUDA 13.0, driver 580.173.02) --------
+# On NVIDIA the vLLM engine installs natively via pip (no container needed, unlike ROCm).
+# In a fresh venv, with the proxy UNSET (pypi.nvidia.com is proxy-blocked; pypi.org is not):
+#     pip install torch numpy   # -> torch 2.13.0+cu130 (native CUDA 13, no --index-url)
+#     pip install vllm          # pulls flashinfer + cutlass-dsl[cu13]; torch stays 2.13.0+cu130
+#     pip install python-dotenv
+# Verified resolved versions on H100 80GB HBM3:
+#     torch==2.13.0+cu130
+#     vllm==0.27.1              # bundles transformers==5.15.1 (knows the qwen3_5 arch)
+# All three leaves (llm / embedding / reranker) served on one H100 with these versions.
+# Reranker needs the --hf_overrides JSON + qwen3_reranker.jinja; the 27B-FP8 (qwen3_5-VL
+# Mamba/GDN hybrid) needs --max-num-seqs 256 on a single 80GB card. See each leaf README.
+# -----------------------------------------------------------------------------
+# ROCm / MI355X ENGINE: container-only in this repo (no ROCm vLLM pip wheel) -- the
+# vllm/vllm-openai ROCm image is documented in README.md; do NOT remove that route.

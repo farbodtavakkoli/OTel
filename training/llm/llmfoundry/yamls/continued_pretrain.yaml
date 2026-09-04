@@ -1,0 +1,138 @@
+# LLM Foundry -- continued pre-training (domain adaptation) of an HF causal LM.
+#
+# Data: raw text converted to MosaicML StreamingDataset (.mds) shards with
+#       scripts/data_prep/convert_dataset_hf.py (or convert_dataset_json.py for
+#       your own corpus). The `text` dataloader streams pre-concatenated,
+#       fixed-length token blocks -- there is no prompt/response structure and no
+#       loss masking, which is exactly what continued pre-training wants.
+#
+# Run:  composer scripts/train/train.py yamls/continued_pretrain.yaml variables.data_local=./my-mds
+# Or:   python3 train_llm_llmfoundry.py --recipe pretrain --data-local ./my-mds
+#
+# Targets 8x H100 80GB. UNTESTED -- see readme_llmfoundry.md.
+
+variables:
+  global_seed: 17
+  max_seq_len: 4096
+  model_name: meta-llama/Llama-3.1-8B
+  data_local: ./my-mds-data     # local MDS root (shards are cached here)
+  data_remote:                  # optional object-store URI; blank = files already local
+
+max_seq_len: ${variables.max_seq_len}
+
+run_name:
+
+model:
+  name: hf_causal_lm
+  pretrained: true
+  pretrained_model_name_or_path: ${variables.model_name}
+  attn_implementation: flash_attention_2
+  use_auth_token: true
+  init_device: mixed
+
+tokenizer:
+  name: ${variables.model_name}
+  kwargs:
+    model_max_length: ${variables.max_seq_len}
+
+# Dataloaders -- `text` is the streaming pre-training loader.
+# It always streams data_local <- from <- data_remote; if data_remote is blank the
+# shards must already be present in data_local.
+train_loader:
+  name: text
+  dataset:
+    local: ${variables.data_local}
+    remote: ${variables.data_remote}
+    split: train
+    shuffle: true
+    max_seq_len: ${variables.max_seq_len}
+    shuffle_seed: ${variables.global_seed}
+  drop_last: true
+  num_workers: 8
+
+eval_loader:
+  name: text
+  dataset:
+    local: ${variables.data_local}
+    remote: ${variables.data_remote}
+    split: val
+    shuffle: false
+    max_seq_len: ${variables.max_seq_len}
+    shuffle_seed: ${variables.global_seed}
+  drop_last: false
+  num_workers: 8
+
+# Optimization. Continued pre-training uses a LOWER peak LR than the original
+# pre-training run and a much longer warmup than SFT -- you are nudging an already
+# converged model, not training from scratch.
+scheduler:
+  name: cosine_with_warmup
+  t_warmup: 100ba
+  alpha_f: 0.1
+
+optimizer:
+  name: decoupled_adamw
+  lr: 5.0e-6
+  betas:
+  - 0.9
+  - 0.95
+  eps: 1.0e-8
+  weight_decay: 0.0
+
+algorithms:
+  gradient_clipping:
+    clipping_type: norm
+    clipping_threshold: 1.0
+
+max_duration: 2000ba          # token-denominated is often clearer: e.g. 5_000_000_000tok
+eval_interval: 500ba
+eval_first: false
+eval_subset_num_batches: -1
+global_train_batch_size: 512  # across ALL ranks
+
+# System
+seed: ${variables.global_seed}
+device_eval_batch_size: 4
+device_train_microbatch_size: auto
+precision: amp_bf16
+
+# FSDP (top-level block; the train script converts it to parallelism_config)
+fsdp_config:
+  sharding_strategy: FULL_SHARD
+  mixed_precision: PURE
+  activation_checkpointing: true
+  activation_checkpointing_reentrant: false
+  activation_cpu_offload: false
+  limit_all_gathers: true
+  # Sharded checkpoints let you resume on a different number of GPUs. Costs you a
+  # directory of .distcp files per save instead of one .pt.
+  state_dict_type: sharded
+
+# Logging
+progress_bar: false
+log_to_console: true
+console_log_interval: 10ba
+
+callbacks:
+  speed_monitor:
+    window_size: 10
+  lr_monitor: {}
+  memory_monitor: {}
+  runtime_estimator: {}
+  # Loss spikes are the characteristic failure of long continued-pretraining runs.
+  kill_loss_spike: {}
+  hf_checkpointer:
+    save_folder: ./llmfoundry_cpt/hf_checkpoints
+    save_interval: 1000ba
+    precision: bfloat16
+
+# loggers:
+#   wandb: {}
+
+save_folder: ./llmfoundry_cpt/checkpoints
+save_interval: 500ba
+save_num_checkpoints_to_keep: 1
+
+# Resume from a previous run's weights only (no optimizer/LR state):
+# load_path: ./llmfoundry_cpt/checkpoints/latest-rank{rank}.pt
+# load_weights_only: true

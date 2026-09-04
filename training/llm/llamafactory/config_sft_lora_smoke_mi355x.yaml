@@ -1,0 +1,54 @@
+# MI355X (ROCm 7.2) smoke variant of config_sft_lora.yaml — single GPU, 5 steps, tiny model.
+# Verified 2026-08-19 on 1x AMD Instinct MI355X (gfx950), torch 2.13.0+rocm7.2,
+# LLaMA-Factory 0.9.6.dev0, transformers 5.8.0. See readme_llamafactory.md section 2.
+# Launch: HIP_VISIBLE_DEVICES=7 CUDA_VISIBLE_DEVICES=7 \
+#   python3 train_llm_llamafactory.py --config config_sft_lora_smoke_mi355x.yaml --num-gpus 1
+
+### model
+model_name_or_path: Qwen/Qwen3-0.6B   # tiny stand-in for Qwen/Qwen3-8B; same qwen3_nothink template
+trust_remote_code: true
+flash_attn: sdpa                # ROCm: no flash-attn wheel — fa2 must fall back to sdpa
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 64
+lora_alpha: 128
+lora_dropout: 0.0
+lora_target: all
+
+### dataset
+dataset: otel_chat_sft
+dataset_dir: ./data
+template: qwen3_nothink
+cutoff_len: 512
+overwrite_cache: true
+preprocessing_num_workers: 2
+dataloader_num_workers: 0
+packing: false
+
+### output
+output_dir: /mnt/data_1.5t/outputs/train_llm_llamafactory/sft_lora_smoke
+logging_steps: 1
+save_steps: 5
+save_total_limit: 1
+plot_loss: false
+overwrite_output_dir: true
+save_only_model: false
+report_to: none
+
+### train — 5 steps only; this is a plumbing test, not a training run
+max_steps: 5
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 1
+learning_rate: 1.0e-4
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+bf16: true
+ddp_timeout: 180000000
+seed: 42
+
+### eval — disabled for the smoke run ("no" must stay quoted or YAML reads it as False)
+val_size: 0.0
+eval_strategy: "no"

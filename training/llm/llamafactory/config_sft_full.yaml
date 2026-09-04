@@ -1,0 +1,54 @@
+# LLaMA-Factory - FULL-parameter SFT with DeepSpeed ZeRO-3. Single node, 8x H100 80GB.
+# Launch: python3 train_llm_llamafactory.py --config config_sft_full.yaml
+# The launcher sets FORCE_TORCHRUN=1 automatically for finetuning_type: full, which is
+# what upstream requires for multi-GPU full fine-tuning.
+
+### model
+model_name_or_path: Qwen/Qwen3-8B
+trust_remote_code: true
+flash_attn: fa2
+
+### method
+stage: sft
+do_train: true
+finetuning_type: full
+# Path is relative to the LLaMA-Factory source checkout (see readme_llamafactory.md sec. 1).
+deepspeed: examples/deepspeed/ds_z3_config.json  # choices: [ds_z0_config.json, ds_z2_config.json, ds_z3_config.json]
+
+### dataset
+dataset: otel_chat_sft
+dataset_dir: ./data
+template: qwen3_nothink
+cutoff_len: 4096
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+packing: false
+
+### output
+output_dir: saves/qwen3-8b/full/sft
+logging_steps: 10
+save_steps: 500
+save_total_limit: 2
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: none
+
+### train  (full FT wants a much smaller LR than LoRA)
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+learning_rate: 1.0e-5
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+bf16: true
+ddp_timeout: 180000000
+seed: 42
+resume_from_checkpoint: null
+
+### eval
+val_size: 0.02
+per_device_eval_batch_size: 1
+eval_strategy: steps
+eval_steps: 500

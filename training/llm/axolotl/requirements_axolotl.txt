@@ -1,0 +1,74 @@
+# Environment for train_llm_axolotl.py (Axolotl post-training front-end).
+# Written against upstream docs as of August 2026 - versions are NOT pinned to a tested
+# set, because Axolotl's install is order-sensitive and cannot be reproduced by a single
+# `pip install -r`. Follow readme_axolotl.md section 2; this file documents WHAT is needed.
+#
+# ORDER MATTERS:
+#   1) install torch/torchvision FIRST (axolotl builds kernels against the installed torch)
+#   2) then install axolotl with --no-build-isolation
+#   3) then this file's plain-Python extras
+#
+# Upstream requirements (README): Python >= 3.11 (3.12 recommended), PyTorch >= 2.11.0,
+# NVIDIA Ampere or newer for bf16 + flash attention.
+
+# step 1: torch stack (install before axolotl; pick the wheel index for your CUDA)
+torch>=2.11.0            # upstream quickstart installs torch==2.12.0 with UV_TORCH_BACKEND=cu130
+torchvision              # version must match the torch release
+
+# step 2: axolotl itself
+# MUST be installed with --no-build-isolation (it compiles against the torch above):
+#   uv pip install --no-build-isolation axolotl[deepspeed]
+# Extras: [deepspeed] for ZeRO multi-GPU, [vllm] only if you plan to run GRPO.
+# Not usable as a plain requirements line - listed here for completeness:
+# axolotl[deepspeed]
+
+# step 3: direct deps of this folder's launcher
+python-dotenv>=1.0.0     # load_dotenv("dev.env") for HF_TOKEN
+PyYAML>=6.0              # the launcher parses the config to validate it before running
+
+# optional
+# flash-attn             # needed for attn_implementation: flash_attention_2; build with
+#                        # --no-build-isolation and CUDA_HOME set. Axolotl's docker image
+#                        # ships it prebuilt, which is the easier path.
+# deepspeed              # pulled in by axolotl[deepspeed]; do not install it separately
+# huggingface_hub        # pulled in transitively; only pin if you need a specific hub API
+
+# NVIDIA / CUDA variant - TESTED on H100 80GB (Hopper cc9.0) + CUDA 13.0, driver 580.173.02,
+# 2026-08-22 (readme sec. 2b). Single-GPU LoRA SFT smoke. Base axolotl, NO extras. Sequence:
+#   pip install torch numpy                     # -> torch 2.13.0+cu130 (native cu130 on PyPI;
+#                                               #    no --index-url / UV_TORCH_BACKEND needed)
+#   pip install packaging ninja
+#   pip install --no-build-isolation axolotl    # axolotl 0.18.0; RE-PINS torch -> 2.12.1
+#   # ^ 2.12.1 also resolves to a cu130 wheel here, so NO force-reinstall is needed (unlike the
+#   #   ROCm path). Just re-verify: python -c "import torch;print(torch.__version__,torch.version.cuda)"
+#   #   -> 2.12.1+cu130  13.0
+# Tested set: torch 2.12.1+cu130, axolotl 0.18.0, transformers 5.14.1, trl 1.8.0, peft 0.19.1,
+# accelerate 1.13.0, datasets 4.8.4, kernels 0.15.2, bitsandbytes 0.49.1 (untouched; QLoRA not
+# run), xformers 0.0.35.
+# Config overrides on CUDA/H100: tf32: true (reverses ROCm's false); attn_implementation: sdpa
+# is the guaranteed zero-build path, BUT flash_attention_2 is VERIFIED working too - flash-attn
+# has NO prebuilt wheel here, so source-build it (~15.5 min via nvcc, EXIT 0):
+#   CUDA_HOME=/usr/local/cuda MAX_JOBS=16 pip install --no-build-isolation flash-attn==2.8.3
+#   # -> flash-attn 2.8.3; torch stays 2.12.1+cu130 (not clobbered). fa2 ran ~2.4x faster on the
+#   #    20-step smoke. (Axolotl also flags flash-attn-4 as available for Hopper - not tried.)
+# For an
+# LFM2 base model ONLY, also disable axolotl's LoRA-kernel autopatch (lora_mlp_kernel/
+# lora_qkv_kernel/lora_o_kernel: false) - it asserts "Original QKV code not found" on LFM2's
+# hybrid attention; Qwen/Llama bases do not need this. Do NOT install [deepspeed]/[vllm]/
+# [flash-attn] extras for a single-GPU smoke.
+#
+# AMD / ROCm variant - TESTED on MI355X (gfx950) + ROCm 7.2.4, 2026-08-19 (readme sec. 2a).
+# A plain pip install of base axolotl works on ROCm; the upstream AMD HPC guide's
+# source-build + ROCm-flash-attn recipe (rocm5.7-era) was NOT needed. Exact sequence:
+#   pip install torch --index-url https://download.pytorch.org/whl/rocm7.2
+#   pip install packaging ninja
+#   pip install --no-build-isolation axolotl            # axolotl 0.18.0; NO extras
+#   # ^ this REPLACES torch with the CUDA wheel (axolotl pins torch==2.12.1) - undo it:
+#   pip install --force-reinstall --no-deps torch==2.12.1 --index-url https://download.pytorch.org/whl/rocm7.2
+#   pip install -U bitsandbytes==0.50.0                 # 0.49.1 pin lacks the rocm72 binary
+# Tested set: torch 2.12.1+rocm7.2, axolotl 0.18.0, transformers 5.14.1, trl 1.8.0,
+# peft 0.19.1, accelerate 1.13.0, bitsandbytes 0.50.0, triton-rocm 3.7.1.
+# Config overrides on ROCm: attn_implementation: sdpa (not flash_attention_2; never
+# pip-install flash-attn), tf32: false. Do NOT install the [deepspeed]/[flash-attn]/[vllm]
+# extras. DeepSpeed on ROCm did not work in upstream's Axolotl testing - prefer FSDP for
+# sharded runs (untested here; single-GPU smoke only).

@@ -1,0 +1,74 @@
+# Axolotl - LoRA SFT on chat JSONL. Single node, 8x H100 80GB.
+# Launch: python3 train_llm_axolotl.py --config config_sft_lora.yaml --num-processes 8
+# Every key below is from https://docs.axolotl.ai/docs/config-reference.html
+
+### model
+base_model: Qwen/Qwen3-8B
+trust_remote_code: false
+
+### data
+# `path` may be a local file; `ds_type` declares the file type when path is a file.
+# `type: chat_template` is the OpenAI-style {"messages": [...]} strategy.
+datasets:
+  - path: ./data/OTel_LLM_sample_10.jsonl
+    ds_type: json
+    split: train
+    type: chat_template
+    field_messages: messages
+    message_property_mappings:
+      role: role
+      content: content
+    roles_to_train: ["assistant"]   # loss only on assistant turns
+    train_on_eos: turn              # learn the turn terminator
+
+# tokenizer_default = use the chat template shipped in tokenizer_config.json.
+# If the tokenizer has no template, use tokenizer_default_fallback_chatml instead.
+chat_template: tokenizer_default
+
+dataset_prepared_path: ./last_run_prepared
+val_set_size: 0.02
+output_dir: ./outputs/sft-lora
+
+### sequence handling
+sequence_len: 4096
+sample_packing: true          # multipack: block-diagonal attention, big throughput win
+eval_sample_packing: false    # set false if eval errors with packing on
+pad_to_sequence_len: true
+
+### adapter (LoRA). Delete this whole block for full fine-tuning.
+adapter: lora
+lora_r: 64
+lora_alpha: 128
+lora_dropout: 0.0
+lora_target_linear: true      # target all linear modules
+
+### batch / optimizer
+micro_batch_size: 4           # per-GPU micro batch
+gradient_accumulation_steps: 4
+num_epochs: 3
+learning_rate: 2.0e-4
+optimizer: adamw_torch_fused
+lr_scheduler: cosine
+warmup_ratio: 0.03
+weight_decay: 0.0
+max_grad_norm: 1.0
+
+### precision / kernels
+bf16: auto
+tf32: true
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+attn_implementation: flash_attention_2   # use sdpa if the model's head_dim > 256
+
+### distributed
+# LoRA fits per-GPU on H100, so plain DDP (nothing set here) or ZeRO-2 is usually fastest.
+# Run `axolotl fetch deepspeed_configs` once, then uncomment:
+# deepspeed: deepspeed_configs/zero2.json
+
+### logging / checkpoints
+logging_steps: 10
+saves_per_epoch: 1
+evals_per_epoch: 1
+save_total_limit: 3
+seed: 42

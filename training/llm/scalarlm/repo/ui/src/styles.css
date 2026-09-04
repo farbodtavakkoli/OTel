@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* --------------------------------------------------------------------------
+ * Semantic color tokens
+ * --------------------------------------------------------------------------
+ * Tailwind config resolves every semantic color to rgb(var(--color-xxx)),
+ * so the same class ("bg-bg-card") picks up the right value per theme.
+ * Light is the default (:root); dark is applied when <html class="dark">.
+ * ui/src/stores/theme.ts manages the class.
+ *
+ * Chart/stroke elements that need a color from JS/SVG read these custom
+ * properties directly via rgb(var(--color-xxx)) — the LossChart does this.
+ * ------------------------------------------------------------------------- */
+
+:root {
+  --color-bg:            248 249 251;  /* page surface */
+  --color-bg-card:       255 255 255;  /* card surface on top of page */
+  --color-bg-hover:      238 241 246;  /* subtle hover/selection */
+  --color-border:        200 208 220;  /* primary border */
+  --color-border-subtle: 224 229 238;  /* dividers, inactive outlines */
+  --color-fg:            18 24 36;     /* primary text */
+  --color-fg-muted:      90 100 120;   /* secondary text, hints */
+  --color-fg-subtle:     140 148 160;  /* tertiary text, timestamps */
+  --color-accent:        45 105 230;   /* links, primary buttons */
+  --color-accent-hover:  55 120 240;
+  --color-success:       20 130 80;    /* deployed, "up", completed */
+  --color-success-hover: 30 150 95;
+  --color-warning:       175 110 20;   /* non-error anomalies */
+  --color-warning-hover: 190 125 30;
+  --color-danger:        210 50 50;    /* destructive actions */
+  --color-danger-hover:  225 70 70;
+
+  color-scheme: light;
+}
+
+html.dark {
+  --color-bg:            15 17 21;
+  --color-bg-card:       22 25 31;
+  --color-bg-hover:      28 32 40;
+  --color-border:        40 45 55;
+  --color-border-subtle: 30 34 42;
+  --color-fg:            235 237 242;
+  --color-fg-muted:      150 156 170;
+  --color-fg-subtle:     100 106 120;
+  --color-accent:        80 140 255;
+  --color-accent-hover:  100 160 255;
+  --color-success:       80 200 140;
+  --color-success-hover: 100 215 155;
+  --color-warning:       245 180 80;
+  --color-warning-hover: 255 195 100;
+  --color-danger:        240 80 80;
+  --color-danger-hover:  255 100 100;
+
+  color-scheme: dark;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}

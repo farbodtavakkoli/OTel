@@ -1,0 +1,54 @@
+# Primus post-training config -- LoRA, Qwen3-32B, MI300X (gfx942).
+#
+# LoRA trains only low-rank adapters, so memory pressure drops sharply: the
+# reference MI300X config runs TP 1 with a 4x larger global batch than SFT.
+# Upstream reference: TP 1, GBS 32, MBS 2, seq_length 8192.
+#
+# VERIFY against examples/megatron_bridge/configs/MI300X/ in your Primus checkout.
+
+work_group: local
+user_name: local
+exp_name: qwen3_32b_lora_posttrain
+# REQUIRED by primus/core/launcher/parser.py::parse_meta_info -- omitting it aborts with
+# "AssertionError: Failed to find key(workspace)". Verified on MI355X, ROCm 7.2.4.
+workspace: ${PRIMUS_WORKSPACE:./output}
+
+modules:
+  post_trainer:
+    framework: megatron_bridge
+    config: sft_trainer.yaml
+    model: qwen3_32b.yaml
+
+    overrides:
+      # --- method: adapters only ---
+      peft: lora
+
+      # --- optimizer ---
+      # LoRA needs a much higher LR than SFT: 1e-4 to 5e-4 documented.
+      finetune_lr: 1.0e-4
+      min_lr: 1.0e-5
+      lr_warmup_iters: 20
+      lr_decay_iters: 500
+
+      # --- precision ---
+      precision_config: bf16_mixed
+
+      # --- parallelism (adapters reduce memory, so TP 1 is enough) ---
+      tensor_model_parallel_size: 1
+      pipeline_model_parallel_size: 1
+      context_parallel_size: 1
+      # MUST be false when tensor_model_parallel_size is 1 -- Megatron raises
+      # "Cannot use sequence parallelism without tensor parallelism". All upstream
+      # reference configs set this false. Verified on MI355X, ROCm 7.2.4.
+      sequence_parallel: false
+
+      # --- batching / length ---
+      train_iters: 500
+      global_batch_size: 32
+      micro_batch_size: 2
+      seq_length: 8192
+
+      # --- activation recompute ---
+      recompute_granularity: full
+      recompute_method: uniform
+      recompute_num_layers: 1

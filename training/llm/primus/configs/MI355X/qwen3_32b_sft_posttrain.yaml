@@ -1,0 +1,48 @@
+# Primus post-training config -- SFT (full fine-tune), Qwen3-32B, MI355X (gfx950).
+#
+# MI355X has more HBM and faster interconnect than MI300X, so the reference SFT
+# config drops to TP 1 with MBS 1. Upstream reference: TP 1, GBS 8, MBS 1, seq 8192.
+# MI350X shares this config (both are gfx950).
+#
+# VERIFY against examples/megatron_bridge/configs/MI355X/ in your Primus checkout.
+
+work_group: local
+user_name: local
+exp_name: qwen3_32b_sft_posttrain
+# REQUIRED by primus/core/launcher/parser.py::parse_meta_info -- omitting it aborts with
+# "AssertionError: Failed to find key(workspace)". Verified on MI355X, ROCm 7.2.4.
+workspace: ${PRIMUS_WORKSPACE:./output}
+
+modules:
+  post_trainer:
+    framework: megatron_bridge
+    config: sft_trainer.yaml
+    model: qwen3_32b.yaml
+
+    overrides:
+      peft: "none"
+
+      finetune_lr: 5.0e-6
+      min_lr: 5.0e-7
+      lr_warmup_iters: 20
+      lr_decay_iters: 500
+
+      precision_config: bf16_mixed
+
+      # MI355X fits 32B SFT without tensor slicing.
+      tensor_model_parallel_size: 1
+      pipeline_model_parallel_size: 1
+      context_parallel_size: 1
+      # MUST be false when tensor_model_parallel_size is 1 -- Megatron raises
+      # "Cannot use sequence parallelism without tensor parallelism". All upstream
+      # reference configs set this false. Verified on MI355X, ROCm 7.2.4.
+      sequence_parallel: false
+
+      train_iters: 500
+      global_batch_size: 8
+      micro_batch_size: 1
+      seq_length: 8192
+
+      recompute_granularity: full
+      recompute_method: uniform
+      recompute_num_layers: 1

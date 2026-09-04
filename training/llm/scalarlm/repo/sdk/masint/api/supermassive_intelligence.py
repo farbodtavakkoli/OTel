@@ -1,0 +1,74 @@
+from masint.api.async_supermassive_intelligence import AsyncSupermassiveIntelligence
+
+import asyncio
+
+
+class SupermassiveIntelligence:
+    def __init__(self, api_url=None):
+        self.async_api = AsyncSupermassiveIntelligence(api_url=api_url)
+
+    ## Train and Inference API methods
+    def train(self, data, model_name=None, train_args={}):
+        return asyncio.run(
+            self.async_api.train(
+                data=data, model_name=model_name, train_args=train_args
+            )
+        )
+
+    def generate(self, prompts, model_name=None, max_tokens=None):
+        return asyncio.run(
+            self.async_api.generate(
+                prompts=prompts, model_name=model_name, max_tokens=max_tokens
+            )
+        )
+
+    def submit_slurm_job(self, code, train_args=None):
+        return asyncio.run(
+            self.async_api.submit_slurm_job(code=code, train_args=train_args)
+        )
+
+
+    ## Alignment API methods
+
+    def learn_classes(self, classes):
+        return asyncio.run(self.async_api.learn_classes(classes=classes))
+
+    def learn_docs(self, docs):
+        return asyncio.run(self.async_api.learn_docs(docs=docs))
+
+    def learn_database(self, db):
+        return asyncio.run(self.async_api.learn_database(db=db))
+
+    def learn_code(self, vcs):
+        return asyncio.run(self.async_api.learn_code(vcs=vcs))
+
+    ## Status API methods
+
+    def list_models(self):
+        return asyncio.run(self.async_api.list_models())
+
+    def get_training_job(self, job_dir):
+        return asyncio.run(self.async_api.get_training_job(job_dir=job_dir))
+
+    def health(self):
+        return asyncio.run(self.async_api.health())
+
+    def metrics(self):
+        return asyncio.run(self.async_api.metrics())
+
+    def get_gpu_count(self):
+        return asyncio.run(self.async_api.get_gpu_count())
+
+    def get_node_count(self):
+        return asyncio.run(self.async_api.get_node_count())
+
+    ## Job Management API methods
+
+    def cancel(self, model_name):
+        return asyncio.run(self.async_api.cancel(model_name=model_name))
+    
+    def delete(self, model_name):
+        return asyncio.run(self.async_api.delete(model_name=model_name))
+
+    def clear_queue(self):
+        return asyncio.run(self.async_api.clear_queue())

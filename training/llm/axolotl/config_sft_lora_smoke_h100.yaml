@@ -1,0 +1,83 @@
+# H100 (CUDA 13.0) smoke variant of config_sft_lora.yaml — single GPU LoRA SFT.
+# Mirrors config_sft_lora_smoke_mi355x.yaml but REVERSES the ROCm workarounds for H100:
+#   base_model     Qwen3-8B -> LiquidAI/LFM2.5-350M  (small, fully cached offline on this box;
+#                                                     ships a chat template so tokenizer_default works)
+#   attn_implementation flash_attention_2 (VERIFIED: flash-attn 2.8.3 source-built via nvcc on
+#                                          H100 and trains here, attn_uses_flash_lib=true;
+#                                          use the *_sdpa companion for a zero-build run)
+#   tf32           true (H100 tf32 engages; asserts only on ROCm)
+#   sample_packing false            (pointless at ~9 rows)
+#   sequence_len 4096 -> 2048        (keeps the sample's longer IETF rows; seq 512 dropped most)
+#   long_sequences_strategy truncate (never silently drop a row on a tiny sample)
+#   micro_batch_size 4 -> 1, grad_accum 4 -> 1
+#   val_set_size 0.02 -> 0 (tiny sample), max_steps: 20 (visible decreasing loss, bounded)
+# Launch: python3 train_llm_axolotl.py --config config_sft_lora_smoke_h100.yaml --num-processes 1
+
+### model
+base_model: LiquidAI/LFM2.5-350M
+trust_remote_code: false
+
+### data
+datasets:
+  - path: ./data/OTel_LLM_sample_10.jsonl
+    ds_type: json
+    split: train
+    type: chat_template
+    field_messages: messages
+    message_property_mappings:
+      role: role
+      content: content
+    roles_to_train: ["assistant"]
+    train_on_eos: turn
+
+chat_template: tokenizer_default
+
+dataset_prepared_path: /dev/shm/h100/out/axolotl/last_run_prepared_smoke
+val_set_size: 0
+output_dir: /dev/shm/h100/out/axolotl/sft-lora-smoke
+
+### sequence handling
+sequence_len: 2048
+sample_packing: false
+pad_to_sequence_len: false
+long_sequences_strategy: truncate
+
+### adapter (LoRA)
+adapter: lora
+lora_r: 64
+lora_alpha: 128
+lora_dropout: 0.0
+lora_target_linear: true
+# LFM2 is a hybrid conv+attention arch; axolotl's LoRA QKV monkeypatch (auto-enabled)
+# asserts "Original QKV code not found" on it (its regex targets Qwen/Llama attention).
+# Disable the kernel optims explicitly — plain PEFT LoRA trains fine. (MI355X used
+# Qwen3-0.6B, whose Qwen3Attention DID match the patch, so it never hit this.)
+lora_mlp_kernel: false
+lora_qkv_kernel: false
+lora_o_kernel: false
+
+### batch / optimizer
+micro_batch_size: 1
+gradient_accumulation_steps: 1
+num_epochs: 3
+max_steps: 20
+learning_rate: 2.0e-4
+optimizer: adamw_torch_fused
+lr_scheduler: cosine
+warmup_ratio: 0.03
+weight_decay: 0.0
+max_grad_norm: 1.0
+
+### precision / kernels
+bf16: true
+tf32: true
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+attn_implementation: flash_attention_2   # H100 reversal (MI355X used sdpa); see *_sdpa fallback
+
+### logging / checkpoints
+logging_steps: 1
+saves_per_epoch: 1
+save_total_limit: 1
+seed: 42

@@ -1,0 +1,13 @@
+# Pin FastAPI below 0.137.0. That release (fastapi/fastapi#15745) made
+# include_router() keep _IncludedRouter wrapper objects in app.routes instead
+# of flattening route copies; those wrappers lack a `.path`, and
+# prometheus-fastapi-instrumentator's route-name resolver reads route.path
+# unconditionally -> AttributeError -> HTTP 500 on EVERY vLLM endpoint
+# (including /health). cray's health check asserts vLLM /health == 200, so the
+# stack reports vllm "down" and the finetune sweep fails with RESTART_FAILED.
+# See vllm-project/vllm#45597 and trallnag/prometheus-fastapi-instrumentator#370.
+# fastapi-utils pulls FastAPI in transitively, so the ceiling must live here.
+fastapi[standard]>=0.115.0,<0.137.0
+fastapi-utils
+setuptools-rust>=1.9.0
+typing-inspect

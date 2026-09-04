@@ -1,0 +1,37 @@
+# Environment for train_embedding_standalone.py (sentence-transformers embedding fine-tuning).
+# These are NOT preinstalled in the base training venv; install into a dedicated venv.
+#
+# Core embedding stack
+sentence-transformers==5.7.0
+mteb==2.18.16                 # code targets mteb>=2.7.8 (uses mteb.evaluate / ResultCache)
+model2vec==0.8.2             # only needed for the static "potion-*" (model2vec) models
+
+# Training stack
+# AMD/ROCm: install the ROCm torch wheel FIRST, then the rest of this file:
+#   pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
+# (verified on MI355X / ROCm 7.2.4 — installs as torch 2.11.0+rocm7.2, which satisfies
+# the ==2.11.0 pin below; all other pins install unmodified).
+# Do NOT install flash-attn on ROCm (CUDA-only build) — load_model() auto-selects "sdpa".
+#
+# NVIDIA/CUDA 13.0 (verified on H100 80GB, driver 580.173.02, 2026-08-22):
+#   pip install torch==2.11.0 numpy==2.5.1   # resolves to torch 2.11.0+cu130 from default PyPI
+# The ==2.11.0 pin has a native cu130 wheel — NO --index-url needed. Re-check
+# torch.version.cuda == '13.0' after installing the rest (some deps clobber torch).
+torch==2.11.0
+accelerate==1.14.0
+transformers==5.5.0
+datasets==4.3.0
+
+# Optional: flash-attn is used for transformer-backed models
+# (attn_implementation="flash_attention_2"). Change to "sdpa" in load_model()
+# if you can't build it.
+# CUDA (H100): built from source against torch 2.11+cu130 (no prebuilt wheel for this
+# combo) and works — `pip install flash-attn==2.8.3 --no-build-isolation` with CUDA_HOME
+# set to /usr/local/cuda-13.0 (~2 min). load_model() now auto-falls back to "sdpa" if the
+# import fails, so this line stays optional on both CUDA and ROCm.
+# flash-attn==2.8.3
+
+# Utilities
+python-dotenv==1.2.2
+tensorboard==2.21.0
+numpy==2.5.1

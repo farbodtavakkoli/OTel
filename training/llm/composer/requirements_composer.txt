@@ -1,0 +1,128 @@
+# MosaicML Composer LLM fine-tuning -- deps for train_llm_composer.py
+#
+# All from PyPI. Note the package name: the PyPI distribution is `mosaicml`,
+# the import root is `composer`. `pip install composer` installs an unrelated
+# project -- do not do that.
+#
+# Install torch FIRST, matched to your CUDA build, then the rest:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+#   pip install -r requirements_composer.txt
+#
+# ---------------------------------------------------------------------------
+# NVIDIA H100 — TESTED AND WORKING (CUDA 13.0, driver 580.173.02, 2026-08-22).
+# ---------------------------------------------------------------------------
+# On H100 you do NOT need the cu128 --index-url line or any override: just let
+# mosaicml resolve torch from the default index. Its `torch<2.7.1` pin lands on
+# torch 2.7.0+cu126, a cu12.6 build that RUNS on this CUDA-13/driver-580 host
+# (driver backward-compat) -- bf16 matmul executes on-GPU and
+# `composer.utils.get_device(None)` returns DeviceGPU. Because the pin is
+# SATISFIED (not violated as on ROCm), `pip check` is clean and NO
+# --force-reinstall --no-deps dance is required.
+#
+#   python -m venv .env_composer && source .env_composer/bin/activate
+#   pip install "mosaicml>=0.27.0"     # resolves torch 2.7.0+cu126 (expected clobber)
+#   pip install "transformers>=4.51.0" tokenizers torchmetrics python-dotenv huggingface_hub
+#   # re-verify: python -c "import torch;print(torch.__version__, torch.cuda.is_available())"
+#   #  -> 2.7.0+cu126 True
+#
+# Verified working set on H100 (readme_composer.md section 8 has the run log):
+#   torch==2.7.0+cu126  triton==3.3.0  (CUDA triton shipped with torch 2.7.0 -- do NOT
+#   blind-uninstall it)  mosaicml==0.32.1  transformers==5.15.1  tokenizers==0.22.2
+#   torchmetrics==1.7.4  numpy==2.2.6  huggingface_hub (>=0.26)
+#
+# `pip install torch` ALONE gives torch 2.13.0+cu130 on this box; mosaicml then
+# downgrades it to 2.7.0+cu126 to satisfy its pin. If you specifically WANT
+# 2.13.0+cu130, reinstall it AFTER mosaicml with:
+#   pip install --force-reinstall --no-deps torch==2.13.0
+# `pip check` will then flag torch<2.7.1 as violated (expected); Composer 0.32.1
+# still runs. NOT needed on H100 -- 2.7.0+cu126 works out of the box.
+#
+# `--attn_implementation sdpa` (default) needs no build step. flash-attn on H100
+# is possible but was not required for this smoke (LFM2 hybrid arch; sdpa fine).
+# Use plain CUDA_VISIBLE_DEVICES; no HIP_VISIBLE_DEVICES on NVIDIA.
+# ---------------------------------------------------------------------------
+
+# Core
+mosaicml>=0.27.0              # imports as `composer`; also installs the `composer`
+                              # CLI launcher used to start distributed runs
+torch>=2.4.0
+transformers>=4.51.0          # AutoModelForCausalLM + chat templates
+tokenizers>=0.20.0
+torchmetrics>=1.4.0           # LanguageCrossEntropy / LanguagePerplexity build on this
+python-dotenv>=1.0.1          # dev.env / HF_TOKEN
+huggingface_hub>=0.26.0       # gated-checkpoint downloads
+
+# `pip install "mosaicml[nlp]"` pulls the transformers/datasets extras in one go;
+# they are listed explicitly above so the versions are visible.
+
+# Optional
+# mosaicml-streaming>=0.9.0   # StreamingDataset: shard-and-stream data from S3/GCS/OCI.
+                              # Not used by this script (it reads a local JSONL), but it
+                              # is the Mosaic-native answer to datasets that do not fit
+                              # on local disk.
+# peft>=0.13.0                # HuggingFaceModel(peft_config=...) -- LoRA only
+# wandb>=0.18.0               # composer.loggers.WandBLogger
+# mlflow>=2.16.0              # composer.loggers.MLFlowLogger
+
+# Optional: FlashAttention-2 (--attn_implementation flash_attention_2)
+# MUST use --no-build-isolation, and only AFTER torch is installed:
+#   pip install flash-attn --no-build-isolation
+# `--attn_implementation sdpa` (the default) needs none of this.
+
+# Docker (upstream's recommendation)
+# MosaicML publish pre-built images and recommend them over a hand-built env:
+#   https://hub.docker.com/orgs/mosaicml/repositories
+#   e.g. mosaicml/pytorch:2.7.0_cu128-python3.12-ubuntu22.04
+# These carry torch + CUDA + flash-attn already; you still `pip install mosaicml`.
+
+# ---------------------------------------------------------------------------
+# AMD / ROCm — TESTED AND WORKING on MI355X (gfx950), ROCm 7.2.4, 2026-08-19.
+# ---------------------------------------------------------------------------
+# Upstream's README still says AMD support is "coming soon", but Composer 0.32.1
+# runs fine on a ROCm torch build: `composer.utils.get_device(None)` returns
+# DeviceGPU and training completes with finite loss. See readme_composer.md
+# section 8 for the run log and evidence.
+#
+# THE CATCH: `mosaicml` pins `torch<2.7.1`, and the ROCm 7.2 wheel index only
+# publishes torch 2.11.0 / 2.12.0 / 2.12.1 / 2.13.0. The pin is UNSATISFIABLE on
+# ROCm 7.2 and must be overridden. Do NOT `pip install -r` this file on ROCm --
+# pip would resolve the pin and install the CUDA torch. Use these lines instead,
+# in this exact order:
+#
+#   python -m venv .env_composer
+#   source .env_composer/bin/activate
+#
+#   # 1. Composer first. This pulls CUDA torch 2.7.0 + ~3GB of nvidia-* wheels.
+#   #    Let it happen; step 2 overwrites them.
+#   pip install "mosaicml>=0.27.0" python-dotenv
+#   pip install transformers tokenizers huggingface_hub
+#
+#   # 2. Force the ROCm wheels over the CUDA ones. --no-deps is REQUIRED: without
+#   #    it pip re-resolves mosaicml's torch pin and puts the CUDA wheel back.
+#   pip install --force-reinstall --no-deps \
+#     torch==2.13.0+rocm7.2 torchvision==0.28.0+rocm7.2 \
+#     --index-url https://download.pytorch.org/whl/rocm7.2
+#
+#   # 3. Remove the dead CUDA runtime wheels (~3GB).
+#   pip uninstall -y $(pip list --format=freeze | grep -oE "^nvidia-[a-z0-9-]+" | tr '\n' ' ')
+#
+# TRITON TRAP: the CUDA `triton` wheel installs over the same `triton/` package
+# directory that ROCm's `triton-rocm` owns. If you `pip uninstall triton` while
+# purging CUDA packages you break `import torch` with
+# "AttributeError: module 'triton' has no attribute 'language'". Recover with the
+# pin torch 2.13.0+rocm7.2 actually requires (`triton-rocm`, NOT `pytorch-triton-rocm`):
+#
+#   pip install --force-reinstall --no-deps triton-rocm==3.7.1 \
+#     --index-url https://download.pytorch.org/whl/rocm7.2
+#
+# `pip check` will then report these two violations forever. Expected; ignore:
+#   mosaicml 0.32.1 has requirement torch<2.7.1,>=2.6.0, but you have torch 2.13.0+rocm7.2.
+#   mosaicml 0.32.1 has requirement torchvision<0.22.1,>=0.21.0, but you have torchvision 0.28.0+rocm7.2.
+#
+# Verified working set on MI355X:
+#   torch==2.13.0+rocm7.2  torchvision==0.28.0+rocm7.2  triton-rocm==3.7.1
+#   mosaicml==0.32.1  transformers==5.15.0  tokenizers==0.22.2
+#   huggingface_hub==1.28.0  numpy==2.2.6  torchmetrics==1.7.4
+#
+# Do NOT `pip install flash-attn` on ROCm. `--attn_implementation sdpa` (default)
+# needs no build step and works.

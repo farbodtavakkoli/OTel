@@ -1,0 +1,4741 @@
+diff --git a/Dockerfile b/Dockerfile
+index 8ec0a7d..9de9fb0 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -81,7 +81,11 @@ ENV BASE_NAME=cpu
+ 
+ ###############################################################################
+ # AMD BASE IMAGE
+-FROM gdiamos/rocm-base-mi300:v0.9926 AS amd
++# MI355X (gfx950) port: rocm-base-mi300:v0.9926 ships torch 2.9, but the
++# vllm-fork pin (v0.27.1 era, #223) needs torch >= 2.12 stable-ABI headers
++# (torch/csrc/stable/accelerator.h). rocm/primus provides torch 2.12+rocm7.15
++# built for gfx942;gfx950. Same base swap the tensorwavecloud AMD PR (#5) made.
++FROM rocm/primus:v26.5 AS amd
+ 
+ ENV BASE_NAME=amd
+ 
+@@ -91,7 +95,35 @@ ENV HIP_FORCE_DEV_KERNARG=1
+ ARG INSTALL_ROOT=/app/cray
+ WORKDIR ${INSTALL_ROOT}
+ 
+-ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}:/app/venv/lib/python3.12/site-packages/torch/lib:/usr/local/rdma-lib
++# primus keeps the venv at /opt/venv, OpenMPI at /opt/openmpi, and ROCm as a
++# pip SDK (_rocm_sdk_devel) with no /opt/rocm. Alias both to the conventional
++# paths: plenty of ROCm tooling probes /opt/rocm, and /opt/ompi-rocm is the
++# layout the ROCm OpenMPI builds expect. (These also served the gpu_aware_mpi
++# extension's hardcoded paths before PR #5 removed it.)
++# Slurm + PMIx came from the old base; install them here like the cpu stage.
++ENV PATH="/opt/venv/bin:/opt/openmpi/bin:${PATH}"
++RUN ln -sfn /opt/openmpi /opt/ompi-rocm && \
++    ln -sfn /opt/venv/lib/python3.12/site-packages/_rocm_sdk_devel /opt/rocm && \
++    pip install uv && uv pip install ninja "setuptools>=77"
++
++# vLLM detects ROCm by importing `amdsmi`. The PyPI amdsmi (7.0.x) ABI-mismatches
++# primus's libamd_smi.so.26: it sees 8 GPUs alone but 0 once torch has loaded the
++# SDK's library first. Use the SDK's own matching python bindings instead.
++RUN ln -sfn /opt/venv/lib/python3.12/site-packages/_rocm_sdk_core/share/amd_smi/amdsmi \
++        /opt/venv/lib/python3.12/site-packages/amdsmi
++RUN apt-get update -y && apt-get install -y \
++        slurm-wlm libslurm-dev libpmix-dev \
++    && rm -rf /var/lib/apt/lists/*
++
++# _rocm_sdk_core/lib MUST come first. primus ships libamd_comgr.so.3 and
++# librocprofiler-sdk.so.1 in BOTH _rocm_sdk_core and _rocm_sdk_devel, and the base
++# image's LD_LIBRARY_PATH points at devel. torch loads core's copies, so a training
++# process ends up with two copies of each -> rocprofiler aborts ("REGISTER_LIBRARY
++# already set ... not overriding") or LLVM aborts ("Option 'spirv-expand-step'
++# registered more than once"). Prepending core makes every soname lookup resolve to
++# ONE copy; devel stays on the path because it supplies librocm-openblas and the
++# rest of the rocm_sysdeps shared objects.
++ENV LD_LIBRARY_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core/lib:${LD_LIBRARY_PATH:-}:/opt/venv/lib/python3.12/site-packages/torch/lib:/opt/openmpi/lib
+ 
+ ###############################################################################
+ # ScalarLM React UI build stage
+@@ -186,10 +218,10 @@ WORKDIR ${INSTALL_ROOT}
+ # MAIN IMAGE
+ FROM vllm AS infra
+ 
+-# Build GPU-aware MPI
+-COPY ./infra/cray_infra/training/gpu_aware_mpi ${INSTALL_ROOT}/infra/cray_infra/training/gpu_aware_mpi
+-RUN python3 ${INSTALL_ROOT}/infra/cray_infra/training/gpu_aware_mpi/setup.py bdist_wheel --dist-dir=dist && \
+-    pip install dist/*.whl
++# The gpu_aware_mpi C++ extension is gone (PR #5): collectives now run through
++# torch.distributed + NCCL/RCCL (infra/cray_infra/training/distributed.py), so
++# there is no per-ROCm-release extension to compile here. OpenMPI itself stays in
++# the image — mpirun is still the multi-node bootstrap for torchrun.
+ 
+ RUN apt-get update -y  \
+     && apt-get install -y build-essential \
+diff --git a/docker-compose.yaml b/docker-compose.yaml
+index dfc5659..47e0a81 100644
+--- a/docker-compose.yaml
++++ b/docker-compose.yaml
+@@ -3,6 +3,13 @@ services:
+     cray: &cray
+         image: cray:latest
+         command: /app/cray/scripts/start_one_server.sh
++        # Multi-GPU training maps its MPI/UCX shared-memory segments out of
++        # /dev/shm, one set per rank. Docker's 64MB default is far too small:
++        # ranks die with SIGBUS (signal 7, "Bus error") the moment the segment
++        # can't be mapped, and Slurm then relaunches the job in a loop. Measured
++        # on 8x MI355X: 8 ranks exhausted a 16GB /dev/shm. 64GB carries an
++        # 8-rank job with headroom; raise it further for more ranks per node.
++        shm_size: 64gb
+         # Compose only forwards variables declared here; `SCALARLM_FOO=x
+         # docker compose up` reaches build args and ${} interpolation, never
+         # the server. Each `${VAR:-fallback}` below is always set, so the
+diff --git a/infra/cray_infra/slurm/discovery/discover_clusters.py b/infra/cray_infra/slurm/discovery/discover_clusters.py
+index 2f25699..8e86939 100644
+--- a/infra/cray_infra/slurm/discovery/discover_clusters.py
++++ b/infra/cray_infra/slurm/discovery/discover_clusters.py
+@@ -444,12 +444,20 @@ def write_gres_config(cluster_info):
+     """
+     NodeName=41ad10a2cba0 Name=gpu File=/dev/nvidia0
+     """
++    # The File= entries must agree with the Gres=gpu:N count written into
++    # slurm.conf by write_node_config, or slurmd refuses to register the node
++    # ("Gres count mismatch"). Apply the same max_gpus_per_node cap here.
++    max_gpus_per_node = get_config()["max_gpus_per_node"]
++
+     gres_config = ""
+     for node in cluster_info["all_nodes"]:
+-        for index in node["gpu_indexes"]:
++        gpu_indexes = node["gpu_indexes"][: min(max_gpus_per_node, node["gpu_count"])]
++        for index in gpu_indexes:
+             if node["gpu_type"] == "amd":
++                # renderD*, not card* — ROCm drives the render node (see
++                # get_amd_render_node_indexes).
+                 gres_config += (
+-                    f"NodeName={node['hostname']} Name=gpu File=/dev/dri/card{index}\n"
++                    f"NodeName={node['hostname']} Name=gpu File=/dev/dri/renderD{index}\n"
+                 )
+             else:
+                 gres_config += (
+@@ -466,11 +474,53 @@ def write_cgroup_config(cluster_info):
+             shared_config.write(config.read())
+ 
+ 
++def get_amd_render_node_indexes():
++    """Render-node minor numbers of the REAL GPUs on a ROCm host.
++
++    Two things make the naive `/dev/dri/card*` scan wrong on MI300/MI355:
++
++    1. HIP/ROCm drives a GPU through its **render** node (`/dev/dri/renderD*`)
++       plus `/dev/kfd` — never the `card*` (KMS/display) node. Handing Slurm a
++       `card*` path means `ConstrainDevices=yes` admits a device ROCm cannot use.
++    2. Each physical GPU also publishes seven `amdgpu_xcp_*` compute-partition
++       nodes, so an 8-GPU box exposes 64 render nodes and 65 card nodes. Only the
++       nodes whose sysfs `device` link resolves to a real PCI BDF (`0000:0b:00.0`)
++       are whole GPUs; the `amdgpu_xcp_N` ones are partitions of one.
++
++    Returns the sorted minor numbers, e.g. [128, 136, 144, ...] for 8x MI355X.
++    """
++    indexes = []
++    drm_root = "/sys/class/drm"
++
++    if not os.path.exists(drm_root):
++        return indexes
++
++    for entry in os.listdir(drm_root):
++        if not entry.startswith("renderD"):
++            continue
++
++        suffix = entry[len("renderD") :]
++        if not suffix.isdigit():
++            continue
++
++        try:
++            device_link = os.path.join(drm_root, entry, "device")
++            target = os.path.basename(os.path.realpath(device_link))
++        except OSError:
++            continue
++
++        # A PCI BDF has two colons ("0000:0b:00.0"); a partition does not
++        # ("amdgpu_xcp_3").
++        if target.count(":") >= 2:
++            indexes.append(int(suffix))
++
++    return sorted(indexes)
++
++
+ def get_gpu_indexes():
+     # handle the case where the card is an arbtirary number
+     if torch.version.hip:
+-        prefix = "/dev/dri"
+-        card_name = "card"
++        return get_amd_render_node_indexes()
+     else:
+         prefix = "/dev"
+         card_name = "nvidia"
+diff --git a/infra/cray_infra/training/distributed.py b/infra/cray_infra/training/distributed.py
+new file mode 100644
+index 0000000..1ba1040
+--- /dev/null
++++ b/infra/cray_infra/training/distributed.py
+@@ -0,0 +1,219 @@
++"""NCCL/RCCL collectives via torch.distributed.
++
++Ported from tensorwavecloud/ScalarLM PR #5 ("move from mpi/ucx collectives to
++nccl"). This is a drop-in replacement for the hand-written ``gpu_aware_mpi`` C++
++extension: same function names, same call signatures, so every call site only
++changes its import line.
++
++Why AMD recommend it on MI300/MI355:
++
++* RCCL is AMD's own collective library and is topology-aware — it drives xGMI /
++  Infinity Fabric between GPUs on a node, where the OpenMPI+UCX path went through
++  generic transports.
++* torch.distributed handles bf16/fp16 natively. The MPI extension had no such
++  datatype and mapped both onto ``MPI_SHORT``; that is fine for byte-moving
++  collectives but silently corrupts ``allreduce``, the one collective that does
++  arithmetic (MPI_SUM adds raw IEEE bit patterns as int16). Moving to NCCL
++  removes that entire class of bug rather than patching it.
++* No custom C++ extension to compile and keep working against each new ROCm.
++
++Requires the torchrun-style environment (RANK / LOCAL_RANK / WORLD_SIZE /
++MASTER_ADDR / MASTER_PORT); ``scripts/train_job_entrypoint.sh`` sets it up.
++NCCL collectives require CUDA tensors, so every buffer is moved on-device and
++made contiguous here — callers that used to hand in CPU tensors keep working.
++"""
++
++import os
++import sys
++import time
++
++import torch
++import torch.distributed as dist
++
++from cray_infra.training.train_debug import is_train_debug_enabled
++
++
++def _trace(msg: str) -> None:
++    if not is_train_debug_enabled():
++        return
++    rank = os.environ.get("RANK", os.environ.get("SLURM_PROCID", "?"))
++    sys.stderr.write(f"[rank={rank}] dist [{time.monotonic():.3f}]: {msg}\n")
++    sys.stderr.flush()
++
++
++def _local_rank() -> int:
++    """This process's GPU index on its own host.
++
++    torchrun sets LOCAL_RANK; OpenMPI and Slurm are accepted as fallbacks so the
++    module still works if the job is launched by mpirun directly.
++    """
++    for var in ("LOCAL_RANK", "OMPI_COMM_WORLD_LOCAL_RANK", "SLURM_LOCALID"):
++        raw = os.environ.get(var)
++        if raw is not None:
++            try:
++                return int(raw)
++            except ValueError:
++                continue
++    return 0
++
++
++def _cuda_device() -> torch.device:
++    return torch.device("cuda", _local_rank())
++
++
++def cuda_device() -> torch.device:
++    return _cuda_device()
++
++
++def _to_cuda(tensor: torch.Tensor) -> torch.Tensor:
++    return tensor if tensor.is_cuda else tensor.to(_cuda_device())
++
++
++def _ensure_contiguous(tensor: torch.Tensor) -> torch.Tensor:
++    return tensor if tensor.is_contiguous() else tensor.contiguous()
++
++
++def _prepare(tensor: torch.Tensor) -> torch.Tensor:
++    return _ensure_contiguous(_to_cuda(tensor))
++
++
++def init():
++    _trace(
++        f"init() pid={os.getpid()} RANK={os.environ.get('RANK')} "
++        f"LOCAL_RANK={os.environ.get('LOCAL_RANK')} "
++        f"WORLD_SIZE={os.environ.get('WORLD_SIZE')} "
++        f"MASTER_ADDR={os.environ.get('MASTER_ADDR')}:{os.environ.get('MASTER_PORT')}"
++    )
++    if dist.is_initialized():
++        _trace("init() skipped, already initialized")
++        return
++    if not torch.cuda.is_available():
++        raise RuntimeError("CUDA/ROCm is required for distributed training")
++
++    # set_device BEFORE init_process_group: NCCL binds its communicator to the
++    # current device, and every rank defaulting to device 0 is the classic cause
++    # of a hang on the first collective.
++    local_rank = _local_rank()
++    torch.cuda.set_device(local_rank)
++
++    dist.init_process_group(backend="nccl")
++    _trace(
++        f"init_process_group complete rank={dist.get_rank()} "
++        f"world_size={dist.get_world_size()} backend={dist.get_backend()} "
++        f"device=cuda:{local_rank}"
++    )
++
++
++def _ensure_initialized():
++    if not dist.is_initialized():
++        init()
++
++
++def get_rank():
++    _ensure_initialized()
++    return dist.get_rank()
++
++
++def get_size():
++    _ensure_initialized()
++    return dist.get_world_size()
++
++
++def barrier():
++    if not dist.is_initialized():
++        return
++    dist.barrier()
++
++
++def allgather(sendbuf, recvbuf):
++    _ensure_initialized()
++    sendbuf = _prepare(sendbuf)
++    device_recv = _prepare(recvbuf)
++    dist.all_gather_into_tensor(device_recv, sendbuf)
++    # _prepare() COPIES a CPU tensor to the GPU, so NCCL fills the copy and the
++    # caller's buffer would silently stay zero. The MPI extension wrote through
++    # to CPU buffers, so any call site that still passes one must keep working:
++    # copy the result back. (Call sites on the hot path allocate on-device and
++    # skip this entirely.)
++    if device_recv is not recvbuf:
++        recvbuf.copy_(device_recv.view_as(recvbuf))
++        return recvbuf
++    return device_recv
++
++
++def reduce_scatter(sendbuf, recvbuf):
++    _ensure_initialized()
++    sendbuf = _prepare(sendbuf)
++    device_recv = _prepare(recvbuf)
++    dist.reduce_scatter_tensor(device_recv, sendbuf, op=dist.ReduceOp.SUM)
++    if device_recv is not recvbuf:
++        recvbuf.copy_(device_recv.view_as(recvbuf))
++        return recvbuf
++    return device_recv
++
++
++def allreduce(tensor, op=dist.ReduceOp.SUM):
++    _ensure_initialized()
++    device_tensor = _prepare(tensor)
++    dist.all_reduce(device_tensor, op=op)
++    # allreduce is in-place in the MPI extension; preserve that for CPU callers.
++    if device_tensor is not tensor:
++        tensor.copy_(device_tensor.view_as(tensor))
++        return tensor
++    return device_tensor
++
++
++def alltoall(sendbuf, recvbuf=None):
++    _ensure_initialized()
++    sendbuf = _prepare(sendbuf)
++    world_size = get_size()
++    if sendbuf.numel() % world_size != 0:
++        raise ValueError("alltoall send buffer numel must be divisible by world size")
++
++    input_list = [_ensure_contiguous(c) for c in sendbuf.chunk(world_size, dim=0)]
++
++    if recvbuf is None:
++        recvbuf = torch.empty_like(sendbuf)
++    device_recv = _prepare(recvbuf)
++    output_list = list(device_recv.chunk(world_size, dim=0))
++
++    dist.all_to_all(output_list, input_list)
++    # Same CPU write-back contract as allgather/reduce_scatter/allreduce/recv:
++    # _prepare() copies a CPU tensor to the GPU, so without this the caller's
++    # buffer would silently keep its old contents.
++    if device_recv is not recvbuf:
++        recvbuf.copy_(device_recv.view_as(recvbuf))
++        return recvbuf
++    return device_recv
++
++
++def send(tensor, dest: int):
++    _ensure_initialized()
++    tensor = _prepare(tensor)
++    dist.send(tensor, dst=dest)
++    return tensor
++
++
++def recv(tensor, source: int):
++    _ensure_initialized()
++    device_tensor = _prepare(tensor)
++    dist.recv(device_tensor, src=source)
++    # recv fills its buffer in place. If _prepare() had to stage a CPU tensor on
++    # the GPU, the caller's tensor is a different object and would silently keep
++    # its old contents — write the received data back. (test_sendrecv_cpu asserts
++    # on the original buffer and fails without this.)
++    if device_tensor is not tensor:
++        tensor.copy_(device_tensor.view_as(tensor))
++        return tensor
++    return device_tensor
++
++
++def finalize():
++    if dist.is_initialized():
++        dist.barrier()
++        dist.destroy_process_group()
++
++
++# The MPI extension spelled teardown `finalize_mpi`; keep the name so the
++# existing call sites (main.py, training_job_context.py) stay unchanged.
++finalize_mpi = finalize
+diff --git a/infra/cray_infra/training/gpu_aware_mpi/common.h b/infra/cray_infra/training/gpu_aware_mpi/common.h
+deleted file mode 100644
+index 7d78747..0000000
+--- a/infra/cray_infra/training/gpu_aware_mpi/common.h
++++ /dev/null
+@@ -1,150 +0,0 @@
+-#pragma once
+-
+-#include <mpi.h>
+-#include <torch/extension.h>
+-#include <torch/cuda.h>
+-#include <cstdint>
+-#include <functional>
+-#include <stdexcept>
+-#include <tuple>
+-#include <string>
+-#include <vector>
+-
+-// ---------------------------------------------------------------------------
+-// MPI lifecycle
+-// ---------------------------------------------------------------------------
+-inline bool& mpi_initialized_flag() {
+-    static bool flag = false;
+-    return flag;
+-}
+-
+-inline void ensure_mpi_initialized() {
+-    if (!mpi_initialized_flag()) {
+-        MPI_Init(nullptr, nullptr);
+-        mpi_initialized_flag() = true;
+-    }
+-}
+-
+-// ---------------------------------------------------------------------------
+-// CUDA sync helper
+-// ---------------------------------------------------------------------------
+-inline void sync_cuda_if_needed(const torch::Tensor& tensor) {
+-    if (tensor.is_cuda()) {
+-        torch::cuda::synchronize(tensor.device().index());
+-    }
+-}
+-
+-// ---------------------------------------------------------------------------
+-// MPI datatype mapping
+-// ---------------------------------------------------------------------------
+-inline std::tuple<MPI_Datatype, size_t> get_typesize(torch::ScalarType dtype) {
+-    switch (dtype) {
+-        case torch::kFloat32:  return {MPI_FLOAT,          sizeof(float)};
+-        case torch::kFloat64:  return {MPI_DOUBLE,         sizeof(double)};
+-        case torch::kFloat16:  return {MPI_SHORT,          sizeof(int16_t)};
+-        case torch::kBFloat16: return {MPI_SHORT,          sizeof(int16_t)};
+-        case torch::kInt32:    return {MPI_INT,            sizeof(int32_t)};
+-        case torch::kInt64:    return {MPI_LONG_LONG,      sizeof(int64_t)};
+-        case torch::kUInt8:    return {MPI_UNSIGNED_CHAR,  sizeof(uint8_t)};
+-        case torch::kInt8:     return {MPI_CHAR,           sizeof(int8_t)};
+-        default:
+-            throw std::runtime_error("Unsupported torch::ScalarType for MPI communication");
+-    }
+-}
+-
+-inline MPI_Datatype get_mpi_datatype(const torch::Tensor& tensor) {
+-    return std::get<0>(get_typesize(tensor.scalar_type()));
+-}
+-
+-// ---------------------------------------------------------------------------
+-// ShmSignal
+-//
+-// 16-byte payload sent via MPI_Isend/MPI_Irecv as the "data ready" ping on
+-// the shm fast path.  Carries the generation counter and the slot index so
+-// the receiver can spin-wait on the exact slot/generation it expects.  The
+-// generation counter lets the sender pipeline (double-buffered slots in
+-// shm_channel.h) without ambiguity about which write the signal refers to,
+-// and closes the memory-visibility window where an MPI signal could be
+-// observed before the memcpy it guards becomes visible on the peer's core.
+-//
+-// Fixed 16 bytes so the on-wire representation matches a primitive type
+-// group the MPI implementation will always treat as eager.
+-// ---------------------------------------------------------------------------
+-struct ShmSignal {
+-    uint64_t gen;        // generation the receiver must spin-wait for (slot.seq == gen)
+-    uint32_t slot_idx;   // which of the channel's slots the sender wrote
+-    uint32_t _pad{0};    // pad to 16 bytes; explicit so layout is stable
+-};
+-static_assert(sizeof(ShmSignal) == 16, "ShmSignal must be 16 bytes on the wire");
+-
+-// ---------------------------------------------------------------------------
+-// Async request handle
+-//
+-// Both the standard MPI path and the shm path return an MpiRequest.
+-//
+-// Standard MPI path:
+-//   mpi_req holds a real MPI_Request; on_complete is empty.
+-//
+-// SHM path:
+-//   shm_isend: copies data into shm, then posts MPI_Isend for the ShmSignal.
+-//              mpi_req holds that Isend handle.  on_complete is empty — the
+-//              sender has nothing to do at wait time.
+-//   shm_irecv: posts MPI_Irecv for the ShmSignal.  on_complete holds a
+-//              closure that (a) spin-waits for slot.seq == signal.gen, then
+-//              (b) memcpys the payload out of shm, then (c) bumps the
+-//              receiver-side reader_done counter to unblock the sender's
+-//              backpressure on the next reuse of this slot.
+-//
+-// shm_sig provides stable storage for the ShmSignal buffer required by
+-// MPI_Isend/MPI_Irecv (the buffer must outlive the MPI operation).  Because
+-// an in-flight MPI_Request must not be copied behind MPI's back, MpiRequest
+-// is move-only — the deleted copy operators make accidental copies a
+-// compile-time error rather than a runtime double-wait.
+-// ---------------------------------------------------------------------------
+-struct MpiRequest {
+-    MPI_Request           mpi_req    = MPI_REQUEST_NULL;
+-    bool                  completed  = false;
+-    ShmSignal             shm_sig{};       // stable MPI buffer for the shm signal
+-    std::function<void()> on_complete;      // called once by mpi_wait after MPI_Wait
+-
+-    MpiRequest() = default;
+-    MpiRequest(MpiRequest&&) noexcept = default;
+-    MpiRequest& operator=(MpiRequest&&) noexcept = default;
+-    MpiRequest(const MpiRequest&) = delete;
+-    MpiRequest& operator=(const MpiRequest&) = delete;
+-};
+-
+-inline void mpi_wait(MpiRequest& req) {
+-    if (req.completed) return;
+-    MPI_Status st;
+-    int err = MPI_Wait(&req.mpi_req, &st);
+-    if (err != MPI_SUCCESS)
+-        throw std::runtime_error("MPI_Wait failed: " + std::to_string(err));
+-    if (req.on_complete) req.on_complete();
+-    req.completed = true;
+-}
+-
+-inline void mpi_waitall(std::vector<MpiRequest>& reqs) {
+-    // Collect handles for all still-pending requests, preserving index mapping
+-    // so we can run each request's callback after MPI_Waitall completes.
+-    std::vector<MPI_Request> pending;
+-    std::vector<size_t>      indices;
+-    for (size_t i = 0; i < reqs.size(); ++i) {
+-        if (!reqs[i].completed) {
+-            pending.push_back(reqs[i].mpi_req);
+-            indices.push_back(i);
+-        }
+-    }
+-    if (pending.empty()) return;
+-
+-    std::vector<MPI_Status> statuses(pending.size());
+-    int err = MPI_Waitall(static_cast<int>(pending.size()), pending.data(), statuses.data());
+-    if (err != MPI_SUCCESS)
+-        throw std::runtime_error("MPI_Waitall failed: " + std::to_string(err));
+-
+-    // All MPI ops have landed; run completion callbacks in posting order.
+-    for (size_t idx : indices) {
+-        if (reqs[idx].on_complete) reqs[idx].on_complete();
+-        reqs[idx].completed = true;
+-    }
+-}
+diff --git a/infra/cray_infra/training/gpu_aware_mpi/gpu_aware_mpi.cpp b/infra/cray_infra/training/gpu_aware_mpi/gpu_aware_mpi.cpp
+deleted file mode 100644
+index 0f4c285..0000000
+--- a/infra/cray_infra/training/gpu_aware_mpi/gpu_aware_mpi.cpp
++++ /dev/null
+@@ -1,269 +0,0 @@
+-#include "common.h"
+-#include "shm_channel.h"
+-#include "shm_transport.h"
+-#include "mpi_transport.h"
+-
+-#include <iostream>
+-#include <vector>
+-
+-// ===================================================================
+-// Lifecycle
+-// ===================================================================
+-
+-static bool g_shm_discovered = false;
+-
+-static void ensure_shm_discovered() {
+-    if (!g_shm_discovered) {
+-        shm_discover_peers();
+-        g_shm_discovered = true;
+-    }
+-}
+-
+-void barrier() {
+-    ensure_mpi_initialized();
+-    MPI_Barrier(MPI_COMM_WORLD);
+-}
+-
+-int get_rank() {
+-    ensure_mpi_initialized();
+-    int rank;
+-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+-    return rank;
+-}
+-
+-int get_size() {
+-    ensure_mpi_initialized();
+-    int size;
+-    MPI_Comm_size(MPI_COMM_WORLD, &size);
+-    return size;
+-}
+-
+-void finalize_mpi() {
+-    if (mpi_initialized_flag()) {
+-        shm_cleanup();
+-        MPI_Finalize();
+-        mpi_initialized_flag() = false;
+-        g_shm_discovered = false;
+-    }
+-}
+-
+-// ===================================================================
+-// Send / Recv — dispatch to shm or standard MPI
+-// ===================================================================
+-
+-void mpi_send(torch::Tensor& tensor, int dest) {
+-    ensure_mpi_initialized();
+-    ensure_shm_discovered();
+-
+-    if (shm_is_peer(dest)) {
+-        shm_send(tensor, dest);
+-    } else {
+-        mpi_send_standard(tensor, dest);
+-    }
+-}
+-
+-void mpi_recv(torch::Tensor& tensor, int source) {
+-    ensure_mpi_initialized();
+-    ensure_shm_discovered();
+-
+-    if (shm_is_peer(source)) {
+-        shm_recv(tensor, source);
+-    } else {
+-        mpi_recv_standard(tensor, source);
+-    }
+-}
+-
+-// ===================================================================
+-// Async send / recv — dispatch to shm or standard MPI
+-// ===================================================================
+-
+-MpiRequest mpi_isend(torch::Tensor& tensor, int dest) {
+-    ensure_mpi_initialized();
+-    ensure_shm_discovered();
+-
+-    if (shm_is_peer(dest))
+-        return shm_isend(tensor, dest);
+-    else
+-        return mpi_isend_standard(tensor, dest);
+-}
+-
+-MpiRequest mpi_irecv(torch::Tensor& tensor, int source) {
+-    ensure_mpi_initialized();
+-    ensure_shm_discovered();
+-
+-    if (shm_is_peer(source))
+-        return shm_irecv(tensor, source);
+-    else
+-        return mpi_irecv_standard(tensor, source);
+-}
+-
+-// ===================================================================
+-// Collectives
+-// ===================================================================
+-
+-void mpi_allreduce(torch::Tensor& tensor) {
+-    ensure_mpi_initialized();
+-
+-    if (!tensor.is_contiguous()) {
+-        tensor = tensor.contiguous();
+-    }
+-
+-    sync_cuda_if_needed(tensor);
+-
+-    MPI_Datatype datatype = get_mpi_datatype(tensor);
+-    int err = MPI_Allreduce(MPI_IN_PLACE, tensor.data_ptr(), tensor.numel(),
+-                            datatype, MPI_SUM, MPI_COMM_WORLD);
+-    if (err != MPI_SUCCESS) {
+-        throw std::runtime_error("MPI_Allreduce failed with error code: " + std::to_string(err));
+-    }
+-
+-    sync_cuda_if_needed(tensor);
+-}
+-
+-void mpi_allgather(torch::Tensor& sendbuf, torch::Tensor& recvbuf) {
+-    ensure_mpi_initialized();
+-    ensure_shm_discovered();
+-
+-    if (!sendbuf.is_contiguous()) sendbuf = sendbuf.contiguous();
+-    if (!recvbuf.is_contiguous()) recvbuf = recvbuf.contiguous();
+-
+-    int rank       = get_rank();
+-    int world_size = get_size();
+-    int count      = sendbuf.numel();
+-
+-    sync_cuda_if_needed(sendbuf);
+-
+-    // Copy own slice directly.
+-    recvbuf.slice(0, rank * count, (rank + 1) * count).copy_(sendbuf);
+-
+-    // Issue all isends first so interconnect transfers start immediately.
+-    // Both shm_isend and mpi_isend_standard are now truly non-blocking:
+-    //   - shm_isend:          memcpy already done; posts MPI_Isend for signal.
+-    //   - mpi_isend_standard: posts MPI_Isend for the data itself.
+-    std::vector<MpiRequest> send_reqs;
+-    send_reqs.reserve(world_size - 1);
+-    for (int i = 0; i < world_size; ++i) {
+-        if (i == rank) continue;
+-        send_reqs.push_back(mpi_isend(sendbuf, i));
+-    }
+-
+-    // Issue all irecvs.
+-    // shm_irecv posts MPI_Irecv for the signal; the shm→tensor copy is
+-    // deferred to the on_complete callback fired inside mpi_waitall.
+-    std::vector<MpiRequest>    recv_reqs;
+-    std::vector<torch::Tensor> recv_slices;  // keep slices alive for callbacks
+-    recv_reqs.reserve(world_size - 1);
+-    recv_slices.reserve(world_size - 1);
+-    for (int i = 0; i < world_size; ++i) {
+-        if (i == rank) continue;
+-        auto slice = recvbuf.slice(0, i * count, (i + 1) * count);
+-        recv_slices.push_back(slice);
+-        recv_reqs.push_back(mpi_irecv(recv_slices.back(), i));
+-    }
+-
+-    // Wait for receives first: callbacks run here for the shm path.
+-    mpi_waitall(recv_reqs);
+-    mpi_waitall(send_reqs);
+-
+-    sync_cuda_if_needed(recvbuf);
+-}
+-
+-void mpi_reduce_scatter(torch::Tensor& sendbuf, torch::Tensor& recvbuf) {
+-    ensure_mpi_initialized();
+-    ensure_shm_discovered();
+-
+-    if (!sendbuf.is_contiguous()) sendbuf = sendbuf.contiguous();
+-    if (!recvbuf.is_contiguous()) recvbuf = recvbuf.contiguous();
+-
+-    int rank       = get_rank();
+-    int world_size = get_size();
+-    int count      = recvbuf.numel();
+-
+-    sync_cuda_if_needed(sendbuf);
+-
+-    // Seed recvbuf with our own contribution (slice [rank] of sendbuf).
+-    // Reduction happens in-place via add_() once remote slices arrive.
+-    recvbuf.copy_(sendbuf.slice(0, rank * count, (rank + 1) * count));
+-
+-    // Issue all isends first so interconnect transfers start immediately.
+-    // Each rank sends sendbuf[i*count : (i+1)*count] to rank i.
+-    // Store slices so their storage stays alive for the duration of async ops.
+-    std::vector<torch::Tensor> send_slices;
+-    std::vector<MpiRequest>    send_reqs;
+-    send_slices.reserve(world_size - 1);
+-    send_reqs.reserve(world_size - 1);
+-    for (int i = 0; i < world_size; ++i) {
+-        if (i == rank) continue;
+-        // contiguous() is cheap when sendbuf is already contiguous (1-D slice is always so).
+-        send_slices.push_back(sendbuf.slice(0, i * count, (i + 1) * count).contiguous());
+-        send_reqs.push_back(mpi_isend(send_slices.back(), i));
+-    }
+-
+-    // Post all irecvs into per-peer temporary buffers.
+-    // For the shm path the copy-out is deferred to on_complete inside mpi_waitall;
+-    // for the MPI path the data lands directly into tmp_bufs.
+-    std::vector<torch::Tensor> tmp_bufs;
+-    std::vector<MpiRequest>    recv_reqs;
+-    tmp_bufs.reserve(world_size - 1);
+-    recv_reqs.reserve(world_size - 1);
+-    for (int i = 0; i < world_size; ++i) {
+-        if (i == rank) continue;
+-        tmp_bufs.push_back(torch::empty_like(recvbuf));
+-        recv_reqs.push_back(mpi_irecv(tmp_bufs.back(), i));
+-    }
+-
+-    // Wait for all receives (and shm on_complete callbacks) to finish,
+-    // then reduce: recvbuf already holds our own slice, add each peer's.
+-    mpi_waitall(recv_reqs);
+-    for (auto& tmp : tmp_bufs) {
+-        recvbuf.add_(tmp);
+-    }
+-
+-    // Wait for sends after reduction so we don't exit while shm buffers
+-    // are still referenced by a peer's on_complete callback.
+-    mpi_waitall(send_reqs);
+-
+-    sync_cuda_if_needed(recvbuf);
+-}
+-
+-void mpi_alltoall(torch::Tensor& sendbuf, torch::Tensor& recvbuf) {
+-    ensure_mpi_initialized();
+-
+-    if (!sendbuf.is_contiguous()) sendbuf = sendbuf.contiguous();
+-    if (!recvbuf.is_contiguous()) recvbuf = recvbuf.contiguous();
+-
+-    if (recvbuf.numel() != sendbuf.numel())
+-        throw std::runtime_error("mpi_alltoall: sendbuf and recvbuf must have the same numel");
+-
+-    int world_size;
+-    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+-
+-    sync_cuda_if_needed(sendbuf);
+-
+-    int count = sendbuf.numel() / world_size;
+-    auto [mpi_dtype, typesize] = get_typesize(sendbuf.scalar_type());
+-
+-    int err = MPI_Alltoall(sendbuf.data_ptr(), count, mpi_dtype,
+-                           recvbuf.data_ptr(), count, mpi_dtype, MPI_COMM_WORLD);
+-    if (err != MPI_SUCCESS)
+-        throw std::runtime_error("MPI_Alltoall failed: " + std::to_string(err));
+-
+-    sync_cuda_if_needed(recvbuf);
+-}
+-
+-// ===================================================================
+-// pybind11
+-// ===================================================================
+-
+-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+-    m.def("send",           &mpi_send,           "MPI Send (GPU-aware, shm-accelerated)");
+-    m.def("recv",           &mpi_recv,           "MPI Recv (GPU-aware, shm-accelerated)");
+-    m.def("allreduce",      &mpi_allreduce,      "MPI Allreduce (GPU-aware)");
+-    m.def("allgather",      &mpi_allgather,      "MPI Allgather (GPU-aware)");
+-    m.def("reduce_scatter", &mpi_reduce_scatter, "MPI Reduce_scatter (GPU-aware)");
+-    m.def("alltoall",       &mpi_alltoall,       "MPI Alltoall (GPU-aware)");
+-    m.def("barrier",        &barrier,            "MPI Barrier");
+-    m.def("get_rank",       &get_rank,           "Get MPI rank");
+-    m.def("get_size",       &get_size,           "Get MPI world size");
+-    m.def("finalize_mpi",   &finalize_mpi,       "Finalize MPI");
+-}
+diff --git a/infra/cray_infra/training/gpu_aware_mpi/mpi_transport.cpp b/infra/cray_infra/training/gpu_aware_mpi/mpi_transport.cpp
+deleted file mode 100644
+index df2c121..0000000
+--- a/infra/cray_infra/training/gpu_aware_mpi/mpi_transport.cpp
++++ /dev/null
+@@ -1,83 +0,0 @@
+-#include "mpi_transport.h"
+-#include "common.h"
+-
+-void mpi_send_standard(torch::Tensor& tensor, int dest) {
+-    ensure_mpi_initialized();
+-
+-    if (!tensor.is_contiguous()) {
+-        tensor = tensor.contiguous();
+-    }
+-
+-    sync_cuda_if_needed(tensor);
+-
+-    MPI_Datatype datatype = get_mpi_datatype(tensor);
+-    int err = MPI_Send(tensor.data_ptr(), tensor.numel(), datatype, dest, 0, MPI_COMM_WORLD);
+-    if (err != MPI_SUCCESS) {
+-        throw std::runtime_error("MPI_Send failed with error code: " + std::to_string(err));
+-    }
+-}
+-
+-void mpi_recv_standard(torch::Tensor& tensor, int source) {
+-    ensure_mpi_initialized();
+-
+-    if (!tensor.is_contiguous()) {
+-        tensor = tensor.contiguous();
+-    }
+-
+-    MPI_Datatype datatype = get_mpi_datatype(tensor);
+-    MPI_Status status;
+-
+-    int err = MPI_Recv(tensor.data_ptr(), tensor.numel(), datatype, source, 0,
+-                       MPI_COMM_WORLD, &status);
+-    if (err != MPI_SUCCESS) {
+-        throw std::runtime_error("MPI_Recv failed with error code: " + std::to_string(err));
+-    }
+-
+-    sync_cuda_if_needed(tensor);
+-
+-    int recv_count;
+-    MPI_Get_count(&status, datatype, &recv_count);
+-    if (recv_count != tensor.numel()) {
+-        throw std::runtime_error("MPI_Recv: expected " + std::to_string(tensor.numel()) +
+-                                 " elements but got " + std::to_string(recv_count));
+-    }
+-
+-    if (status.MPI_SOURCE != source) {
+-        throw std::runtime_error("MPI_Recv: expected source " + std::to_string(source) +
+-                                 " but got " + std::to_string(status.MPI_SOURCE));
+-    }
+-}
+-
+-MpiRequest mpi_isend_standard(torch::Tensor& tensor, int dest) {
+-    ensure_mpi_initialized();
+-
+-    if (!tensor.is_contiguous()) {
+-        tensor = tensor.contiguous();
+-    }
+-
+-    sync_cuda_if_needed(tensor);
+-
+-    MpiRequest req;
+-    MPI_Datatype datatype = get_mpi_datatype(tensor);
+-    int err = MPI_Isend(tensor.data_ptr(), tensor.numel(), datatype, dest, 0,
+-                        MPI_COMM_WORLD, &req.mpi_req);
+-    if (err != MPI_SUCCESS)
+-        throw std::runtime_error("MPI_Isend failed: " + std::to_string(err));
+-    return req;
+-}
+-
+-MpiRequest mpi_irecv_standard(torch::Tensor& tensor, int source) {
+-    ensure_mpi_initialized();
+-
+-    if (!tensor.is_contiguous()) {
+-        tensor = tensor.contiguous();
+-    }
+-
+-    MpiRequest req;
+-    MPI_Datatype datatype = get_mpi_datatype(tensor);
+-    int err = MPI_Irecv(tensor.data_ptr(), tensor.numel(), datatype, source, 0,
+-                        MPI_COMM_WORLD, &req.mpi_req);
+-    if (err != MPI_SUCCESS)
+-        throw std::runtime_error("MPI_Irecv failed: " + std::to_string(err));
+-    return req;
+-}
+diff --git a/infra/cray_infra/training/gpu_aware_mpi/mpi_transport.h b/infra/cray_infra/training/gpu_aware_mpi/mpi_transport.h
+deleted file mode 100644
+index fbbca92..0000000
+--- a/infra/cray_infra/training/gpu_aware_mpi/mpi_transport.h
++++ /dev/null
+@@ -1,14 +0,0 @@
+-#pragma once
+-
+-#include "common.h"
+-#include <torch/extension.h>
+-
+-// Standard MPI_Send path (3 copies when GPU tensors go through CMA).
+-void mpi_send_standard(torch::Tensor& tensor, int dest);
+-
+-// Standard MPI_Recv path.
+-void mpi_recv_standard(torch::Tensor& tensor, int source);
+-
+-// Non-blocking standard MPI send/recv.
+-MpiRequest mpi_isend_standard(torch::Tensor& tensor, int dest);
+-MpiRequest mpi_irecv_standard(torch::Tensor& tensor, int dest);
+diff --git a/infra/cray_infra/training/gpu_aware_mpi/setup.py b/infra/cray_infra/training/gpu_aware_mpi/setup.py
+deleted file mode 100644
+index 6260ab8..0000000
+--- a/infra/cray_infra/training/gpu_aware_mpi/setup.py
++++ /dev/null
+@@ -1,76 +0,0 @@
+-import os
+-from setuptools import setup
+-from torch.utils import cpp_extension
+-
+-def detect_gpu_platform():
+-    """Determine GPU platform through environment variables and path checks"""
+-    if os.path.exists('/opt/rocm'):
+-        return 'rocm'
+-    if os.path.exists('/usr/local/cuda'):
+-        return 'cuda'
+-    return 'cpu'
+-
+-platform = detect_gpu_platform()
+-
+-include_dirs = [
+-    'infra/cray_infra/training/gpu_aware_mpi',
+-]
+-library_dirs = []
+-compile_defines = []
+-libraries = []
+-extra_link_args = []
+-
+-if platform == 'rocm':
+-    os.environ['CXX'] = '/opt/ompi-rocm/bin/mpicxx'
+-    compile_defines.append(('USE_ROCM', '1'))
+-    include_dirs.extend([
+-        '/opt/rocm/include',
+-        '/opt/ompi-rocm/include'
+-    ])
+-    library_dirs.extend([
+-        '/opt/rocm/lib',
+-        '/opt/ompi-rocm/lib'
+-    ])
+-    extra_link_args.append('-lmpi')
+-    libraries.append('rt')
+-elif platform == 'cuda':
+-    compile_defines.append(('USE_CUDA', '1'))
+-    include_dirs.extend([
+-        '/usr/local/cuda/include',
+-        '/opt/hpcx/ompi/include'
+-    ])
+-    library_dirs.extend([
+-        '/usr/local/cuda/lib64',
+-        '/opt/hpcx/ompi/lib'
+-    ])
+-    libraries.extend(['cudart', 'rt'])
+-elif platform == 'cpu':
+-    os.environ['CXX'] = '/usr/bin/mpicxx'
+-    include_dirs.extend([
+-        '/usr/lib/aarch64-linux-gnu/openmpi/include',
+-    ])
+-    library_dirs.extend([
+-        '/usr/lib/aarch64-linux-gnu/openmpi/lib',
+-    ])
+-    libraries.extend(['mpi', 'rt'])
+-
+-setup(
+-    name="gpu_aware_mpi",
+-    ext_modules=[cpp_extension.CppExtension(
+-        'gpu_aware_mpi',
+-        sources=[
+-            'infra/cray_infra/training/gpu_aware_mpi/gpu_aware_mpi.cpp',
+-            'infra/cray_infra/training/gpu_aware_mpi/shm_channel.cpp',
+-            'infra/cray_infra/training/gpu_aware_mpi/shm_transport.cpp',
+-            'infra/cray_infra/training/gpu_aware_mpi/mpi_transport.cpp',
+-        ],
+-        include_dirs=include_dirs,
+-        library_dirs=library_dirs,
+-        libraries=libraries,
+-        extra_compile_args={
+-            'cxx': [f'-D{name}={value}' for name, value in compile_defines]
+-        },
+-        extra_link_args=extra_link_args,
+-    )],
+-    cmdclass={'build_ext': cpp_extension.BuildExtension}
+-)
+diff --git a/infra/cray_infra/training/gpu_aware_mpi/shm_channel.cpp b/infra/cray_infra/training/gpu_aware_mpi/shm_channel.cpp
+deleted file mode 100644
+index d37a442..0000000
+--- a/infra/cray_infra/training/gpu_aware_mpi/shm_channel.cpp
++++ /dev/null
+@@ -1,310 +0,0 @@
+-#include "shm_channel.h"
+-
+-#include <sys/mman.h>
+-#include <sys/stat.h>
+-#include <fcntl.h>
+-#include <unistd.h>
+-#include <cerrno>
+-#include <cstring>
+-#include <algorithm>
+-#include <iostream>
+-#include <new>
+-
+-#ifdef USE_CUDA
+-#include <cuda_runtime.h>
+-#endif
+-#ifdef USE_ROCM
+-#include <hip/hip_runtime.h>
+-#define cudaHostRegister       hipHostRegister
+-#define cudaHostUnregister     hipHostUnregister
+-#define cudaHostRegisterDefault hipHostRegisterDefault
+-#define cudaSuccess            hipSuccess
+-#endif
+-
+-// ---------------------------------------------------------------------------
+-// Internal state
+-// ---------------------------------------------------------------------------
+-static std::unordered_set<int>              g_shm_peers;
+-static std::unordered_map<int, ShmChannel>  g_channels;
+-static bool                                 g_discovery_done = false;
+-
+-static const char* SHM_PREFIX     = "scalarlm_";
+-static const char* PROBE_PREFIX   = "scalarlm_probe_";
+-
+-// Default initial per-slot capacity (256 MB).  With SHM_NUM_SLOTS=2 the full
+-// mmap region for a directed half-channel is
+-//   2 * (sizeof(ShmSlotHeader) + 256 MB) + sizeof(atomic<uint64_t>)
+-// so about 512 MB of shm per direction, 1 GB per peer pair.
+-static constexpr size_t DEFAULT_CAPACITY = 256ULL * 1024 * 1024;
+-
+-// ---------------------------------------------------------------------------
+-// Helpers
+-// ---------------------------------------------------------------------------
+-
+-static std::string probe_name(int rank) {
+-    return std::string(PROBE_PREFIX) + std::to_string(rank);
+-}
+-
+-static std::string channel_name(int rank_a, int rank_b) {
+-    int lo = std::min(rank_a, rank_b);
+-    int hi = std::max(rank_a, rank_b);
+-    return std::string(SHM_PREFIX) + "ch_" + std::to_string(lo) + "_" + std::to_string(hi);
+-}
+-
+-static void shm_unlink_safe(const std::string& name) {
+-    shm_unlink(name.c_str());  // ignore errors (may not exist)
+-}
+-
+-// Total mmap bytes required for a channel with `per_slot_capacity` bytes per
+-// slot.  Two halves, each with SHM_NUM_SLOTS slots + one atomic reader_done.
+-static size_t channel_bytes_for_capacity(size_t per_slot_capacity) {
+-    size_t slot_stride = sizeof(ShmSlotHeader) + per_slot_capacity;
+-    size_t half_size   = SHM_NUM_SLOTS * slot_stride + sizeof(std::atomic<uint64_t>);
+-    return 2 * half_size;
+-}
+-
+-// ---------------------------------------------------------------------------
+-// Discovery
+-// ---------------------------------------------------------------------------
+-
+-void shm_discover_peers() {
+-    if (g_discovery_done) return;
+-
+-    ensure_mpi_initialized();
+-    int rank, size;
+-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+-    MPI_Comm_size(MPI_COMM_WORLD, &size);
+-
+-    // Step 1: each rank creates a probe file in /dev/shm
+-    std::string my_probe = probe_name(rank);
+-    shm_unlink_safe(my_probe);
+-
+-    if (rank == 0) {
+-        std::cout << "[gpu_aware_mpi] shm discovery: probing " << size
+-                  << " ranks for /dev/shm visibility" << std::endl;
+-    }
+-
+-    int fd = shm_open(my_probe.c_str(), O_CREAT | O_RDWR, 0666);
+-    if (fd < 0) {
+-        // /dev/shm not available — no peers
+-        if (rank == 0) {
+-            std::cout << "[gpu_aware_mpi] shm discovery: /dev/shm not available, "
+-                      << "all transfers will use MPI" << std::endl;
+-        }
+-        g_discovery_done = true;
+-        return;
+-    }
+-    ftruncate(fd, 1);
+-    close(fd);
+-
+-    // Step 2: barrier so all probes are visible
+-    MPI_Barrier(MPI_COMM_WORLD);
+-
+-    // Step 3: check which other ranks' probes we can see
+-    for (int r = 0; r < size; ++r) {
+-        if (r == rank) continue;
+-        std::string peer_probe = probe_name(r);
+-        int pfd = shm_open(peer_probe.c_str(), O_RDONLY, 0);
+-        if (pfd >= 0) {
+-            g_shm_peers.insert(r);
+-            close(pfd);
+-        }
+-    }
+-
+-    // Step 4: barrier then cleanup
+-    MPI_Barrier(MPI_COMM_WORLD);
+-    shm_unlink_safe(my_probe);
+-
+-    if (rank == 0) {
+-        if (g_shm_peers.empty()) {
+-            std::cout << "[gpu_aware_mpi] shm discovery: no shm peers found, "
+-                      << "all transfers will use MPI" << std::endl;
+-        } else {
+-            std::cout << "[gpu_aware_mpi] shm discovery: rank 0 can reach "
+-                      << g_shm_peers.size() << " peer(s) via /dev/shm:";
+-            for (int p : g_shm_peers) {
+-                std::cout << " " << p;
+-            }
+-            std::cout << std::endl;
+-        }
+-    }
+-
+-    g_discovery_done = true;
+-}
+-
+-bool shm_is_peer(int peer_rank) {
+-    return g_shm_peers.count(peer_rank) > 0;
+-}
+-
+-// ---------------------------------------------------------------------------
+-// Channel creation / lookup
+-// ---------------------------------------------------------------------------
+-
+-// Synchronize only the two ranks that share a channel.
+-// MPI_Barrier(MPI_COMM_WORLD) inside create_channel is wrong because channel
+-// creation is triggered lazily (on first use / on grow), so different rank
+-// pairs hit the barrier at different times — causing mismatched barriers and
+-// corrupted channel state.  A pairwise MPI_Sendrecv affects only the two
+-// peers involved and is safe to call from any point in the program.
+-static constexpr int PEER_SYNC_TAG = 43;  // distinct from SHM_CTRL_TAG = 42
+-
+-static void peer_sync(int peer_rank) {
+-    char s = 0, r = 0;
+-    MPI_Sendrecv(&s, 1, MPI_CHAR, peer_rank, PEER_SYNC_TAG,
+-                 &r, 1, MPI_CHAR, peer_rank, PEER_SYNC_TAG,
+-                 MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+-}
+-
+-// Initialise the per-slot headers and reader_done counter for one half.
+-// Uses placement new because std::atomic is not trivially copyable — we
+-// mmap raw bytes, so the atomic has to be constructed in place.
+-static void init_half_in_place(void* half_base, size_t per_slot_capacity) {
+-    size_t slot_stride = sizeof(ShmSlotHeader) + per_slot_capacity;
+-    for (int s = 0; s < SHM_NUM_SLOTS; ++s) {
+-        auto* hdr = reinterpret_cast<ShmSlotHeader*>(
+-            static_cast<char*>(half_base) + s * slot_stride);
+-        // Zero first to wipe any leftover state from a recycled shm file,
+-        // then placement-new the header so its atomic<seq> is well-defined.
+-        std::memset(hdr, 0, sizeof(ShmSlotHeader));
+-        new (hdr) ShmSlotHeader();
+-        hdr->capacity = per_slot_capacity;
+-    }
+-    auto* rd = reinterpret_cast<std::atomic<uint64_t>*>(
+-        static_cast<char*>(half_base) + SHM_NUM_SLOTS * slot_stride);
+-    std::memset(rd, 0, sizeof(std::atomic<uint64_t>));
+-    new (rd) std::atomic<uint64_t>(0);
+-}
+-
+-static ShmChannel create_channel(int peer_rank, size_t capacity) {
+-    int rank;
+-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+-
+-    std::string name  = channel_name(rank, peer_rank);
+-    size_t slot_stride = sizeof(ShmSlotHeader) + capacity;
+-    size_t half_size   = SHM_NUM_SLOTS * slot_stride + sizeof(std::atomic<uint64_t>);
+-    size_t total       = channel_bytes_for_capacity(capacity);
+-
+-    int lo = std::min(rank, peer_rank);
+-    int fd;
+-    if (rank == lo) {
+-        shm_unlink_safe(name);
+-        fd = shm_open(name.c_str(), O_CREAT | O_RDWR, 0666);
+-        if (fd < 0)
+-            throw std::runtime_error("shm_open create failed: " + std::string(strerror(errno)));
+-        if (ftruncate(fd, total) != 0) {
+-            close(fd);
+-            throw std::runtime_error("ftruncate failed: " + std::string(strerror(errno)));
+-        }
+-    }
+-
+-    // Sync so the shm file exists before the higher rank opens it.
+-    peer_sync(peer_rank);
+-
+-    if (rank != lo) {
+-        fd = shm_open(name.c_str(), O_RDWR, 0666);
+-        if (fd < 0)
+-            throw std::runtime_error("shm_open open failed: " + std::string(strerror(errno)));
+-    }
+-
+-    void* ptr = mmap(nullptr, total, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+-    close(fd);
+-    if (ptr == MAP_FAILED)
+-        throw std::runtime_error("mmap failed: " + std::string(strerror(errno)));
+-
+-    // Lower rank initialises both halves' headers + reader_done counters.
+-    if (rank == lo) {
+-        init_half_in_place(ptr, capacity);
+-        init_half_in_place(static_cast<char*>(ptr) + half_size, capacity);
+-    }
+-
+-    // Sync so the higher rank doesn't read uninitialised headers.
+-    peer_sync(peer_rank);
+-
+-    bool registered = false;
+-#if defined(USE_CUDA) || defined(USE_ROCM)
+-    if (cudaHostRegister(ptr, total, cudaHostRegisterDefault) == cudaSuccess)
+-        registered = true;
+-#endif
+-
+-    if (rank == 0) {
+-        std::cout << "[gpu_aware_mpi] shm channel: " << name
+-                  << " created (" << SHM_NUM_SLOTS << " × "
+-                  << (capacity / (1024 * 1024)) << " MB per direction"
+-                  << ", cudaHostRegister=" << (registered ? "yes" : "no")
+-                  << ")" << std::endl;
+-    }
+-
+-    ShmChannel ch;
+-    ch.peer_rank     = peer_rank;
+-    ch.mapped        = ptr;
+-    ch.mapped_size   = total;
+-    ch.registered    = registered;
+-    ch.half_capacity = capacity;
+-    ch.is_lower      = rank < peer_rank;
+-    ch.send_state    = {};
+-    // The local sender's backpressure counter lives in the send half — that
+-    // is, the RECEIVER (peer) writes to the reader_done counter of the half
+-    // the local rank writes into.  This is the pointer the sender spins on
+-    // to know when it can reuse a slot.
+-    ch.send_state.reader_done_shm = ch.reader_done(ch.send_half());
+-
+-    return ch;
+-}
+-
+-ShmChannel& shm_get_channel(int peer_rank, size_t min_capacity) {
+-    auto it = g_channels.find(peer_rank);
+-    if (it != g_channels.end() && it->second.capacity() >= min_capacity) {
+-        return it->second;
+-    }
+-
+-    // Need to create or grow. If growing, tear down old first.
+-    int rank;
+-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+-    if (it != g_channels.end()) {
+-        if (rank == 0) {
+-            std::cout << "[gpu_aware_mpi] shm channel: growing channel to peer "
+-                      << peer_rank << " from " << (it->second.capacity() / (1024 * 1024))
+-                      << " MB to " << (min_capacity / (1024 * 1024)) << " MB" << std::endl;
+-        }
+-        ShmChannel& old = it->second;
+-#if defined(USE_CUDA) || defined(USE_ROCM)
+-        if (old.registered) cudaHostUnregister(old.mapped);
+-#endif
+-        munmap(old.mapped, old.mapped_size);
+-        if (rank < peer_rank) {
+-            shm_unlink_safe(channel_name(rank, peer_rank));
+-        }
+-        g_channels.erase(it);
+-    }
+-
+-    size_t cap = std::max(min_capacity, DEFAULT_CAPACITY);
+-    g_channels[peer_rank] = create_channel(peer_rank, cap);
+-    return g_channels[peer_rank];
+-}
+-
+-// ---------------------------------------------------------------------------
+-// Cleanup
+-// ---------------------------------------------------------------------------
+-
+-void shm_cleanup() {
+-    int rank;
+-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+-
+-    if (rank == 0 && !g_channels.empty()) {
+-        std::cout << "[gpu_aware_mpi] shm cleanup: tearing down "
+-                  << g_channels.size() << " channel(s)" << std::endl;
+-    }
+-
+-    for (auto& [peer, ch] : g_channels) {
+-#if defined(USE_CUDA) || defined(USE_ROCM)
+-        if (ch.registered) cudaHostUnregister(ch.mapped);
+-#endif
+-        munmap(ch.mapped, ch.mapped_size);
+-        if (rank < peer) {
+-            shm_unlink_safe(channel_name(rank, peer));
+-        }
+-    }
+-    g_channels.clear();
+-    g_shm_peers.clear();
+-    g_discovery_done = false;
+-}
+diff --git a/infra/cray_infra/training/gpu_aware_mpi/shm_channel.h b/infra/cray_infra/training/gpu_aware_mpi/shm_channel.h
+deleted file mode 100644
+index 323890b..0000000
+--- a/infra/cray_infra/training/gpu_aware_mpi/shm_channel.h
++++ /dev/null
+@@ -1,177 +0,0 @@
+-#pragma once
+-
+-#include "common.h"
+-#include <atomic>
+-#include <cstddef>
+-#include <cstdint>
+-#include <string>
+-#include <unordered_map>
+-#include <unordered_set>
+-
+-// ---------------------------------------------------------------------------
+-// SHM channel layout
+-// ---------------------------------------------------------------------------
+-// Each channel is one file in /dev/shm shared between two ranks.  The file
+-// holds TWO directed half-channels (one per direction); each half is
+-// double-buffered into SHM_NUM_SLOTS ping-pong slots plus one atomic
+-// reader_done counter:
+-//
+-//      half N (N=0 is lo→hi, N=1 is hi→lo):
+-//          ┌─ slot 0 ─────────────────────────────────┐
+-//          │  ShmSlotHeader (cache-line padded)       │
+-//          │    atomic<uint64_t> seq                  │
+-//          │    uint64_t nbytes                       │
+-//          │    uint64_t capacity                     │
+-//          │  data buffer of half_capacity bytes       │
+-//          ├─ slot 1 ─────────────────────────────────┤
+-//          │  ShmSlotHeader                            │
+-//          │  data buffer of half_capacity bytes       │
+-//          ├──────────────────────────────────────────┤
+-//          │  atomic<uint64_t> reader_done             │
+-//          └──────────────────────────────────────────┘
+-//
+-// Protocol (sender):
+-//   1.  Spin-wait until (next_gen - reader_done_shm) <= SHM_NUM_SLOTS.
+-//       That is the backpressure — sender cannot lap receiver by more than
+-//       the slot count, so a slow receiver's data doesn't get clobbered.
+-//   2.  Pick slot = write_slot.  Memcpy payload into slot.data.  Stamp
+-//       slot.nbytes.  Release-store slot.seq = next_gen.  The release fence
+-//       pairs with the receiver's acquire load so the memcpy becomes
+-//       visible before the seq does on the peer's core.
+-//   3.  MPI_Send(ShmSignal{gen=next_gen, slot_idx=slot}).
+-//   4.  Advance write_slot (0↔1) and next_gen.
+-//
+-// Protocol (receiver):
+-//   1.  MPI_Recv(ShmSignal).
+-//   2.  Spin-load slot.seq with acquire ordering until it equals signal.gen.
+-//       In practice this is a short spin: MPI only delivers the signal
+-//       after both cores' caches have coherency on the payload.
+-//   3.  Memcpy slot.data → destination tensor.
+-//   4.  Fetch-add reader_done to unblock the sender's next reuse of a slot.
+-//
+-// The double buffering lets the sender pipeline one transfer ahead of the
+-// receiver without risking a write-before-read clobber.  SHM_NUM_SLOTS=2 is
+-// the smallest value that provides any pipelining; raising it further would
+-// only help if MPI's signal delivery were the bottleneck, which it isn't
+-// for intra-node shm transfers.
+-// ---------------------------------------------------------------------------
+-
+-// Number of ping-pong slots per directed half-channel.
+-static constexpr int SHM_NUM_SLOTS = 2;
+-
+-// Per-slot header.  Padded to one cache line so the seq atomic does not
+-// false-share with the data buffer that follows it in the mmap region.
+-struct ShmSlotHeader {
+-    std::atomic<uint64_t> seq;       // incremented by sender (release) on every write
+-    uint64_t              nbytes;    // payload bytes the sender wrote for slot.seq
+-    uint64_t              capacity;  // max bytes this slot can hold (set at create time)
+-    // Pad to exactly 64 bytes so the data buffer begins on a cache-line
+-    // boundary and seq owns its own line.
+-    uint8_t               _pad[64 - sizeof(std::atomic<uint64_t>) - 2 * sizeof(uint64_t)];
+-
+-    ShmSlotHeader() : seq(0), nbytes(0), capacity(0) {}
+-};
+-static_assert(sizeof(ShmSlotHeader) == 64,
+-              "ShmSlotHeader must be exactly one cache line");
+-
+-// Process-local sender state for the send direction (local → peer).
+-// Nothing in this struct needs to live in shm — the sender is the only
+-// writer.  The reader_done pointer, however, points INTO the shm region
+-// because the receiver writes to it.
+-struct ShmDirState {
+-    uint32_t                 write_slot{0};          // next slot to write (0 or 1)
+-    uint64_t                 next_gen{1};            // next generation to stamp on a slot
+-    std::atomic<uint64_t>*   reader_done_shm{nullptr};  // shared fetch-add'd by receiver
+-};
+-
+-// A duplex channel: two directed half-channels inside one shm file.
+-// Half 0 (offset 0):         lo-rank → hi-rank
+-// Half 1 (offset half_size): hi-rank → lo-rank
+-struct ShmChannel {
+-    int       peer_rank;     // the remote rank this channel connects to
+-    void*     mapped;        // mmap base
+-    size_t    mapped_size;   // total mapped size
+-    bool      registered;    // whether cudaHostRegister succeeded
+-    size_t    half_capacity; // per-slot data capacity (same for both slots in a half)
+-    bool      is_lower;      // true when local rank < peer_rank
+-
+-    // Process-local sender state for the send direction only (no receiver
+-    // state here — the receiver only reads shm + writes reader_done_shm).
+-    ShmDirState send_state;
+-
+-    // -----------------------------------------------------------------------
+-    // Layout arithmetic
+-    // -----------------------------------------------------------------------
+-    //   slot_stride = sizeof(ShmSlotHeader) + half_capacity
+-    //   half_size   = SHM_NUM_SLOTS * slot_stride + sizeof(atomic<uint64_t>)
+-    //   reader_done_offset = SHM_NUM_SLOTS * slot_stride
+-
+-    size_t slot_stride() const {
+-        return sizeof(ShmSlotHeader) + half_capacity;
+-    }
+-    size_t half_size() const {
+-        return SHM_NUM_SLOTS * slot_stride() + sizeof(std::atomic<uint64_t>);
+-    }
+-    size_t half_offset(int half) const {
+-        return static_cast<size_t>(half) * half_size();
+-    }
+-
+-    // --- absolute positions ---
+-    ShmSlotHeader* slot_header(int half, int slot) const {
+-        auto* base = static_cast<char*>(mapped) + half_offset(half);
+-        return reinterpret_cast<ShmSlotHeader*>(base + slot * slot_stride());
+-    }
+-    void* slot_data(int half, int slot) const {
+-        return reinterpret_cast<char*>(slot_header(half, slot)) +
+-               sizeof(ShmSlotHeader);
+-    }
+-    std::atomic<uint64_t>* reader_done(int half) const {
+-        auto* base = static_cast<char*>(mapped) + half_offset(half);
+-        return reinterpret_cast<std::atomic<uint64_t>*>(
+-            base + SHM_NUM_SLOTS * slot_stride());
+-    }
+-
+-    // --- direction-aware helpers ---
+-    int send_half() const { return is_lower ? 0 : 1; }
+-    int recv_half() const { return is_lower ? 1 : 0; }
+-
+-    ShmSlotHeader* send_slot_header(int slot) const {
+-        return slot_header(send_half(), slot);
+-    }
+-    void* send_slot_data(int slot) const {
+-        return slot_data(send_half(), slot);
+-    }
+-    ShmSlotHeader* recv_slot_header(int slot) const {
+-        return slot_header(recv_half(), slot);
+-    }
+-    void* recv_slot_data(int slot) const {
+-        return slot_data(recv_half(), slot);
+-    }
+-    std::atomic<uint64_t>* recv_reader_done() const {
+-        // The counter the local RECEIVER writes into this channel's recv
+-        // direction lives in the recv half.
+-        return reader_done(recv_half());
+-    }
+-
+-    size_t capacity() const { return half_capacity; }
+-};
+-
+-// ---------------------------------------------------------------------------
+-// Public API
+-// ---------------------------------------------------------------------------
+-
+-// Probe /dev/shm to discover which ranks share the same shm namespace.
+-// Must be called after MPI_Init and collectively by all ranks.
+-void shm_discover_peers();
+-
+-// Returns true if `peer_rank` is reachable via /dev/shm.
+-bool shm_is_peer(int peer_rank);
+-
+-// Get (or lazily create) a channel to `peer_rank`.
+-// Channels are created on first use and persist until shm_cleanup().  If the
+-// existing channel's per-slot capacity is smaller than `min_capacity` the
+-// channel is torn down and recreated.
+-ShmChannel& shm_get_channel(int peer_rank, size_t min_capacity);
+-
+-// Tear down all channels (unregister, munmap, unlink).
+-void shm_cleanup();
+diff --git a/infra/cray_infra/training/gpu_aware_mpi/shm_transport.cpp b/infra/cray_infra/training/gpu_aware_mpi/shm_transport.cpp
+deleted file mode 100644
+index ea87536..0000000
+--- a/infra/cray_infra/training/gpu_aware_mpi/shm_transport.cpp
++++ /dev/null
+@@ -1,226 +0,0 @@
+-#include "shm_transport.h"
+-#include "shm_channel.h"
+-#include "common.h"
+-
+-#include <cstring>
+-
+-static constexpr int SHM_CTRL_TAG = 42;
+-
+-// Backpressure: sender spins here until the receiver has fully consumed
+-// enough slots that writing into `write_slot` won't clobber something the
+-// peer is still reading.  With SHM_NUM_SLOTS=2 the sender may be at most
+-// one generation ahead of the receiver — writing into slot 0 for
+-// generation N+1 requires that reader_done has reached N-1 (i.e. slot 0
+-// from generation N-1 has been fully consumed).
+-//
+-// Acquire-load so any writes the peer did to payload / slot metadata before
+-// incrementing reader_done become visible to us.  The spin is bounded by
+-// the receiver's copy speed; in practice each generation consumes a few
+-// hundred microseconds for a 256 MB payload.
+-static void wait_for_slot(ShmDirState& st) {
+-    while (true) {
+-        uint64_t done = st.reader_done_shm->load(std::memory_order_acquire);
+-        // next_gen is the generation we're ABOUT to stamp on this send.
+-        // We can only proceed when the receiver has finished through
+-        // (next_gen - SHM_NUM_SLOTS), i.e. the slot we're about to reuse.
+-        if (st.next_gen <= done + SHM_NUM_SLOTS) return;
+-        // Busy-wait: a short stall is typical; yielding to the kernel would
+-        // only help under severe oversubscription of cores, which isn't the
+-        // situation for the training job case this extension targets.
+-#if defined(__x86_64__) || defined(__i386__)
+-        __builtin_ia32_pause();
+-#endif
+-    }
+-}
+-
+-// Receiver-side spin: wait until the slot's seq counter advances to the
+-// generation the sender's signal promised.  Acquire-load so the payload
+-// memcpy that preceded the sender's release-store of seq becomes visible.
+-static void wait_for_gen(ShmSlotHeader* hdr, uint64_t expected_gen) {
+-    while (hdr->seq.load(std::memory_order_acquire) != expected_gen) {
+-#if defined(__x86_64__) || defined(__i386__)
+-        __builtin_ia32_pause();
+-#endif
+-    }
+-}
+-
+-// ---------------------------------------------------------------------------
+-// Blocking send/recv — used directly when ordering is already guaranteed
+-// ---------------------------------------------------------------------------
+-
+-void shm_send(torch::Tensor& tensor, int dest) {
+-    if (!tensor.is_contiguous()) tensor = tensor.contiguous();
+-
+-    auto [mpi_dtype, typesize] = get_typesize(tensor.scalar_type());
+-    size_t nbytes = static_cast<size_t>(tensor.numel()) * typesize;
+-
+-    ShmChannel& ch = shm_get_channel(dest, nbytes);
+-    ShmDirState& st = ch.send_state;
+-
+-    // Backpressure before touching the slot.
+-    wait_for_slot(st);
+-
+-    sync_cuda_if_needed(tensor);
+-
+-    // Copy the payload + stamp the header.
+-    uint32_t slot = st.write_slot;
+-    uint64_t gen  = st.next_gen;
+-
+-    auto cpu_opts = torch::TensorOptions().dtype(tensor.dtype()).device(torch::kCPU);
+-    torch::Tensor shm_tensor = torch::from_blob(ch.send_slot_data(slot),
+-                                                {tensor.numel()}, cpu_opts);
+-    shm_tensor.copy_(tensor);
+-    if (tensor.is_cuda()) sync_cuda_if_needed(tensor);
+-
+-    ShmSlotHeader* hdr = ch.send_slot_header(slot);
+-    hdr->nbytes = nbytes;
+-    // Release-store: payload and nbytes become visible BEFORE the seq update
+-    // on the peer's core.  The receiver's acquire-load of seq is the pair.
+-    hdr->seq.store(gen, std::memory_order_release);
+-
+-    // Advance sender state before posting the signal, so any subsequent
+-    // call sees the next slot/gen without waiting on MPI.
+-    st.write_slot = (slot + 1) % SHM_NUM_SLOTS;
+-    st.next_gen   = gen + 1;
+-
+-    ShmSignal sig{gen, slot, 0};
+-    int err = MPI_Send(&sig, sizeof(sig), MPI_BYTE, dest, SHM_CTRL_TAG,
+-                       MPI_COMM_WORLD);
+-    if (err != MPI_SUCCESS)
+-        throw std::runtime_error("shm_send: MPI_Send signal failed: " +
+-                                 std::to_string(err));
+-}
+-
+-void shm_recv(torch::Tensor& tensor, int source) {
+-    if (!tensor.is_contiguous()) tensor = tensor.contiguous();
+-
+-    auto [mpi_dtype, typesize] = get_typesize(tensor.scalar_type());
+-    size_t nbytes = static_cast<size_t>(tensor.numel()) * typesize;
+-
+-    ShmChannel& ch = shm_get_channel(source, nbytes);
+-
+-    ShmSignal sig{};
+-    MPI_Status status;
+-    int err = MPI_Recv(&sig, sizeof(sig), MPI_BYTE, source, SHM_CTRL_TAG,
+-                       MPI_COMM_WORLD, &status);
+-    if (err != MPI_SUCCESS)
+-        throw std::runtime_error("shm_recv: MPI_Recv signal failed: " +
+-                                 std::to_string(err));
+-
+-    ShmSlotHeader* hdr = ch.recv_slot_header(sig.slot_idx);
+-    wait_for_gen(hdr, sig.gen);
+-
+-    if (hdr->nbytes != nbytes)
+-        throw std::runtime_error("shm_recv: expected " + std::to_string(nbytes) +
+-                                 " bytes but sender wrote " +
+-                                 std::to_string(hdr->nbytes));
+-
+-    auto cpu_opts = torch::TensorOptions().dtype(tensor.dtype()).device(torch::kCPU);
+-    torch::Tensor shm_tensor = torch::from_blob(ch.recv_slot_data(sig.slot_idx),
+-                                                {tensor.numel()}, cpu_opts);
+-    tensor.copy_(shm_tensor);
+-    sync_cuda_if_needed(tensor);
+-
+-    // Release the slot so the sender's next reuse of it can proceed.
+-    // fetch_add with release so our memcpy out becomes visible before the
+-    // counter bump from the sender's next acquire-load.
+-    ch.reader_done(ch.recv_half())->fetch_add(1, std::memory_order_release);
+-}
+-
+-// ---------------------------------------------------------------------------
+-// Truly async send — memcpy + slot bookkeeping happen eagerly, then a
+-// non-blocking MPI_Isend posts the ShmSignal.  The sender has nothing left
+-// to do at mpi_wait time.
+-// ---------------------------------------------------------------------------
+-
+-MpiRequest shm_isend(torch::Tensor& tensor, int dest) {
+-    if (!tensor.is_contiguous()) tensor = tensor.contiguous();
+-
+-    auto [mpi_dtype, typesize] = get_typesize(tensor.scalar_type());
+-    size_t nbytes = static_cast<size_t>(tensor.numel()) * typesize;
+-
+-    ShmChannel& ch = shm_get_channel(dest, nbytes);
+-    ShmDirState& st = ch.send_state;
+-
+-    wait_for_slot(st);
+-
+-    sync_cuda_if_needed(tensor);
+-
+-    uint32_t slot = st.write_slot;
+-    uint64_t gen  = st.next_gen;
+-
+-    auto cpu_opts = torch::TensorOptions().dtype(tensor.dtype()).device(torch::kCPU);
+-    torch::Tensor shm_tensor = torch::from_blob(ch.send_slot_data(slot),
+-                                                {tensor.numel()}, cpu_opts);
+-    shm_tensor.copy_(tensor);
+-    if (tensor.is_cuda()) sync_cuda_if_needed(tensor);
+-
+-    ShmSlotHeader* hdr = ch.send_slot_header(slot);
+-    hdr->nbytes = nbytes;
+-    hdr->seq.store(gen, std::memory_order_release);
+-
+-    st.write_slot = (slot + 1) % SHM_NUM_SLOTS;
+-    st.next_gen   = gen + 1;
+-
+-    // Post the signal non-blocking.  shm_sig inside the returned MpiRequest
+-    // provides stable storage for the ShmSignal buffer — MPI may read it
+-    // right up until MPI_Wait completes, so we can't stack-allocate it.
+-    MpiRequest req;
+-    req.shm_sig = ShmSignal{gen, slot, 0};
+-    int err = MPI_Isend(&req.shm_sig, sizeof(req.shm_sig), MPI_BYTE,
+-                        dest, SHM_CTRL_TAG, MPI_COMM_WORLD, &req.mpi_req);
+-    if (err != MPI_SUCCESS)
+-        throw std::runtime_error("shm_isend: MPI_Isend signal failed: " +
+-                                 std::to_string(err));
+-    return req;  // on_complete is empty: nothing to do on the send side
+-}
+-
+-// ---------------------------------------------------------------------------
+-// Truly async recv — post the signal irecv; the copy-out is deferred to the
+-// on_complete callback which mpi_wait / mpi_waitall fire after MPI_Wait
+-// confirms the signal landed.
+-// ---------------------------------------------------------------------------
+-
+-MpiRequest shm_irecv(torch::Tensor& tensor, int source) {
+-    if (!tensor.is_contiguous()) tensor = tensor.contiguous();
+-
+-    auto [mpi_dtype, typesize] = get_typesize(tensor.scalar_type());
+-    size_t nbytes = static_cast<size_t>(tensor.numel()) * typesize;
+-
+-    ShmChannel& ch = shm_get_channel(source, nbytes);
+-
+-    MpiRequest req;
+-
+-    // Capture everything the callback needs.  tensor is a refcounted handle
+-    // (safe to copy); &ch is stable until shm_cleanup() which runs AFTER
+-    // all waits; nbytes is a plain value; &req.shm_sig must be read after
+-    // MPI_Wait fills it, so we capture by reference.
+-    ShmSignal* sig_ptr = &req.shm_sig;
+-    req.on_complete = [tensor, &ch, nbytes, sig_ptr]() mutable {
+-        ShmSlotHeader* hdr = ch.recv_slot_header(sig_ptr->slot_idx);
+-        wait_for_gen(hdr, sig_ptr->gen);
+-
+-        if (hdr->nbytes != nbytes)
+-            throw std::runtime_error("shm_irecv: expected " +
+-                                     std::to_string(nbytes) +
+-                                     " bytes but sender wrote " +
+-                                     std::to_string(hdr->nbytes));
+-
+-        auto cpu_opts = torch::TensorOptions().dtype(tensor.dtype())
+-                                              .device(torch::kCPU);
+-        torch::Tensor shm_tensor = torch::from_blob(
+-            ch.recv_slot_data(sig_ptr->slot_idx),
+-            {tensor.numel()}, cpu_opts);
+-        tensor.copy_(shm_tensor);
+-        sync_cuda_if_needed(tensor);
+-
+-        ch.reader_done(ch.recv_half())->fetch_add(1, std::memory_order_release);
+-    };
+-
+-    int err = MPI_Irecv(&req.shm_sig, sizeof(req.shm_sig), MPI_BYTE,
+-                        source, SHM_CTRL_TAG, MPI_COMM_WORLD, &req.mpi_req);
+-    if (err != MPI_SUCCESS)
+-        throw std::runtime_error("shm_irecv: MPI_Irecv signal failed: " +
+-                                 std::to_string(err));
+-    return req;
+-}
+diff --git a/infra/cray_infra/training/gpu_aware_mpi/shm_transport.h b/infra/cray_infra/training/gpu_aware_mpi/shm_transport.h
+deleted file mode 100644
+index 42fada3..0000000
+--- a/infra/cray_infra/training/gpu_aware_mpi/shm_transport.h
++++ /dev/null
+@@ -1,24 +0,0 @@
+-#pragma once
+-
+-#include "common.h"
+-#include <torch/extension.h>
+-
+-// Send a tensor to `dest` via shared-memory DMA.
+-// Protocol: double-buffered slots in shm_channel with per-slot generation
+-// counters.  The sender picks a slot, memcpys the payload in, release-stores
+-// the generation into the slot header, then MPI_Sends a 16-byte ShmSignal
+-// carrying {gen, slot_idx} to the receiver.  See shm_channel.h for layout.
+-void shm_send(torch::Tensor& tensor, int dest);
+-
+-// Receive a tensor from `source` via shared-memory DMA.
+-// Blocks on MPI_Recv of the ShmSignal, acquire-waits for slot.seq to match,
+-// copies out, and fetch-adds the reader_done counter so the sender can
+-// reuse the slot.
+-void shm_recv(torch::Tensor& tensor, int source);
+-
+-// Non-blocking variants.  shm_isend eagerly copies into the slot + posts
+-// MPI_Isend for the signal; mpi_wait has nothing extra to do.  shm_irecv
+-// posts MPI_Irecv for the signal; on_complete spin-waits on seq, copies
+-// the payload out, and bumps reader_done.
+-MpiRequest shm_isend(torch::Tensor& tensor, int dest);
+-MpiRequest shm_irecv(torch::Tensor& tensor, int source);
+diff --git a/infra/cray_infra/training/launch_training_job.py b/infra/cray_infra/training/launch_training_job.py
+index eb524e8..04a717e 100644
+--- a/infra/cray_infra/training/launch_training_job.py
++++ b/infra/cray_infra/training/launch_training_job.py
+@@ -120,6 +120,11 @@ def create_slurm_run_command(train_args):
+     run_command += [f"--nodes={node_count}"]
+     logger.info(f"node_count: {node_count}")
+ 
++    # PR #5: give the job the whole node. A training job already asks for every
++    # GPU it intends to use, and letting an unrelated job land on the same node
++    # perturbs both the collectives and any timing measured from them.
++    run_command += ["--exclusive"]
++
+     cpu_per_task = get_cpu_per_task(train_args)
+     run_command += [f"--cpus-per-task={cpu_per_task}"]
+     logger.info(f"cpu_per_task: {cpu_per_task}")
+diff --git a/infra/cray_infra/training/metrics.py b/infra/cray_infra/training/metrics.py
+index 8f178c4..102a061 100644
+--- a/infra/cray_infra/training/metrics.py
++++ b/infra/cray_infra/training/metrics.py
+@@ -1,5 +1,5 @@
+ import torch
+-from gpu_aware_mpi import get_rank
++from cray_infra.training.distributed import get_rank
+ 
+ import logging
+ 
+diff --git a/infra/cray_infra/training/restart_megatron_jobs.py b/infra/cray_infra/training/restart_megatron_jobs.py
+index 6ad8360..dfb9595 100644
+--- a/infra/cray_infra/training/restart_megatron_jobs.py
++++ b/infra/cray_infra/training/restart_megatron_jobs.py
+@@ -9,6 +9,7 @@ from cray_infra.util.get_config import get_config
+ import traceback
+ import os
+ import json
++import time
+ import yaml
+ import subprocess
+ 
+@@ -122,13 +123,95 @@ async def filter_running_jobs(all_jobs, slurm_job_names):
+             yield job
+ 
+ 
++def _read_status(job):
++    status_path = os.path.join(job, "status.json")
++    if not os.path.exists(status_path):
++        return {}
++    try:
++        with open(status_path) as f:
++            return json.load(f) or {}
++    except (json.JSONDecodeError, OSError):
++        return {}
++
++
++def _write_status(job, status):
++    status_path = os.path.join(job, "status.json")
++    try:
++        with open(status_path, "w") as f:
++            json.dump(status, f)
++    except OSError as e:
++        logger.error(f"Could not persist restart bookkeeping for {job}: {e}")
++
++
++def should_restart_job(job, now=None):
++    """Bounded restart policy (PR #5).
++
++    Relaunching a job whose slurm allocation vanished is right for preemption,
++    but when a job dies during startup for a deterministic reason (a bad
++    entrypoint, an unavailable device) the same job is resubmitted forever —
++    observed here as a job reaching attempt 24 in a few minutes, each attempt
++    failing identically. Three guards:
++
++      * a recent heartbeat means the job IS alive; slurm just has not registered
++        it yet (or squeue was queried mid-transition) — do not double-submit;
++      * a cooldown spaces out attempts so a failing job cannot spin;
++      * a hard cap gives up and marks the job FAILED instead of looping.
++    """
++    cfg = get_config()
++    now = now if now is not None else time.time()
++    status = _read_status(job)
++
++    last_updated = status.get("last_updated")
++    heartbeat = cfg.get("training_heartbeat_seconds", 600)
++    if isinstance(last_updated, (int, float)) and (now - last_updated) < heartbeat:
++        logger.info(
++            f"Not restarting {job}: heartbeat {now - last_updated:.0f}s ago "
++            f"(< {heartbeat}s) — job is alive"
++        )
++        return False, status
++
++    last_restart = status.get("last_restart_time")
++    cooldown = cfg.get("job_restart_cooldown_seconds", 300)
++    if isinstance(last_restart, (int, float)) and (now - last_restart) < cooldown:
++        logger.info(
++            f"Not restarting {job}: last restart {now - last_restart:.0f}s ago "
++            f"(< {cooldown}s cooldown)"
++        )
++        return False, status
++
++    restart_count = int(status.get("restart_count", 0) or 0)
++    max_restarts = cfg.get("max_job_restart_count", 3)
++    if restart_count >= max_restarts:
++        logger.error(
++            f"Not restarting {job}: exhausted {restart_count}/{max_restarts} restarts"
++        )
++        if status.get("status") != "FAILED":
++            status["status"] = "FAILED"
++            status["error"] = (
++                f"Exceeded max_job_restart_count ({max_restarts}); "
++                "the job failed to start repeatedly."
++            )
++            _write_status(job, status)
++        return False, status
++
++    return True, status
++
++
+ async def restart_job(job):
++    allowed, status = should_restart_job(job)
++    if not allowed:
++        return
++
+     logger.info(f"Restarting job: {job}")
+ 
+     # Get the job config
+     with open(os.path.join(job, "config.yaml")) as f:
+         config = yaml.safe_load(f)
+ 
++    status["restart_count"] = int(status.get("restart_count", 0) or 0) + 1
++    status["last_restart_time"] = time.time()
++    _write_status(job, status)
++
+     start_slurm_job(config)
+ 
+ 
+diff --git a/infra/cray_infra/training/train_debug.py b/infra/cray_infra/training/train_debug.py
+new file mode 100644
+index 0000000..2f2d584
+--- /dev/null
++++ b/infra/cray_infra/training/train_debug.py
+@@ -0,0 +1,21 @@
++"""Debug switches for the training path (from tensorwavecloud/ScalarLM PR #5).
++
++CRAY_TRAIN_DEBUG=1   -> per-rank stderr tracing of distributed init/collectives
++CRAY_FAULT_HANDLER=1 -> faulthandler with a periodic traceback dump, which is how
++                        you diagnose a rank wedged inside a collective (the whole
++                        job hangs and no Python exception is ever raised).
++"""
++
++import os
++
++
++def _env_flag(name: str, default: str = "0") -> bool:
++    return os.environ.get(name, default).lower() in ("1", "true", "yes")
++
++
++def is_train_debug_enabled() -> bool:
++    return _env_flag("CRAY_TRAIN_DEBUG")
++
++
++def is_fault_handler_enabled() -> bool:
++    return _env_flag("CRAY_FAULT_HANDLER") or is_train_debug_enabled()
+diff --git a/infra/cray_infra/training/training_job_context.py b/infra/cray_infra/training/training_job_context.py
+index 755d3a1..4a36af5 100644
+--- a/infra/cray_infra/training/training_job_context.py
++++ b/infra/cray_infra/training/training_job_context.py
+@@ -1,12 +1,26 @@
+-from gpu_aware_mpi import finalize_mpi
++from cray_infra.training.distributed import finalize_mpi
+ 
+-from cray_infra.training.training_harness import TrainingHarness
+ from cray_infra.training.training_job_status import TrainingJobStatus
+ 
+ import contextlib
+ 
+ @contextlib.contextmanager
+ def training_job_context():
++    # TrainingHarness lives in the ml tree (cray_megatron.megatron.training_harness),
++    # not in cray_infra. This module previously imported it from
++    # `cray_infra.training.training_harness`, which has never existed -- so
++    # `training_job_context()` raised ModuleNotFoundError on import and every
++    # custom Slurm job that used it died before running a line of user code.
++    # (Pre-existing upstream bug, present at baseline and on main; it went
++    # unnoticed because the tests that use this context manager only printed
++    # their results and were never executed.)
++    #
++    # Imported lazily and inside the function: cray_infra is the server-side
++    # layer and must not take a module-level dependency on the ml tree, which is
++    # only guaranteed to be importable inside a training job (the launcher puts
++    # the job's own ml/ first on PYTHONPATH).
++    from cray_megatron.megatron.training_harness import TrainingHarness
++
+     harness = TrainingHarness()
+ 
+     harness.update_status(TrainingJobStatus.TRAINING)
+diff --git a/infra/cray_infra/util/default_config.py b/infra/cray_infra/util/default_config.py
+index 2b7626d..0f2dfc8 100644
+--- a/infra/cray_infra/util/default_config.py
++++ b/infra/cray_infra/util/default_config.py
+@@ -34,6 +34,17 @@ class Config(BaseModel):
+     log_backup_count: int = 5
+ 
+     max_gpus_per_node: int = 1
++
++    # Job-restart hardening (PR #5). ScalarLM relaunches a QUEUED/TRAINING job
++    # whose slurm allocation vanished, which is right for preemption but turns
++    # into a tight relaunch loop when the job dies during startup for a
++    # deterministic reason (a bad entrypoint, a missing device). Bound the
++    # retries and space them out; treat a job that has not updated its status
++    # within the heartbeat window as dead.
++    max_job_restart_count: int = 3
++    job_restart_cooldown_seconds: int = 300
++    training_heartbeat_seconds: int = 600
++
+     max_train_time: int = 24 * 60 * 60
+     extra_training_seconds: int = 300  # 5 minutes buffer before slurm kills the job
+ 
+diff --git a/infra/cray_infra/util/default_job_config.py b/infra/cray_infra/util/default_job_config.py
+index ae2e82b..ddaabdf 100644
+--- a/infra/cray_infra/util/default_job_config.py
++++ b/infra/cray_infra/util/default_job_config.py
+@@ -65,12 +65,28 @@ class DiffusionConfig(BaseModel):
+     # (byte-identical to prior runs). See NaraConfig.
+     nara: Optional[NaraConfig] = None
+ 
++class ClassificationConfig(BaseModel):
++    # Sequence-classification training (training_mode: "classification"). Only read
++    # when training_mode == "classification"; ignored otherwise. Nested block like
++    # lora_config -- MUST be declared here or get_job_config()'s Pydantic model
++    # silently DROPS it from train_args (the trust_remote_code footgun).
++    num_labels: Optional[int] = None       # required for classification; head width
++    dropout: float = 0.1                   # classifier-head dropout
++    label_smoothing: float = 0.0           # 0 disables; >0 uses smoothed cross-entropy
++    id2label: Optional[dict] = None        # optional human-readable label names
++    label2id: Optional[dict] = None
++
++
+ class JobConfig(BaseModel):
+ 
+     job_directory: str
+     training_data_path: str
+     dataset_hash: str
+ 
++    # Reuse a dataset that ALREADY exists on the server/VM instead of the tarball
++    # uploaded with this job. None = use training_data_path (the normal path).
++    custom_data_path: Optional[str] = None
++
+     #llm_name: str = "masint/tiny-random-llama"
+     llm_name: str = "meta-llama/Llama-3.2-1B-Instruct"
+ 
+@@ -113,7 +129,22 @@ class JobConfig(BaseModel):
+ 
+     max_token_block_size: int = 16777216 # 16 mega tokens
+ 
+-    training_mode: str = "language_model"  # or "embedding"
++    training_mode: str = "language_model"  # or "embedding" / "classification"
++
++    # Optimizer. "adamw" (default) matches historical behavior; "sgd" and "rmsprop"
++    # are also constructed over trainable parameters only. An unknown value logs a
++    # warning and falls back to AdamW rather than failing the job.
++    optimizer_type: str = "adamw"
++
++    # Freeze every parameter whose NAME contains any of these substrings, e.g.
++    # ["vision_model", "vision_tower", "multi_modal_projector", "visual"] to train a
++    # multimodal model's language tower only. Accepts a list or a comma-separated
++    # string. None/empty = freeze nothing.
++    freeze_layer_keywords: Optional[Union[str, list]] = None
++
++    # Sequence-classification knobs; only consumed when training_mode ==
++    # "classification". Nested block like lora_config.
++    classification: Optional[ClassificationConfig] = None
+ 
+     # Distribution strategy
+     distribution_strategy: str = "fsdp"
+diff --git a/infra/requirements-megatron.txt b/infra/requirements-megatron.txt
+index 1724811..56b81c6 100644
+--- a/infra/requirements-megatron.txt
++++ b/infra/requirements-megatron.txt
+@@ -1,4 +1,4 @@
+-torchao>=0.16.1
++torchao>=0.17.0
+ accelerate
+ # Cap below 5.13: this layer installs with --no-deps (see Dockerfile), so it
+ # will NOT pull safetensors up to satisfy a newer transformers. transformers
+diff --git a/infra/slurm_configs/cgroup.conf b/infra/slurm_configs/cgroup.conf
+index ff0f845..4b8029f 100644
+--- a/infra/slurm_configs/cgroup.conf
++++ b/infra/slurm_configs/cgroup.conf
+@@ -1,5 +1,14 @@
+ CgroupPlugin=cgroup/docker
+ CgroupMountpoint=/tmp/cgroup
+ ConstrainCores=yes
+-ConstrainDevices=yes
++# ConstrainDevices=no on ROCm. discover_clusters.write_gres_config maps each GPU
++# gres to /dev/dri/card<N>, but HIP/ROCm actually needs /dev/kfd plus the RENDER
++# node (/dev/dri/renderD<N>). With ConstrainDevices=yes the Slurm cgroup admits
++# only the allocated card* node and denies /dev/kfd + renderD*, so inside a
++# training job torch.cuda.is_available() is False and the run SILENTLY falls back
++# to CPU (job still reports COMPLETED, ~700x slower: 317s/step vs 0.58s/step on
++# 8x MI355X). The container already scopes device access at the Docker level
++# (--device=/dev/kfd --device=/dev/dri), so this constraint adds nothing here.
++# Proper upstream fix: emit renderD* in gres.conf and always allow /dev/kfd.
++ConstrainDevices=no
+ ConstrainRAMSpace=yes
+diff --git a/infra/slurm_src/compile.sh b/infra/slurm_src/compile.sh
+index 6a9091c..dc73993 100755
+--- a/infra/slurm_src/compile.sh
++++ b/infra/slurm_src/compile.sh
+@@ -29,7 +29,10 @@ else
+ fi
+ 
+ # Disable the plugin on the AMD target
+-if [ $BASE_NAME == "amd" ] || [ $BASE_NAME="nvidia" ]; then
++# Quoting fix from PR #5: `[ $BASE_NAME="nvidia" ]` is a single non-empty string
++# ("BASE_NAME=nvidia"), which `test` always evaluates TRUE — so this branch was
++# taken for every base image, including cpu. Quote both sides and use ==.
++if [ "$BASE_NAME" == "amd" ] || [ "$BASE_NAME" == "nvidia" ]; then
+     sed -i -e 's/CgroupPlugin=cgroup\/docker/CgroupPlugin=cgroup\/v1/g' /app/cray/infra/slurm_configs/cgroup.conf
+ else
+     # Copy the shared object file to the /usr/lib directory
+diff --git a/ml/__init__.py b/ml/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/ml/cray_megatron/collectives/data_parallelism.py b/ml/cray_megatron/collectives/data_parallelism.py
+index 02a197c..1b877ba 100644
+--- a/ml/cray_megatron/collectives/data_parallelism.py
++++ b/ml/cray_megatron/collectives/data_parallelism.py
+@@ -1,4 +1,4 @@
+-from gpu_aware_mpi import get_rank, get_size
++from cray_infra.training.distributed import get_rank, get_size
+ 
+ def get_data_parallel_rank():
+     return get_rank()
+diff --git a/ml/cray_megatron/collectives/main_rank_only.py b/ml/cray_megatron/collectives/main_rank_only.py
+index 07ba299..7038d5e 100644
+--- a/ml/cray_megatron/collectives/main_rank_only.py
++++ b/ml/cray_megatron/collectives/main_rank_only.py
+@@ -1,9 +1,53 @@
+ from functools import wraps
+-from gpu_aware_mpi import get_rank, barrier
++from cray_infra.training.distributed import get_rank, barrier
++from cray_infra.training.train_debug import is_train_debug_enabled
++
++import logging
++import sys
++import time
++
++logger = logging.getLogger(__name__)
++
++
++def _dist_ready() -> bool:
++    try:
++        import torch.distributed as dist
++
++        return dist.is_initialized()
++    except Exception:
++        return False
++
++
++def _trace_main_rank_only(msg: str) -> None:
++    """CRAY_TRAIN_DEBUG tracing around the two barriers (PR #5).
++
++    main_rank_only wraps work in barrier -> work-on-rank-0 -> barrier. If a rank
++    diverges (takes a different code path, or dies), the survivors block forever
++    in one of those barriers with no traceback. These traces are how you see
++    which barrier the job stopped at."""
++    if not is_train_debug_enabled():
++        return
++    if _dist_ready() and get_rank() != 0:
++        return
++    rank = get_rank() if _dist_ready() else "?"
++    sys.stderr.write(f"[rank={rank}] main_rank_only [{time.monotonic():.3f}]: {msg}\n")
++    sys.stderr.flush()
+ 
+ def is_main_rank():
+     return get_rank() == 0
+ 
++
++def log_if_main_rank(msg):
++    """Log once for the whole job instead of once per rank.
++
++    Ported from the H100 merge tree. Plumbing for the classification/embedding
++    materializers and training steps, which would otherwise emit one identical
++    line per rank (8x noise on this box).
++    """
++    if is_main_rank():
++        logger.info(msg)
++
++
+ _in_main_rank_only = False
+ 
+ def main_rank_only(func):
+@@ -16,9 +60,15 @@ def main_rank_only(func):
+ 
+         _in_main_rank_only = True
+         try:
++            _trace_main_rank_only(f"{func.__name__}: pre-barrier-1")
+             barrier()
++            _trace_main_rank_only(
++                f"{func.__name__}: post-barrier-1, is_main_rank={is_main_rank()}"
++            )
+             result = func(*args, **kwargs) if is_main_rank() else None
++            _trace_main_rank_only(f"{func.__name__}: pre-barrier-2")
+             barrier()
++            _trace_main_rank_only(f"{func.__name__}: post-barrier-2")
+             return result
+         finally:
+             _in_main_rank_only = False
+diff --git a/ml/cray_megatron/main.py b/ml/cray_megatron/main.py
+index 0ecdb21..cb833af 100644
+--- a/ml/cray_megatron/main.py
++++ b/ml/cray_megatron/main.py
+@@ -3,13 +3,41 @@ from cray_infra.huggingface.get_hf_token import get_hf_token
+ 
+ from cray_megatron.megatron.training_harness import TrainingHarness
+ from cray_megatron.megatron import stop_flag
++from cray_megatron.models.get_latest_checkpoint_path import get_latest_checkpoint_path
++from cray_infra.util.get_job_config import get_job_config
+ 
+ from cray_megatron.collectives.main_rank_only import is_main_rank
+ 
+ import traceback
+ import sys
+ import os
+-from gpu_aware_mpi import finalize_mpi, get_rank
++from cray_infra.training.distributed import finalize_mpi, get_rank, init as init_distributed
++from cray_infra.training.train_debug import (
++    is_fault_handler_enabled,
++    is_train_debug_enabled,
++)
++
++import faulthandler
++import time
++
++# PR #5: a rank stuck inside a collective produces NO Python exception — the job
++# just hangs until slurm's time limit. faulthandler dumps every thread's stack on
++# a timer, which is the only way to see which rank is in which collective.
++# Enabled by CRAY_FAULT_HANDLER=1 or CRAY_TRAIN_DEBUG=1; off by default.
++if is_fault_handler_enabled():
++    faulthandler.enable()
++    faulthandler.dump_traceback_later(timeout=600, repeat=True)
++
++
++def _boot(msg: str) -> None:
++    if not is_train_debug_enabled():
++        return
++    rank = os.environ.get("RANK", os.environ.get("SLURM_PROCID", "?"))
++    sys.stderr.write(f"[rank={rank}] boot pid={os.getpid()} t={time.monotonic():.3f}: {msg}\n")
++    sys.stderr.flush()
++
++_boot("main.py entered")
++
+ 
+ def print_exception():
+     print(f"Rank {get_rank()} hit exception")
+@@ -29,6 +57,11 @@ logger = logging.getLogger(__name__)
+ 
+ def main():
+ 
++    # Bring up the NCCL/RCCL process group before anything touches a collective
++    # or picks a device. init() calls torch.cuda.set_device(LOCAL_RANK) first, so
++    # every rank's communicator and model land on the same GPU.
++    init_distributed()
++
+     harness = TrainingHarness()
+ 
+     os.environ["HUGGING_FACE_HUB_TOKEN"] = get_hf_token()
+@@ -39,6 +72,10 @@ def main():
+ 
+         trainer = MegatronTrainer(training_harness=harness)
+         trainer.train()
++
++        # After train() returns, so the post-loop checkpoint (including the
++        # graceful-stop one) is already on disk. Best-effort and rank-0 only.
++        upload_to_hf_if_enabled()
+     except Exception as e:
+         print_exception()
+         harness.update_status(
+@@ -48,6 +85,62 @@ def main():
+ 
+     finalize_mpi()
+ 
++
++def upload_to_hf_if_enabled():
++    """Push the final checkpoint to the Hub when the job asked for it.
++
++    Ported from the H100 merge tree. Deliberately best-effort: a training run
++    that finished successfully must not be reported FAILED because a network
++    upload did not work, so every failure here is logged and swallowed.
++
++    Rank-0 only -- eight ranks uploading the same checkpoint would race on the
++    same repo.
++    """
++    if get_rank() != 0:
++        return
++
++    try:
++        job_config = get_job_config()
++    except Exception as e:
++        logger.warning("Could not load config for HF upload: %s", e)
++        return
++
++    if not job_config.get("upload_to_hf", False):
++        return
++
++    hf_repo_id = job_config.get("hf_repo_id", "")
++    hf_token = job_config.get("hf_upload_token", "")
++    if not hf_repo_id:
++        logger.warning("upload_to_hf enabled but hf_repo_id is empty; skipping upload.")
++        return
++    if not hf_token:
++        logger.warning(
++            "upload_to_hf enabled but hf_upload_token is empty; skipping upload."
++        )
++        return
++
++    checkpoint_path = get_latest_checkpoint_path()
++    if not checkpoint_path:
++        logger.warning("No checkpoint found to upload to HuggingFace.")
++        return
++
++    try:
++        from huggingface_hub import HfApi
++
++        logger.info("Uploading checkpoint to HuggingFace repo %s", hf_repo_id)
++        api = HfApi(token=hf_token)
++        api.create_repo(repo_id=hf_repo_id, repo_type="model", exist_ok=True)
++        api.upload_file(
++            path_or_fileobj=checkpoint_path,
++            path_in_repo=os.path.basename(checkpoint_path),
++            repo_id=hf_repo_id,
++            repo_type="model",
++            commit_message=f"Upload checkpoint {os.path.basename(checkpoint_path)}",
++        )
++        logger.info("Uploaded checkpoint to %s", hf_repo_id)
++    except Exception as e:
++        logger.error("Failed to upload to HuggingFace: %s", e)
++
+ def setup_logging():
+     logging.basicConfig(level=logging.DEBUG)
+ 
+diff --git a/ml/cray_megatron/megatron/dataset/data_loader.py b/ml/cray_megatron/megatron/dataset/data_loader.py
+index 6889911..9b26d33 100644
+--- a/ml/cray_megatron/megatron/dataset/data_loader.py
++++ b/ml/cray_megatron/megatron/dataset/data_loader.py
+@@ -2,6 +2,11 @@ from cray_megatron.megatron.dataset.load_dataset import load_dataset
+ 
+ from cray_infra.util.get_job_config import get_job_config
+ 
++from cray_megatron.collectives.data_parallelism import (
++    get_data_parallel_rank,
++    get_data_parallel_world_size,
++)
++
+ import torch
+ 
+ 
+@@ -47,7 +52,28 @@ class DataLoader:
+             )
+             self.iterator = iter(self.loader)
+ 
+-            return next(self.iterator)
++            try:
++                return next(self.iterator)
++            except StopIteration:
++                # A freshly-reloaded epoch yielding nothing means this rank's
++                # data-parallel SHARD is empty, not that the epoch ended.
++                # split_dataset_by_node shards with `idx % world_size == rank`,
++                # so a dataset with fewer records than data-parallel ranks
++                # starves the high-numbered ranks: 5 records over 8 ranks gives
++                # ranks 5/6/7 nothing at all. Without this branch the bare
++                # StopIteration escapes into the training loop and the job dies
++                # with a ~2700-line traceback that names neither the rank nor
++                # the cause. Fail loudly with the actual numbers instead.
++                world_size = get_data_parallel_world_size()
++                rank = get_data_parallel_rank()
++                raise RuntimeError(
++                    f"Data-parallel rank {rank} of {world_size} received an EMPTY "
++                    f"dataset shard. split_dataset_by_node assigns record i to "
++                    f"rank i % {world_size}, so the dataset needs at least "
++                    f"{world_size} records for every rank to get one. Use a "
++                    f"larger dataset or request fewer GPUs (gpus <= number of "
++                    f"training records)."
++                ) from None
+ 
+ 
+ def get_batch_size():
+diff --git a/ml/cray_megatron/megatron/dataset/load_classification_dataset.py b/ml/cray_megatron/megatron/dataset/load_classification_dataset.py
+new file mode 100644
+index 0000000..58bb866
+--- /dev/null
++++ b/ml/cray_megatron/megatron/dataset/load_classification_dataset.py
+@@ -0,0 +1,90 @@
++"""Sequence-classification dataset loading.
++
++Consumed when ``training_mode == "classification"``. The dataset is JSONL with one
++object per line carrying a ``text`` string and an integer ``label`` (the class
++index). Unlike the language-model loader there is no packing and no document
++masking: each record is one independent example, padded to a fixed width so the
++classifier head sees a uniform batch.
++"""
++
++from cray_infra.util.get_job_config import get_job_config
++
++from cray_megatron.megatron.dataset.load_language_model_dataset import (
++    split_dataset_by_node,
++    get_dataset_path,
++)
++
++import datasets
++import jsonlines
++
++import logging
++
++logger = logging.getLogger(__name__)
++
++
++def load_classification_dataset(model, tokenizer, epoch):
++    """Load dataset for sequence-classification training."""
++    hf_dataset = datasets.IterableDataset.from_generator(
++        make_dataset_generator(),
++        features=datasets.Features(
++            {
++                "text": datasets.Value(dtype="string"),
++                "label": datasets.Value(dtype="int64"),
++            }
++        ),
++    )
++    shuffled_dataset = hf_dataset.shuffle(seed=42 + epoch, buffer_size=256)
++    split_dataset = split_dataset_by_node(shuffled_dataset)
++
++    tokenized_dataset = split_dataset.map(
++        get_tokenize_function_classification(model, tokenizer),
++        batched=True,
++        remove_columns=["text"],
++    )
++
++    return tokenized_dataset.with_format("torch")
++
++
++def make_dataset_generator():
++    def read_dataset():
++        dataset_path = get_dataset_path()
++        with open(dataset_path) as dataset_file:
++            reader = jsonlines.Reader(dataset_file)
++            for obj in reader:
++                yield obj
++
++    return read_dataset
++
++
++def get_tokenize_function_classification(model, tokenizer):
++    """Tokenize for sequence classification.
++
++    Decoder-only models classify from the LAST non-padding position, so padding
++    MUST be on the left -- with right padding the pooled position lands on pad
++    tokens and every logit collapses to the same value. Also guarantees a pad
++    token: most causal checkpoints (Qwen, Llama) ship without one.
++    """
++    job_config = get_job_config()
++    max_length = job_config["max_token_block_size"]
++
++    tokenizer.padding_side = "left"
++
++    if tokenizer.pad_token is None:
++        tokenizer.pad_token = tokenizer.eos_token
++    if tokenizer.pad_token_id is None:
++        tokenizer.pad_token_id = tokenizer.eos_token_id
++
++    def tokenize(dataset):
++        tokens = tokenizer(
++            dataset["text"],
++            truncation=True,
++            max_length=max_length,
++            padding="max_length",
++        )
++
++        # Already integer class indices -- pass straight through.
++        tokens["labels"] = dataset["label"]
++
++        return tokens
++
++    return tokenize
+diff --git a/ml/cray_megatron/megatron/dataset/load_dataset.py b/ml/cray_megatron/megatron/dataset/load_dataset.py
+index 59e744d..1cadb60 100644
+--- a/ml/cray_megatron/megatron/dataset/load_dataset.py
++++ b/ml/cray_megatron/megatron/dataset/load_dataset.py
+@@ -4,9 +4,12 @@ from cray_megatron.megatron.doc_mask import is_diffusion
+ from cray_megatron.megatron.dataset.load_embedding_dataset import load_embedding_dataset
+ from cray_megatron.megatron.dataset.load_diffusion_dataset import load_diffusion_dataset
+ from cray_megatron.megatron.dataset.load_language_model_dataset import load_language_model_dataset
++from cray_megatron.megatron.dataset.load_classification_dataset import (
++    load_classification_dataset,
++)
+ 
+ def load_dataset(model, tokenizer, epoch):
+-    """Load dataset for language-model, diffusion, or embedding training.
++    """Load dataset for language-model, diffusion, embedding, or classification training.
+ 
+     DiffusionGemma is auto-detected from the model's HF config (is_diffusion),
+     not the training_mode string — the model class is the source of truth, and a
+@@ -20,5 +23,7 @@ def load_dataset(model, tokenizer, epoch):
+         return load_diffusion_dataset(model, tokenizer, epoch)
+     elif training_mode == "embedding":
+         return load_embedding_dataset(model, tokenizer, epoch)
++    elif training_mode == "classification":
++        return load_classification_dataset(model, tokenizer, epoch)
+     else:
+         return load_language_model_dataset(model, tokenizer, epoch)
+diff --git a/ml/cray_megatron/megatron/dataset/load_language_model_dataset.py b/ml/cray_megatron/megatron/dataset/load_language_model_dataset.py
+index 529b794..ab643b4 100644
+--- a/ml/cray_megatron/megatron/dataset/load_language_model_dataset.py
++++ b/ml/cray_megatron/megatron/dataset/load_language_model_dataset.py
+@@ -59,6 +59,15 @@ def make_dataset_generator():
+ 
+ def get_dataset_path():
+     job_config = get_job_config()
++
++    # custom_data_path points at a dataset that ALREADY exists on the server (a
++    # mounted volume, a shared filesystem), letting a job skip the client-side
++    # upload entirely. It overrides the tarball's training_data_path when set.
++    custom_path = job_config.get("custom_data_path")
++    if custom_path:
++        logger.info(f"Using custom_data_path override: {custom_path}")
++        return custom_path
++
+     return job_config["training_data_path"]
+ 
+ 
+diff --git a/ml/cray_megatron/megatron/distribution/apply_distribution_strategy.py b/ml/cray_megatron/megatron/distribution/apply_distribution_strategy.py
+index 9a856f1..0bc64cb 100644
+--- a/ml/cray_megatron/megatron/distribution/apply_distribution_strategy.py
++++ b/ml/cray_megatron/megatron/distribution/apply_distribution_strategy.py
+@@ -3,7 +3,7 @@ from cray_megatron.megatron.distribution.ddp import DDP
+ from cray_megatron.megatron.distribution.no_distribution import NoDistribution
+ from cray_infra.util.get_job_config import get_job_config
+ 
+-from gpu_aware_mpi import get_size, get_rank
++from cray_infra.training.distributed import get_size, get_rank
+ 
+ import torch
+ 
+@@ -31,6 +31,13 @@ def load_distribution_strategy():
+         if distribution_strategy == "ddp":
+             logger.info("Using DDP distribution strategy.")
+             strategy["strategy"] = DDP
++        elif distribution_strategy == "fsdp":
++            # "fsdp" is JobConfig's DEFAULT value, so it must not be reported as
++            # unknown — it previously fell through to the else-branch and logged
++            # a misleading "Unknown distribution strategy 'fsdp'" warning on every
++            # multi-rank job that used the default.
++            logger.info("Using SimpleFSDP distribution strategy.")
++            strategy["strategy"] = SimpleFSDP
+         else:
+             logger.warning(
+                 f"Unknown distribution strategy '{distribution_strategy}' "
+@@ -48,6 +55,19 @@ def get_device():
+     if torch.cuda.is_available():
+ 
+         gpu_count = torch.cuda.device_count()
++
++        # Under the NCCL launcher torchrun assigns each worker its GPU via
++        # LOCAL_RANK, and distributed.init() has already called set_device with
++        # it. Honour that instead of re-deriving an index from the Slurm host
++        # list — the two must agree or NCCL binds its communicator to one device
++        # while the model lives on another, which hangs on the first collective.
++        local_rank_env = os.environ.get("LOCAL_RANK")
++        if local_rank_env is not None:
++            try:
++                return torch.device(f"cuda:{int(local_rank_env) % gpu_count}")
++            except ValueError:
++                pass
++
+         selected_gpu = select_gpu()
+ 
+         if gpu_count > 1:
+@@ -64,9 +84,53 @@ def apply_distribution_strategy(model_info):
+     return model_info
+ 
+ 
++def get_local_rank_and_size():
++    """This process's rank WITHIN its host, and how many ranks share the host.
++
++    Set by the launcher: OpenMPI exports OMPI_COMM_WORLD_LOCAL_*, Slurm exports
++    SLURM_LOCALID / SLURM_NTASKS_PER_NODE. Returns (0, 1) when neither is present,
++    which is the single-rank-per-host case.
++    """
++    for rank_var, size_var in (
++        # torchrun first: under the NCCL launcher it is the authoritative pair,
++        # and OMPI_* is still present from the node-level mpirun bootstrap (where
++        # it describes the ONE launcher process per node, not the GPU workers).
++        ("LOCAL_RANK", "LOCAL_WORLD_SIZE"),
++        ("OMPI_COMM_WORLD_LOCAL_RANK", "OMPI_COMM_WORLD_LOCAL_SIZE"),
++        ("SLURM_LOCALID", "SLURM_NTASKS_PER_NODE"),
++    ):
++        raw_rank = os.environ.get(rank_var)
++        raw_size = os.environ.get(size_var)
++        if raw_rank is None or raw_size is None:
++            continue
++        try:
++            # SLURM_NTASKS_PER_NODE can be "2(x3)" on heterogeneous allocations.
++            return int(raw_rank), int(str(raw_size).split("(")[0])
++        except ValueError:
++            continue
++
++    return 0, 1
++
++
+ def select_gpu():
+     rank = get_rank()
+     gpu_count = torch.cuda.device_count()
++
++    # Single-node multi-GPU: every rank shares one hostname, so the
++    # hostname-position scheme below cannot separate them and would put the
++    # whole job on GPU 0 (2 ranks -> both "assigned GPU 0"). The launcher's
++    # LOCAL rank is the correct fan-out key here. Only used when more than one
++    # rank actually shares this host, so the multi-pod-per-machine path
++    # (one rank per pod, distinct hostnames) keeps its existing behavior.
++    local_rank, local_size = get_local_rank_and_size()
++    if local_size > 1 and gpu_count > 0:
++        gpu_index = local_rank % gpu_count
++        logger.info(
++            f"Rank {rank} is local rank {local_rank} of {local_size} on this host; "
++            f"assigned GPU {gpu_index} out of {gpu_count} available GPUs."
++        )
++        return gpu_index
++
+     machine_id = get_machine_id()
+     my_hostname = socket.gethostname()
+ 
+diff --git a/ml/cray_megatron/megatron/distribution/ddp.py b/ml/cray_megatron/megatron/distribution/ddp.py
+index 0fc8b0c..773aa16 100644
+--- a/ml/cray_megatron/megatron/distribution/ddp.py
++++ b/ml/cray_megatron/megatron/distribution/ddp.py
+@@ -1,8 +1,34 @@
+-from gpu_aware_mpi import allreduce, get_size
++from cray_infra.training.distributed import allreduce, get_size
++from cray_infra.training.train_debug import is_train_debug_enabled
+ 
++import torch
+ import torch.nn as nn
+ 
+ 
++def _assert_uniform_participation(synced, world_size):
++    """Fail loudly if ranks reduced different numbers of gradient tensors.
++
++    A rank-asymmetric parameter set means the allreduce sequences no longer line
++    up, and the symptom is a silent hang inside a collective rather than an
++    error. One extra allreduce converts that into a diagnosable exception. Gated
++    on CRAY_TRAIN_DEBUG because it is itself a collective -- which also means the
++    flag has to be set for ALL ranks or none (it comes from the job environment,
++    so that holds in practice).
++    """
++    counts = torch.tensor([float(synced)], dtype=torch.float64)
++    allreduce(counts)
++    expected = float(synced) * world_size
++    if counts.item() != expected:
++        raise RuntimeError(
++            "DDP gradient participation is not uniform across ranks: this rank "
++            f"reduced {synced} tensors, cross-rank total is {counts.item():.0f} "
++            f"(expected {expected:.0f} if every rank matched). Ranks are about to "
++            "disagree on the collective sequence, which hangs the job. This "
++            "wrapper supports dense models only -- data-dependent parameter "
++            "participation (e.g. MoE expert routing) is not supported."
++        )
++
++
+ class DDP(nn.Module):
+     def __init__(self, model):
+         super().__init__()
+@@ -18,6 +44,47 @@ class DDP(nn.Module):
+             return getattr(self.model, name)
+ 
+     def backward_sync(self):
+-        for param_name, param in self.model.named_parameters(recurse=False):
++        """All-reduce gradients across data-parallel ranks, then average.
++
++        Two defects fixed here:
++
++        1. `recurse=False` iterated only the wrapped model's TOP-LEVEL
++           parameters. Every parameter of a real transformer lives in a
++           submodule, so the loop body never ran: 0 of 310 tensors were reduced
++           for Qwen3-0.6B and each rank trained an independent model. (The tell
++           was DDP's final loss being bit-identical across two different
++           collective backends — impossible if collectives touched the math.)
++
++        2. `allreduce` is a SUM. Summing gradients over N ranks scales them by N,
++           i.e. an 8x effective learning rate on 8 GPUs. DDP requires the MEAN,
++           so divide by the world size. (`get_size` was already imported here and
++           never used, which suggests this was intended and never wired up.)
++
++        NaN PATH: callers invoke this from the `else` branch of a `has_nan`
++        check. That is only safe because `has_nan` is derived from `sync_loss()`,
++        whose allreduce makes the loss identical on every rank -- so either all
++        ranks skip or none do. If anyone makes that loss check rank-local, one
++        rank will skip these allreduces while the others block in them and the
++        job will HANG rather than fail.
++
++        COLLECTIVE SEQUENCE: the allreduce order must match on every rank. This
++        iterates in module-registration order, which is static and rank-symmetric
++        for dense models. Data-dependent participation (MoE expert routing is the
++        realistic case) would make `param.grad is None` differ per rank, mismatch
++        the counts, and hang. Dense models only; the debug check below turns that
++        latent hang into an explicit error.
++        """
++        world_size = get_size()
++
++        if world_size == 1:
++            return
++
++        synced = 0
++        for param_name, param in self.model.named_parameters():
+             if param.requires_grad and param.grad is not None:
+                 allreduce(param.grad)
++                param.grad /= world_size
++                synced += 1
++
++        if is_train_debug_enabled():
++            _assert_uniform_participation(synced, world_size)
+diff --git a/ml/cray_megatron/megatron/distribution/fsdp.py b/ml/cray_megatron/megatron/distribution/fsdp.py
+index dc6df55..514674e 100644
+--- a/ml/cray_megatron/megatron/distribution/fsdp.py
++++ b/ml/cray_megatron/megatron/distribution/fsdp.py
+@@ -1,7 +1,13 @@
+ import torch
+ import torch.nn as nn
+ from torch.utils.checkpoint import checkpoint
+-from gpu_aware_mpi import get_size, get_rank, allgather, reduce_scatter
++from cray_infra.training.distributed import (
++    get_size,
++    get_rank,
++    allgather,
++    reduce_scatter,
++    cuda_device,
++)
+ from collections import defaultdict
+ from cray_infra.training.metrics import get_model_memory_footprint
+ 
+@@ -443,11 +449,19 @@ def shard_tensor(tensor):
+     start = rank * shard_size
+     shard = tensor_padded[start : start + shard_size].clone()
+ 
+-    # Gather metadata from all ranks
++    # Gather metadata from all ranks. NCCL/RCCL collectives only operate on CUDA
++    # tensors, so the metadata buffers are allocated on-device (they used to be
++    # CPU tensors, which the MPI extension accepted). .tolist() below pulls the
++    # result back to host.
++    device = cuda_device()
+     local_metadata = torch.tensor(
+-        [original_numel, *original_shape, shard_size, padding], dtype=torch.long
++        [original_numel, *original_shape, shard_size, padding],
++        dtype=torch.long,
++        device=device,
++    )
++    all_metadata = torch.zeros(
++        (world_size, local_metadata.numel()), dtype=torch.long, device=device
+     )
+-    all_metadata = torch.zeros((world_size, local_metadata.numel()), dtype=torch.long)
+     allgather(local_metadata, all_metadata.view(-1))
+ 
+     # Reshape all_metadata back to 2D after allgather
+@@ -518,11 +532,13 @@ def collectives_all_gather(shard, metadata_dict):
+     world_size = get_size()
+     rank = get_rank()
+ 
+-    # Prepare buffers
++    # Prepare buffers on-device for NCCL/RCCL. fp32 for the collective keeps the
++    # reduction numerically safe regardless of the parameter dtype.
++    device = cuda_device()
+     orig_dtype = shard.dtype
+-    shard = shard.to(torch.float32)
++    shard = shard.to(torch.float32).to(device)
+     gathered = torch.zeros(
+-        shard.numel() * world_size, device=shard.device, dtype=torch.float32
++        shard.numel() * world_size, device=device, dtype=torch.float32
+     )
+ 
+     # Collective operation in float32
+@@ -557,23 +573,34 @@ def collectives_reduce_scatter(tensor, metadata_dict):
+ 
+     original_numel, _, shard_size, padding = metadata_dict[rank]
+ 
+-    # Pad tensor if needed
+-    tensor_padded = tensor.reshape(-1)
++    # Pad tensor if needed. Buffers live on-device for NCCL/RCCL.
++    device = cuda_device()
++    tensor_padded = tensor.reshape(-1).to(device)
+     if padding > 0:
+         tensor_padded = torch.concatenate(
+             [
+                 tensor_padded,
+-                torch.zeros(padding, device=tensor.device, dtype=tensor_padded.dtype),
++                torch.zeros(padding, device=device, dtype=tensor_padded.dtype),
+             ]
+         )
+ 
+     # Convert to float32 for the collective
+     tensor_padded = tensor_padded.to(torch.float32)
+-    local_shard = torch.zeros(shard_size, device=tensor.device, dtype=torch.float32)
++    local_shard = torch.zeros(shard_size, device=device, dtype=torch.float32)
+ 
+     # Collective operation in float32
+     reduce_scatter(tensor_padded, local_shard)
+ 
++    # reduce_scatter() reduces with SUM. This function reduce-scatters GRADIENTS
++    # (see _AllGather.backward), and the data loader shards records across ranks
++    # (idx % world_size == rank), so each rank's grad is already a mean over its
++    # own shard. Summing across ranks would scale the gradient by world_size --
++    # an 8x effective learning rate on 8 GPUs. Divide to recover the mean, which
++    # is the same correction applied in DDP.backward_sync(). Done in fp32, before
++    # the cast back, so the division does not compound the bf16 rounding.
++    if world_size > 1:
++        local_shard /= world_size
++
+     # Convert result back to original dtype
+     local_shard = local_shard.to(orig_dtype)
+ 
+diff --git a/ml/cray_megatron/megatron/megatron_trainer.py b/ml/cray_megatron/megatron/megatron_trainer.py
+index 9b09358..16b021f 100644
+--- a/ml/cray_megatron/megatron/megatron_trainer.py
++++ b/ml/cray_megatron/megatron/megatron_trainer.py
+@@ -1,3 +1,4 @@
++import os
+ from cray_infra.training.training_job_status import TrainingJobStatus
+ from cray_infra.training.print_logo import print_logo
+ 
+@@ -11,6 +12,20 @@ import logging
+ 
+ logger = logging.getLogger(__name__)
+ 
++from cray_infra.training.train_debug import is_train_debug_enabled
++
++import sys
++import time
++
++
++def _trace_trainer(msg: str) -> None:
++    """CRAY_TRAIN_DEBUG tracing for the outer trainer steps (PR #5)."""
++    if not is_train_debug_enabled():
++        return
++    rank = os.environ.get("RANK", os.environ.get("SLURM_PROCID", "?"))
++    sys.stderr.write(f"[rank={rank}] trainer [{time.monotonic():.3f}]: {msg}\n")
++    sys.stderr.flush()
++
+ 
+ class MegatronTrainer:
+     def __init__(self, training_harness: TrainingHarness):
+diff --git a/ml/cray_megatron/megatron/training_harness.py b/ml/cray_megatron/megatron/training_harness.py
+index 4440c63..7600a36 100644
+--- a/ml/cray_megatron/megatron/training_harness.py
++++ b/ml/cray_megatron/megatron/training_harness.py
+@@ -12,13 +12,33 @@ import logging
+ 
+ logger = logging.getLogger(__name__)
+ 
++from cray_infra.training.train_debug import is_train_debug_enabled
++
++import sys
++import time
++
++
++def _trace_harness(msg: str) -> None:
++    """CRAY_TRAIN_DEBUG tracing for status writes (PR #5). save_status is
++    @main_rank_only, so a status write that never lands means the job wedged in a
++    barrier rather than in the trainer."""
++    if not is_train_debug_enabled():
++        return
++    rank = os.environ.get("RANK", os.environ.get("SLURM_PROCID", "?"))
++    sys.stderr.write(f"[rank={rank}] harness [{time.monotonic():.3f}]: {msg}\n")
++    sys.stderr.flush()
++
+ 
+ class TrainingHarness:
+     def update_status(self, status, metadata={}):
++        _trace_harness(f"update_status enter status={status}")
+ 
+         current_status = get_status()
+ 
+         current_status["status"] = status
++        # Heartbeat for the restart logic (PR #5): a job whose status has not
++        # been touched within training_heartbeat_seconds is treated as dead.
++        current_status["last_updated"] = time.time()
+         for key, value in metadata.items():
+             current_status[key] = value
+ 
+diff --git a/ml/cray_megatron/megatron/training_loop.py b/ml/cray_megatron/megatron/training_loop.py
+index f7c2ac1..c100b36 100644
+--- a/ml/cray_megatron/megatron/training_loop.py
++++ b/ml/cray_megatron/megatron/training_loop.py
+@@ -27,13 +27,29 @@ from cray_infra.training.training_job_status import TrainingJobStatus
+ from cray_infra.util.get_job_config import get_job_config
+ 
+ 
+-from torch.optim import AdamW
++from torch.optim import AdamW, SGD, RMSprop
++import torch.nn.functional as F
+ 
+ import torch
+ 
+ import time
+ import logging
+-from gpu_aware_mpi import allreduce, get_size
++from cray_infra.training.distributed import allreduce, get_size
++from cray_infra.training.train_debug import is_train_debug_enabled
++
++
++def _trace_loop(msg: str) -> None:
++    """CRAY_TRAIN_DEBUG tracing for the training loop's phase boundaries (PR #5).
++    Pinpoints whether a stall is in model load, the step loop, or checkpointing."""
++    if not is_train_debug_enabled():
++        return
++    import os as _os
++    import sys as _sys
++    import time as _time
++
++    rank = _os.environ.get("RANK", _os.environ.get("SLURM_PROCID", "?"))
++    _sys.stderr.write(f"[rank={rank}] training_loop [{_time.monotonic():.3f}]: {msg}\n")
++    _sys.stderr.flush()
+ 
+ try:
+     from torch.nn.attention.flex_attention import BlockMask
+@@ -474,6 +490,22 @@ class TrainingLoop:
+                 batch, accum_step, gradient_accumulation_steps
+             )
+ 
++        # Sequence classification also has its own contract: labels are class
++        # indices (B,) rather than shifted token ids (B, S), the head emits
++        # (B, num_labels) logits, and packed-document masking is meaningless
++        # because each record is an independent example.
++        if get_job_config()["training_mode"] == "classification":
++            return self._classification_training_step_accumulate(
++                batch, accum_step, gradient_accumulation_steps
++            )
++
++        # Embedding training has no logits/labels forward at all: the batch is a
++        # sentence PAIR and the objective is CoSENT over the two embeddings.
++        if get_job_config()["training_mode"] == "embedding":
++            return self._embedding_training_step_accumulate(
++                batch, accum_step, gradient_accumulation_steps
++            )
++
+         device = self.training_state.model_info["distribution_strategy"]["device"]
+ 
+         start_time = time.time()
+@@ -577,6 +609,99 @@ class TrainingLoop:
+ 
+         return avg_loss
+ 
++    def _embedding_training_step_accumulate(
++        self, batch, accum_step, gradient_accumulation_steps
++    ):
++        """Embedding training step: CoSENT loss over a sentence pair.
++
++        The dataset yields `sentence1_*` / `sentence2_*` tensor groups; each is
++        un-prefixed back into the feature dict SentenceTransformer expects, and
++        the loss object built in `_materialize_embedding` scores the pair against
++        a float similarity label.
++
++        Ported from the H100 merge tree. UNVERIFIED end to end on either stack --
++        wired and import-clean, never run to completion.
++        """
++        device = self.training_state.model_info["distribution_strategy"]["device"]
++        start_time = time.time()
++
++        sentence1_features = {
++            key.replace("sentence1_", ""): batch[key].to(device)
++            for key in batch
++            if key.startswith("sentence1_")
++        }
++        sentence2_features = {
++            key.replace("sentence2_", ""): batch[key].to(device)
++            for key in batch
++            if key.startswith("sentence2_")
++        }
++
++        loss = self.training_state.model_info["loss"](
++            sentence_features=[sentence1_features, sentence2_features],
++            labels=batch["labels"].to(device),
++        )
++
++        scaled_loss = loss / gradient_accumulation_steps
++        _, avg_loss = self.sync_loss(loss)
++        scaled_loss.backward()
++
++        self.print_microbatch_info(accum_step, avg_loss, start_time)
++        return avg_loss
++
++    def _classification_training_step_accumulate(
++        self, batch, accum_step, gradient_accumulation_steps
++    ):
++        """Sequence-classification training step.
++
++        ``AutoModelForSequenceClassification`` computes its own cross-entropy when
++        given ``labels``, so the plain path just reads ``.loss``. When
++        ``classification.label_smoothing > 0`` the internal loss is discarded and a
++        smoothed cross-entropy is computed from the logits instead: the one-hot
++        target is mixed with a uniform 1/num_labels floor, which stops the model
++        driving the correct logit to infinity and calibrates confidence -- worth
++        having on the small, heavily-repeated datasets these jobs typically use.
++        """
++        device = self.training_state.model_info["distribution_strategy"]["device"]
++        classification = get_job_config().get("classification") or {}
++        label_smoothing = classification.get("label_smoothing", 0.0) or 0.0
++
++        start_time = time.time()
++
++        outputs = self.training_state.model_info["model"](
++            input_ids=batch["input_ids"].to(device),
++            attention_mask=batch["attention_mask"].to(device),
++            labels=batch["labels"].to(device),
++        )
++
++        if label_smoothing > 0:
++            logits = outputs.logits
++            targets = batch["labels"].to(device)
++            log_probs = F.log_softmax(logits, dim=-1)
++            num_labels = logits.size(-1)
++
++            smooth_targets = torch.zeros_like(log_probs).scatter_(
++                -1, targets.unsqueeze(-1), 1.0
++            )
++            smooth_targets = (
++                smooth_targets * (1.0 - label_smoothing) + label_smoothing / num_labels
++            )
++            loss = -(smooth_targets * log_probs).sum(dim=-1).mean()
++        else:
++            loss = outputs.loss
++
++        scaled_loss = loss / gradient_accumulation_steps
++
++        # Synchronize loss across all ranks
++        _, avg_loss = self.sync_loss(loss)
++
++        # Unconditional backward, for the same reason as the causal path: it frees
++        # the saved-for-backward activations even when the loss is NaN.
++        scaled_loss.backward()
++
++        self.print_microbatch_info(accum_step, avg_loss, start_time)
++
++        return avg_loss
++
+     def _diffusion_training_step_accumulate(
+         self, batch, accum_step, gradient_accumulation_steps
+     ):
+@@ -1044,7 +1169,19 @@ def get_optimizer(model):
+     # to the adapter parameters only (~100 MB fp32 states vs ~16 GB for a 2B
+     # full-parameter AdamW).
+     trainable = [p for p in model.parameters() if p.requires_grad]
+-    logger.info(f"Initializing optimizer for {len(trainable)} trainable parameters")
++    optimizer_type = job_config.get("optimizer_type", "adamw")
++    logger.info(
++        f"Initializing {optimizer_type} optimizer for {len(trainable)} trainable parameters"
++    )
++
++    if optimizer_type == "adamw":
++        return AdamW(trainable, lr=learning_rate)
++    elif optimizer_type == "sgd":
++        return SGD(trainable, lr=learning_rate)
++    elif optimizer_type == "rmsprop":
++        return RMSprop(trainable, lr=learning_rate)
++
++    logger.warning(f"Unknown optimizer_type '{optimizer_type}', falling back to AdamW")
+     return AdamW(trainable, lr=learning_rate)
+ 
+     # use Adafactor optimizer
+diff --git a/ml/cray_megatron/models/load_model.py b/ml/cray_megatron/models/load_model.py
+index 8ba783f..df046af 100644
+--- a/ml/cray_megatron/models/load_model.py
++++ b/ml/cray_megatron/models/load_model.py
+@@ -2,9 +2,9 @@ from cray_megatron.huggingface.download_model import download_model
+ from cray_megatron.megatron.distribution.apply_distribution_strategy import (
+     apply_distribution_strategy,
+ )
+-from cray_megatron.collectives.main_rank_only import is_main_rank
++from cray_megatron.collectives.main_rank_only import is_main_rank, log_if_main_rank
+ 
+-from gpu_aware_mpi import get_size, get_rank, allgather
++from cray_infra.training.distributed import get_size, get_rank, allgather, allreduce
+ 
+ from adapters.add_adapters_to_model import add_adapters_to_model
+ 
+@@ -15,6 +15,7 @@ from transformers import AutoConfig
+ from transformers import AutoTokenizer
+ from transformers import AutoModelForCausalLM
+ from transformers import AutoModelForImageTextToText
++from transformers import AutoModelForSequenceClassification
+ 
+ from cray_megatron.megatron.doc_mask import is_multimodal
+ 
+@@ -59,18 +60,173 @@ def load_model_config():
+     return model_info
+ 
+ 
++def sync_freshly_initialized_heads(model):
++    """Make randomly-initialized task heads identical on every rank.
++
++    Every weight that comes out of the pretrained checkpoint is byte-identical
++    across ranks, so the distribution strategies here only ever allreduce
++    GRADIENTS -- neither DDP nor SimpleFSDP broadcasts initial parameters. That
++    assumption breaks for a sequence-classification job: `score`/`classifier` is
++    NOT in a causal-LM checkpoint (transformers reports `score.weight | MISSING`)
++    and is freshly randomised, so each rank starts from a DIFFERENT head. With
++    SimpleFSDP those divergent heads are then sharded and re-gathered into an
++    incoherent tensor, and training produces garbage while still reporting
++    COMPLETED -- measured on 4x MI355X as loss 0.0000 -> -5.2e35, against
++    3.5742 -> 0.5015 for the identical single-GPU run.
++
++    There is no broadcast in gpu_aware_mpi, but allreduce is MPI_SUM in place, so
++    zeroing every non-zero rank and summing leaves rank 0's values everywhere.
++    """
++    if get_size() <= 1:
++        return
++
++    head_prefixes = ("score.", "classifier.")
++    synced = []
++
++    with torch.no_grad():
++        for name, param in model.named_parameters():
++            if not name.startswith(head_prefixes):
++                continue
++            if get_rank() != 0:
++                param.zero_()
++            allreduce(param.data)
++            synced.append(name)
++
++    if synced:
++        logger.info(
++            "Broadcast %d freshly-initialized head tensor(s) from rank 0 so all "
++            "%d ranks share one head: %s",
++            len(synced),
++            get_size(),
++            ", ".join(synced),
++        )
++
++
++def apply_freeze_layer_keywords(model, job_config):
++    """Freeze every parameter whose NAME contains one of freeze_layer_keywords.
++
++    The motivating case is a multimodal checkpoint where only the language tower
++    should train: freezing "vision_model"/"vision_tower"/"multi_modal_projector"
++    keeps the vision stack fixed. Accepts a list or a comma-separated string.
++    """
++    keywords = job_config.get("freeze_layer_keywords")
++    if not keywords:
++        return
++
++    if isinstance(keywords, str):
++        keywords = [k.strip() for k in keywords.split(",") if k.strip()]
++    if not keywords:
++        return
++
++    logger.info(f"Selective freezing enabled for keywords: {keywords}")
++    frozen_count = 0
++    for name, param in model.named_parameters():
++        if any(key in name for key in keywords):
++            param.requires_grad = False
++            frozen_count += 1
++
++    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
++    total = sum(p.numel() for p in model.parameters())
++    pct = (100 * trainable / total) if total else 0.0
++    logger.info(
++        f"Froze {frozen_count} parameter tensors matching keywords; "
++        f"{trainable:,} / {total:,} trainable ({pct:.2f}%)"
++    )
++
++
++def _resolve_attn_impl(job_config):
++    """Decide the HF attention backend for training.
++
++    SDPA (PyTorch's built-in fused attention) is the default and only
++    auto-selected backend. Flash-attention support was removed from the training
++    path: the head_dim/per-layer gating and the Qwen3 family bugs made it more
++    trouble than it was worth, and it bloated the image build.
++
++    An explicitly requested `flash_attention_2` is DOWNGRADED to sdpa rather than
++    honored. Passing it through is not survivable here: FA2 loads successfully
++    (so the `from_pretrained` fallback below never fires -- that only catches a
++    load-time refusal) and then aborts mid-training on MI355X with a device-side
++    `HSA_STATUS_ERROR_EXCEPTION`, which is not a Python exception and cannot be
++    caught at all. Observed as a dead 8-GPU job with no traceback.
++
++    Any other explicit backend (e.g. "eager") is still honored.
++    Ported from the H100 merge tree, where the same downgrade was applied.
++    """
++    override = job_config.get("attn_implementation", "auto")
++    if override in (None, "auto", "flash_attention_2"):
++        return "sdpa"
++    return override
++
++
++def _resolve_dtype(job_config):
++    """Per-job dtype (train_args["dtype"]) wins over global cray-config.yaml."""
++    job_dtype = job_config.get("dtype", "auto")
++    config_dtype = job_dtype if job_dtype != "auto" else get_config()["dtype"]
++    if config_dtype == "auto":
++        return None
++    return (
++        torch.float16
++        if config_dtype == "float16"
++        else torch.float32 if config_dtype == "float32" else torch.bfloat16
++    )
++
++
++def _materialize_embedding(model_info):
++    """Embedding training: SentenceTransformer body + CoSENT pairwise loss.
++
++    Ported from the H100 merge tree and adapted to this tree's conventions
++    (plain `get_job_config()` instead of the sidecar overlay, shared
++    `_resolve_dtype`). The causal-LM and classification paths are untouched.
++
++    NOTE: imports are function-local on purpose -- `sentence_transformers` is an
++    optional dependency, and a top-level import would make every language-model
++    job fail on an image that does not ship it.
++
++    UNVERIFIED end to end: this path has never been run to completion on either
++    stack (the H100 merge notes say the same). Treat a first embedding run as
++    unproven.
++    """
++    from sentence_transformers import SentenceTransformer
++    from sentence_transformers.losses.CoSENTLoss import CoSENTLoss
++
++    job_config = get_job_config()
++    device = model_info["distribution_strategy"]["device"]
++
++    log_if_main_rank("Loading SentenceTransformer for embedding training...")
++    download_model(model_info["model_name"])
++
++    start_time = time.time()
++    model_info["model"] = SentenceTransformer(model_info["model_name"], device=device)
++    log_if_main_rank(
++        f"SentenceTransformer load latency: {time.time() - start_time:.2f}s"
++    )
++
++    dtype = _resolve_dtype(job_config)
++    if dtype is not None:
++        model_info["model"] = model_info["model"].to(dtype=dtype)
++
++    model_info["model"] = model_info["distribution_strategy"]["strategy"](
++        model_info["model"]
++    )
++    model_info["model"].to(device)
++
++    # The training step reads model_info["loss"]; CoSENTLoss needs the wrapped
++    # model so its forward runs through the distribution strategy.
++    model_info["loss"] = CoSENTLoss(model_info["model"])
++    return model_info
++
++
+ def materialize_model(model_info):
+     job_config = get_job_config()
++
++    # Embedding training swaps the whole model+loss for a SentenceTransformer
++    # pair; it shares none of the causal-LM load path below.
++    if job_config.get("training_mode") == "embedding":
++        return _materialize_embedding(model_info)
++
+     download_model(model_info["model_name"])
+ 
+-    # SDPA (PyTorch's built-in fused attention) is the default and only
+-    # auto-selected backend. Flash-attention support was removed: the
+-    # head_dim/per-layer gating and the Qwen3 family bugs made it more
+-    # trouble than it was worth for training, and it bloated the image
+-    # build. A job can still force another HF backend (e.g. "eager") via
+-    # attn_implementation; "auto" (the default) means SDPA.
+-    override = job_config.get("attn_implementation", "auto")
+-    attn_impl = override if (override and override != "auto") else "sdpa"
++    attn_impl = _resolve_attn_impl(job_config)
+ 
+     # Multimodal wrappers (vision_config present) need the image-text-to-text
+     # AutoModel: AutoModelForCausalLM rejects e.g. Qwen2VLConfig at load
+@@ -79,11 +235,18 @@ def materialize_model(model_info):
+     # TextToText loads both Qwen2-VL and Gemma3 conditional-generation models;
+     # the text-only training forward works on them (LoRA is confined to the
+     # language tower by resolve_target_modules).
+-    model_cls = (
+-        AutoModelForImageTextToText
+-        if is_multimodal(model_info["model_config"])
+-        else AutoModelForCausalLM
+-    )
++    # training_mode "classification" swaps the LM head for a sequence-classification
++    # head (num_labels logits pooled from the last non-pad position). It takes
++    # precedence over the multimodal wrapper: a classification job wants the
++    # classifier regardless of whether the checkpoint also ships a vision tower.
++    is_classification = job_config["training_mode"] == "classification"
++
++    if is_classification:
++        model_cls = AutoModelForSequenceClassification
++    elif is_multimodal(model_info["model_config"]):
++        model_cls = AutoModelForImageTextToText
++    else:
++        model_cls = AutoModelForCausalLM
+     logger.info(
+         "Loading model with %s, attn_implementation=%s",
+         model_cls.__name__,
+@@ -108,6 +271,53 @@ def materialize_model(model_info):
+         load_kwargs["device_map"] = {"": device}
+         load_kwargs["low_cpu_mem_usage"] = True
+ 
++    if is_classification:
++        classification = job_config.get("classification") or {}
++        num_labels = classification.get("num_labels")
++        if not num_labels:
++            raise ValueError(
++                "training_mode 'classification' requires classification.num_labels "
++                "in train_args (the classifier head width)."
++            )
++        load_kwargs["num_labels"] = num_labels
++        if classification.get("id2label"):
++            load_kwargs["id2label"] = classification["id2label"]
++        if classification.get("label2id"):
++            load_kwargs["label2id"] = classification["label2id"]
++
++        # Head dropout must go on the CONFIG, not as a from_pretrained kwarg:
++        # transformers 5.x builds causal-LM classifiers via
++        # GenericForSequenceClassification, whose __init__ rejects unknown kwargs
++        # ("got an unexpected keyword argument 'classifier_dropout'"). The attribute
++        # is also architecture-specific (BERT-style configs have it, Qwen/Llama
++        # score-head configs do not), so set whichever name exists and say so when
++        # none does rather than failing the job over a cosmetic knob.
++        dropout = classification.get("dropout")
++        if dropout is not None:
++            config_obj = model_info["model_config"]
++            applied = [
++                attr
++                for attr in (
++                    "classifier_dropout",
++                    "classifier_dropout_prob",
++                    "seq_classif_dropout",
++                )
++                if hasattr(config_obj, attr)
++            ]
++            for attr in applied:
++                setattr(config_obj, attr, dropout)
++            if applied:
++                load_kwargs["config"] = config_obj
++                logger.info("Classification head dropout: %s -> %s", dropout, applied)
++            else:
++                logger.info(
++                    "Classification head dropout %s ignored: %s exposes no "
++                    "classifier-dropout attribute (score-head architecture).",
++                    dropout,
++                    type(config_obj).__name__,
++                )
++        logger.info("Classification head: num_labels=%s", num_labels)
++
+     start_time = time.time()
+     try:
+         model_info["model"] = model_cls.from_pretrained(
+@@ -166,6 +376,12 @@ def materialize_model(model_info):
+     logger.info(
+         f"create_tokenformer_model latency: {total_time:.2f}s ({total_time/60:.1f} minutes)"
+     )
++
++    # Applied AFTER the adapter so it can also freeze adapter params that landed on
++    # excluded towers (and so the trainable-count log reflects what the optimizer
++    # will actually see -- get_optimizer filters on requires_grad).
++    apply_freeze_layer_keywords(model_info["model"], job_config)
++
+     start_time = time.time()
+     # Per-job dtype (train_args["dtype"]) wins over global cray-config.yaml.
+     # Both default to "auto", which means "use the model's native dtype".
+@@ -192,6 +408,9 @@ def materialize_model(model_info):
+         f"model dtype conversion latency: {total_time:.2f}s ({total_time/60:.1f} minutes)"
+     )
+ 
++    # Must happen BEFORE the distribution strategy wraps/shards the model.
++    sync_freshly_initialized_heads(model_info["model"])
++
+     model_info["model"] = model_info["distribution_strategy"]["strategy"](
+         model_info["model"]
+     )
+diff --git a/requirements.txt b/requirements.txt
+index bfe9562..04e7703 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -6,11 +6,14 @@ aiofiles
+ persist-queue
+ matplotlib
+ streaming-form-data==1.15.0
+-mpi4py==4.0.3
+ openai>=1.40.0  # Ensure modern openai package (ensure types module present)
+ openai-harmony
+ humanize
+ atomicwrites
+ cryptography==46.0.0
+ sortedcontainers
+-datasets
++# >=4.8: older datasets (3.6.0) hard-imports `VideoReader` from torchvision.io in
++# its torch formatter, which AMD's torchvision (0.27.0+rocm) does not export ->
++# every training job dies with ImportError before step 0. 4.8+ wraps that import
++# in try/except ImportError.
++datasets>=4.8
+diff --git a/scripts/start_slurm.sh b/scripts/start_slurm.sh
+index f2979a1..b69587d 100755
+--- a/scripts/start_slurm.sh
++++ b/scripts/start_slurm.sh
+@@ -15,5 +15,22 @@ LOCAL_DIRECTORY="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd
+ # Run the slurm discovery service
+ python $LOCAL_DIRECTORY/../infra/cray_infra/slurm/discovery/discover_clusters.py
+ 
+-slurmctld
++# PR #5: only the controller node runs slurmctld. Every node starting its own
++# controller is harmless on a single-node deployment but wrong as soon as there
++# is more than one node — the extra controllers fight over the same state
++# directory. slurmd still runs everywhere (it is the per-node worker daemon).
++SLURM_CONF_PATH="${SLURM_CONF:-/app/cray/nfs/slurm.conf}"
++CONTROLLER=""
++if [ -f "$SLURM_CONF_PATH" ]; then
++    CONTROLLER=$(grep '^SlurmctldHost=' "$SLURM_CONF_PATH" | cut -d= -f2- | tr -d '[:space:]' || true)
++fi
++
++THIS_HOST=$(hostname)
++if [ -z "$CONTROLLER" ] || [ "$THIS_HOST" = "$CONTROLLER" ] || [ "${THIS_HOST%%.*}" = "$CONTROLLER" ]; then
++    echo "Starting slurmctld on ${THIS_HOST} (controller=${CONTROLLER:-unset})"
++    slurmctld
++else
++    echo "Skipping slurmctld on ${THIS_HOST} (controller is ${CONTROLLER})"
++fi
++
+ slurmd
+diff --git a/scripts/train_job_entrypoint.sh b/scripts/train_job_entrypoint.sh
+index 0314005..3494e98 100755
+--- a/scripts/train_job_entrypoint.sh
++++ b/scripts/train_job_entrypoint.sh
+@@ -21,7 +21,112 @@ export CRAY_TRAINING_JOB_CONFIG_PATH=REPLACE_CONFIG_PATH
+ # sliding/full-attention activation shapes). PyTorch 2.1+.
+ export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+ 
++# `import vllm` sets PYTORCH_NVML_BASED_CUDA_CHECK=1 process-wide (vllm/env_override.py),
++# and sbatch exports the submitting API server's whole environment into this job. With it
++# set, torch.cuda.is_available() resolves through torch's NVML/amdsmi counting path instead
++# of a direct HIP call; inside the mpirun'd trainer that path reports 0 devices on ROCm
++# (a fresh subprocess with the SAME env correctly reports 1), so get_device() silently
++# returns CPU and the whole fine-tune runs on CPU ~700x slower while still reporting
++# COMPLETED. Unset it so availability is decided by torch._C._cuda_getDeviceCount().
++unset PYTORCH_NVML_BASED_CUDA_CHECK
++
+ LOCAL_DIRECTORY="$( cd "$( dirname "${CRAY_TRAINING_JOB_CONFIG_PATH}" )" >/dev/null 2>&1 && pwd )"
+ export PYTHONPATH="${LOCAL_DIRECTORY}/ml:${PYTHONPATH:-}"
++export PYTHONUNBUFFERED=1
++
++# --- NCCL/RCCL launcher (tensorwavecloud/ScalarLM PR #5) ---------------------
++# The collectives layer is torch.distributed with the nccl backend, which needs
++# the torchrun rendezvous environment (RANK / LOCAL_RANK / WORLD_SIZE /
++# MASTER_ADDR / MASTER_PORT) rather than mpirun's OMPI_* variables.
++#
++# Topology: ONE torchrun per node, each spawning one worker per GPU on that node.
++# Slurm hands us --ntasks-per-node=<gpus> --gres=gpu:<gpus>, so ntasks-per-node
++# IS the per-node GPU count.
++#
++# NOTE — deviation from PR #5. Its entrypoint runs
++#   mpirun -np "$NUM_NODES" -npernode "$SLURM_NTASKS_PER_NODE" ... \
++#     torchrun --nproc-per-node="$OMPI_COMM_WORLD_LOCAL_SIZE"
++# On a single node that launches ONE mpirun process, so LOCAL_SIZE is 1 and
++# torchrun spawns a single worker — an 8-GPU allocation would quietly train on
++# one GPU. (The PR targets a K8s deployment of one GPU per pod, where that
++# collapses to the same thing.) nproc-per-node is taken from Slurm's
++# ntasks-per-node instead, which is correct for both topologies.
++GPUS_PER_NODE="${SLURM_NTASKS_PER_NODE:-1}"
++GPUS_PER_NODE="${GPUS_PER_NODE%%(*}"   # "8(x2)" on heterogeneous allocations
++NODEFILE="$(mktemp)"
++scontrol show hostnames "${SLURM_JOB_NODELIST}" > "${NODEFILE}"
++NUM_NODES="$(wc -l < "${NODEFILE}")"
++MASTER_ADDR="$(head -n 1 "${NODEFILE}")"
++export MASTER_ADDR
++export MASTER_PORT="${MASTER_PORT:-29500}"
++
++echo "[launcher] nodes=${NUM_NODES} gpus_per_node=${GPUS_PER_NODE} master=${MASTER_ADDR}:${MASTER_PORT}" >&2
++
++# Best-effort: raising locked-memory helps RDMA/NCCL pinning on multi-node, but
++# an unprivileged container cannot change it. Must not be fatal under `set -e` —
++# it exits the batch script before torchrun ever starts, and slurm then relaunches
++# the job in a loop that never makes progress.
++ulimit -l unlimited 2>/dev/null || echo "[launcher] note: cannot raise locked-memory limit (not permitted); continuing" >&2
++
++if [ "${NUM_NODES}" -le 1 ]; then
++    # Single node: torchrun IS the launcher. exec keeps slurm's --signal=B:TERM@N
++    # landing directly on it, and torchrun forwards SIGTERM to every worker, so
++    # the stop_flag/checkpoint path behaves as it did under mpirun.
++    rm -f "${NODEFILE}"
++    exec torchrun \
++        --nnodes=1 \
++        --nproc-per-node="${GPUS_PER_NODE}" \
++        --master_addr="${MASTER_ADDR}" \
++        --master_port="${MASTER_PORT}" \
++        "${LOCAL_DIRECTORY}/ml/cray_megatron/main.py" "$@"
++fi
++
++# Multi-node: mpirun bootstraps one torchrun per node (-npernode 1), which then
++# spawns the per-GPU workers. mpirun is only a process launcher here; every
++# collective still goes through NCCL.
++#
++# NOTE: the batch script runs only on node 0. Remote ranks are started by mpirun's
++# orted, which re-inherits the node's own environment -- including the API server
++# environment slurm exported at submit time. So anything this script fixed up
++# above (the NVML unset) or derived (PYTORCH_CUDA_ALLOC_CONF) has to be
++# re-established or forwarded explicitly, or it silently applies to node 0 only.
++
++# Forward the socket-interface hints only when the operator set them; the right
++# interface is cluster-specific, so there is no safe default to invent here. If
++# cross-node rendezvous hangs or picks a wrong NIC, set NCCL_SOCKET_IFNAME (and
++# GLOO_SOCKET_IFNAME) in the server environment and they will propagate.
++MPIRUN_FORWARD=(-x MASTER_ADDR -x MASTER_PORT -x PYTHONPATH
++                -x CRAY_TRAINING_JOB_CONFIG_PATH -x PYTHONUNBUFFERED
++                -x PYTORCH_CUDA_ALLOC_CONF)
++for _var in NCCL_SOCKET_IFNAME GLOO_SOCKET_IFNAME NCCL_IB_HCA NCCL_DEBUG \
++            CRAY_TRAIN_DEBUG CRAY_FAULT_HANDLER; do
++    if [ -n "${!_var:-}" ]; then
++        MPIRUN_FORWARD+=(-x "${_var}")
++    fi
++done
++
++# Clean up the nodefile even when mpirun fails: `set -e` would otherwise abort
++# the script at the failing mpirun and leak the temp file (the old
++# `MPIRUN_EXIT=$?` line after it was unreachable on failure for the same reason).
++trap 'rm -f "${NODEFILE}"' EXIT
+ 
+-exec mpirun --allow-run-as-root python "${LOCAL_DIRECTORY}/ml/cray_megatron/main.py" "$@"
++mpirun --allow-run-as-root \
++    --hostfile "${NODEFILE}" \
++    -np "${NUM_NODES}" \
++    -npernode 1 \
++    --bind-to none \
++    "${MPIRUN_FORWARD[@]}" \
++    bash -c '
++        set -Eeuo pipefail
++        # Must be repeated here: see the note above. On nodes 2+ this is the only
++        # place it runs, and leaving it set makes torch.cuda.is_available() false
++        # inside the trainer -> silent CPU training that still reports COMPLETED.
++        unset PYTORCH_NVML_BASED_CUDA_CHECK
++        exec torchrun \
++            --nnodes="'"${NUM_NODES}"'" \
++            --nproc-per-node="'"${GPUS_PER_NODE}"'" \
++            --node_rank="${OMPI_COMM_WORLD_RANK}" \
++            --master_addr="${MASTER_ADDR}" \
++            --master_port="${MASTER_PORT}" \
++            "'"${LOCAL_DIRECTORY}"'/ml/cray_megatron/main.py" "$@"
++    ' _ "$@"
+diff --git a/test/benchmark/pytorch/mpi_p2p.py b/test/benchmark/pytorch/mpi_p2p.py
+index 7ba66d2..97cf74d 100644
+--- a/test/benchmark/pytorch/mpi_p2p.py
++++ b/test/benchmark/pytorch/mpi_p2p.py
+@@ -3,7 +3,7 @@ import json
+ import time
+ import os
+ 
+-from gpu_aware_mpi import send, recv, barrier, get_rank, get_size, finalize_mpi
++from cray_infra.training.distributed import send, recv, barrier, get_rank, get_size, finalize_mpi
+ 
+ from tqdm import tqdm
+ 
+diff --git a/test/collectives/benchmark-send-recv.py b/test/collectives/benchmark-send-recv.py
+index 7358dd9..34443d6 100644
+--- a/test/collectives/benchmark-send-recv.py
++++ b/test/collectives/benchmark-send-recv.py
+@@ -20,7 +20,7 @@ def main():
+ 
+ def get_code():
+     return """
+-from gpu_aware_mpi import get_size, get_rank, send, recv, barrier
++from cray_infra.training.distributed import get_size, get_rank, send, recv, barrier
+ import torch
+ import time
+ import statistics
+diff --git a/test/collectives/test-all-gather.py b/test/collectives/test-all-gather.py
+index 1c1b9fc..931e530 100644
+--- a/test/collectives/test-all-gather.py
++++ b/test/collectives/test-all-gather.py
+@@ -19,32 +19,47 @@ def main():
+ 
+ def get_code():
+     return """
+-from gpu_aware_mpi import get_size, get_rank, allgather, barrier
++from cray_infra.training.distributed import get_size, get_rank, allgather, barrier
+ import torch
+ 
+ from cray_infra.training.training_job_context import training_job_context
+ 
+-message_sizes = [2 ** i for i in range(10)]
++# Element counts, kept a multiple of world size so every rank contributes an
++# equal block.
++block_sizes = [2 ** i for i in range(10)]
+ 
+-def allgather_test(size):
++def allgather_test(block):
+     world_size = get_size()
++    rank = get_rank()
+ 
+-    input_tensor = torch.ones(size // 4, dtype=torch.float32)
+-    output_tensor = torch.ones(world_size * size // 4, dtype=torch.float32)
++    # Rank-distinguishable payload: rank r sends (r+1). A no-op collective, or
++    # one that fills a GPU copy and leaves this CPU buffer untouched, cannot
++    # produce the expected pattern. The previous version of this test filled the
++    # output with ones and printed the INPUT, so it passed unconditionally.
++    input_tensor = torch.full((block,), float(rank + 1), dtype=torch.float32)
++    output_tensor = torch.zeros(world_size * block, dtype=torch.float32)
+ 
+     allgather(input_tensor, output_tensor)
+ 
++    expected = torch.cat(
++        [torch.full((block,), float(r + 1), dtype=torch.float32) for r in range(world_size)]
++    )
++    assert torch.equal(output_tensor, expected), (
++        f"allgather block={block} rank={rank}: expected {expected.tolist()[:8]}..., "
++        f"got {output_tensor.tolist()[:8]}..."
++    )
++
+     barrier()
+ 
+-    if get_rank() == 0:
+-        print(f"Allgather completed for size {size} with data: {input_tensor}")
++    if rank == 0:
++        print(f"[PASS] allgather block={block} -> per-rank blocks 1..{world_size}")
+ 
+ with training_job_context():
+-    for size in message_sizes:
+-        allgather_test(size)
++    for block in block_sizes:
++        allgather_test(block)
+ 
+     if get_rank() == 0:
+-        print("All allgather tests completed successfully.")
++        print("RESULT: all allgather tests passed.")
+ 
+ """
+ 
+diff --git a/test/collectives/test-all-reduce.py b/test/collectives/test-all-reduce.py
+index 973c548..e45598f 100644
+--- a/test/collectives/test-all-reduce.py
++++ b/test/collectives/test-all-reduce.py
+@@ -19,29 +19,41 @@ def main():
+ 
+ def get_code():
+     return """
+-from gpu_aware_mpi import get_size, get_rank, allreduce, barrier
++from cray_infra.training.distributed import get_size, get_rank, allreduce, barrier
+ import torch
+ 
+ from cray_infra.training.training_job_context import training_job_context
+ 
+-message_sizes = [2 ** i for i in range(10)]
++block_sizes = [2 ** i for i in range(10)]
+ 
+-def allreduce_test(size):
+-    my_tensor = torch.ones(size // 4, dtype=torch.float32)
++def allreduce_test(block):
++    world_size = get_size()
++    rank = get_rank()
++
++    # Rank r contributes (r+1), so a correct SUM is world*(world+1)/2 -- a value
++    # no rank holds locally. Contributing ones (as this test used to) cannot
++    # distinguish a real reduction from no reduction at all.
++    my_tensor = torch.full((block,), float(rank + 1), dtype=torch.float32)
+ 
+     allreduce(my_tensor)
+ 
++    expected = float(world_size * (world_size + 1) // 2)
++    assert torch.equal(my_tensor, torch.full((block,), expected, dtype=torch.float32)), (
++        f"allreduce block={block} rank={rank}: expected all {expected}, "
++        f"got {my_tensor.tolist()[:8]}..."
++    )
++
+     barrier()
+ 
+-    if get_rank() == 0:
+-        print(f"Allreduce completed for size {size} with data: {my_tensor}")
++    if rank == 0:
++        print(f"[PASS] allreduce block={block} -> {expected}")
+ 
+ with training_job_context():
+-    for size in message_sizes:
+-        allreduce_test(size)
++    for block in block_sizes:
++        allreduce_test(block)
+ 
+     if get_rank() == 0:
+-        print("All allreduce tests completed successfully.")
++        print("RESULT: all allreduce tests passed.")
+ 
+ """
+ 
+diff --git a/test/collectives/test-all-to-all.py b/test/collectives/test-all-to-all.py
+index ed523df..4388211 100644
+--- a/test/collectives/test-all-to-all.py
++++ b/test/collectives/test-all-to-all.py
+@@ -19,30 +19,51 @@ def main():
+ 
+ def get_code():
+     return """
+-from gpu_aware_mpi import get_size, get_rank, alltoall, barrier
++from cray_infra.training.distributed import get_size, get_rank, alltoall, barrier
+ import torch
+ 
+ from cray_infra.training.training_job_context import training_job_context
+ 
+-message_sizes = [2 ** i for i in range(10)]
+-
+-def alltoall_test(size):
+-    input_tensor = torch.ones(size // 4, dtype=torch.float32)
+-    output_tensor = torch.zeros(size // 4, dtype=torch.float32)
++# Per-rank chunk sizes. The total element count must be divisible by world size,
++# which the previous `size // 4` byte-derived counts were not (size=4 gave 1
++# element on 8 ranks -> ValueError), so this test could not have been passing.
++chunk_sizes = [2 ** i for i in range(10)]
++
++def alltoall_test(chunk):
++    world_size = get_size()
++    rank = get_rank()
++
++    # Rank r sends value (r*world_size + j) to rank j, so after the exchange
++    # rank r must hold (j*world_size + r) in chunk j. This validates ROUTING,
++    # not just liveness: a transpose bug or a dropped write-back both fail.
++    input_tensor = torch.cat(
++        [torch.full((chunk,), float(rank * world_size + j), dtype=torch.float32)
++         for j in range(world_size)]
++    )
++    output_tensor = torch.zeros(world_size * chunk, dtype=torch.float32)
+ 
+     alltoall(input_tensor, output_tensor)
+ 
++    expected = torch.cat(
++        [torch.full((chunk,), float(j * world_size + rank), dtype=torch.float32)
++         for j in range(world_size)]
++    )
++    assert torch.equal(output_tensor, expected), (
++        f"alltoall chunk={chunk} rank={rank}: expected {expected.tolist()[:8]}..., "
++        f"got {output_tensor.tolist()[:8]}..."
++    )
++
+     barrier()
+ 
+-    if get_rank() == 0:
+-        print(f"All to all completed for size {size} with data: {output_tensor}")
++    if rank == 0:
++        print(f"[PASS] alltoall chunk={chunk} -> routing verified across {world_size} ranks")
+ 
+ with training_job_context():
+-    for size in message_sizes:
+-        alltoall_test(size)
++    for chunk in chunk_sizes:
++        alltoall_test(chunk)
+ 
+     if get_rank() == 0:
+-        print("All alltoall tests completed successfully.")
++        print("RESULT: all alltoall tests passed.")
+ 
+ """
+ 
+diff --git a/test/collectives/test-allreduce-dtypes.py b/test/collectives/test-allreduce-dtypes.py
+new file mode 100644
+index 0000000..b9d9fcb
+--- /dev/null
++++ b/test/collectives/test-allreduce-dtypes.py
+@@ -0,0 +1,81 @@
++"""Regression test: allreduce must SUM low-precision floats, not their bit patterns.
++
++MPI defines no bfloat16/float16 datatype. common.h's get_typesize() maps both to
++MPI_SHORT, which is correct for the byte-moving collectives (send/recv/allgather)
++that only need the right element width -- but mpi_allreduce is the one collective
++that does arithmetic, and MPI_SUM over MPI_SHORT adds the raw IEEE bit patterns as
++16-bit signed integers.
++
++Before mpi_allreduce learned to promote to float32, this returned, for 1.0+1.0:
++    bfloat16 -> inf        (0x3F80 + 0x3F80 = 0x7F00)
++    float16  -> 32768.0    (0x3C00 + 0x3C00 = 0x7800)
++which silently corrupted the classification loss sync (a 4-GPU run reported loss
++0.0000 -> -5.2e35 while the identical 1-GPU run trained to 0.5015) and any bf16
++gradient handed to DDP.backward_sync().
++
++Run under mpirun, e.g.:
++    mpirun --allow-run-as-root -n 2 python test/collectives/test-allreduce-dtypes.py
++"""
++
++import sys
++
++import torch
++
++from cray_infra.training.distributed import allreduce, finalize_mpi, get_rank, get_size
++
++DTYPES = (
++    ("float32", torch.float32),
++    ("bfloat16", torch.bfloat16),
++    ("float16", torch.float16),
++)
++
++
++def main():
++    rank = get_rank()
++    world_size = get_size()
++
++    if torch.cuda.is_available():
++        device = "cuda:%d" % (rank % torch.cuda.device_count())
++    else:
++        device = "cpu"
++
++    failures = []
++
++    for name, dtype in DTYPES:
++        # Every rank contributes 1.0, so a correct MPI_SUM gives world_size.
++        tensor = torch.ones(8, dtype=dtype, device=device)
++        allreduce(tensor)
++
++        got = float(tensor.float().mean().item())
++        expected = float(world_size)
++
++        # bf16 has ~3 decimal digits; a tolerance well inside its resolution
++        # still separates a correct sum from bit-pattern garbage by many orders
++        # of magnitude.
++        ok = abs(got - expected) <= 0.01 * expected
++
++        if rank == 0:
++            print(
++                f"{name:9s} expected {expected:.3f} got {got:.6g} "
++                f"{'OK' if ok else 'CORRUPT'}"
++            )
++
++        if not ok:
++            failures.append(f"{name}: expected {expected}, got {got}")
++
++    if failures:
++        if rank == 0:
++            print("FAILED: " + "; ".join(failures))
++        return 1
++
++    if rank == 0:
++        print(f"allreduce sums correctly for all dtypes across {world_size} ranks")
++    return 0
++
++
++if __name__ == "__main__":
++    status = main()
++    # Every rank that touched MPI must finalize, or OpenMPI reports the run as an
++    # abnormal termination and mpirun exits non-zero even though the test passed.
++    finalize_mpi()
++    sys.exit(status)
+diff --git a/test/collectives/test-hello.py b/test/collectives/test-hello.py
+index 78583b7..151bb03 100644
+--- a/test/collectives/test-hello.py
++++ b/test/collectives/test-hello.py
+@@ -19,7 +19,7 @@ def main():
+ 
+ def get_code():
+     return """
+-from gpu_aware_mpi import get_size, get_rank
++from cray_infra.training.distributed import get_size, get_rank
+ from cray_infra.training.training_job_context import training_job_context
+ 
+ with training_job_context():
+diff --git a/test/collectives/test-reduce-scatter.py b/test/collectives/test-reduce-scatter.py
+index e67c43b..97e9744 100644
+--- a/test/collectives/test-reduce-scatter.py
++++ b/test/collectives/test-reduce-scatter.py
+@@ -19,32 +19,42 @@ def main():
+ 
+ def get_code():
+     return """
+-from gpu_aware_mpi import get_size, get_rank, reduce_scatter, barrier
++from cray_infra.training.distributed import get_size, get_rank, reduce_scatter, barrier
+ import torch
+ 
+ from cray_infra.training.training_job_context import training_job_context
+ 
+-message_sizes = [2 ** i for i in range(10)]
++block_sizes = [2 ** i for i in range(10)]
+ 
+-def reduce_scatter_test(size):
++def reduce_scatter_test(block):
+     world_size = get_size()
++    rank = get_rank()
+ 
+-    input_tensor = torch.ones(world_size * size // 4, dtype=torch.float32)
+-    output_tensor = torch.ones(size // 4, dtype=torch.float32)
++    # Rank r contributes (r+1) everywhere; each output shard is therefore the
++    # SUM world*(world+1)/2. The old version summed ones into an output that was
++    # pre-filled with ones and then printed the INPUT, so it could not fail.
++    input_tensor = torch.full((world_size * block,), float(rank + 1), dtype=torch.float32)
++    output_tensor = torch.zeros(block, dtype=torch.float32)
+ 
+     reduce_scatter(input_tensor, output_tensor)
+ 
++    expected = float(world_size * (world_size + 1) // 2)
++    assert torch.equal(output_tensor, torch.full((block,), expected, dtype=torch.float32)), (
++        f"reduce_scatter block={block} rank={rank}: expected all {expected}, "
++        f"got {output_tensor.tolist()[:8]}..."
++    )
++
+     barrier()
+ 
+-    if get_rank() == 0:
+-        print(f"Reduce scatter completed for size {size} with data: {input_tensor}")
++    if rank == 0:
++        print(f"[PASS] reduce_scatter block={block} -> {expected}")
+ 
+ with training_job_context():
+-    for size in message_sizes:
+-        reduce_scatter_test(size)
++    for block in block_sizes:
++        reduce_scatter_test(block)
+ 
+     if get_rank() == 0:
+-        print("All reduce scatter tests completed successfully.")
++        print("RESULT: all reduce_scatter tests passed.")
+ 
+ """
+ 
+diff --git a/test/collectives/test-send-recv.py b/test/collectives/test-send-recv.py
+index 32006a5..0bac170 100644
+--- a/test/collectives/test-send-recv.py
++++ b/test/collectives/test-send-recv.py
+@@ -19,16 +19,14 @@ def main():
+ 
+ def get_code():
+     return """
+-from gpu_aware_mpi import get_size, get_rank, send, recv, barrier
++from cray_infra.training.distributed import get_size, get_rank, send, recv, barrier
+ import torch
+ 
+ from cray_infra.training.training_job_context import training_job_context
+ 
+-message_sizes = [2 ** i for i in range(10)]
+-
+-def send_recv_test(size):
+-    my_tensor = torch.ones(size // 4, dtype=torch.float32)
++block_sizes = [2 ** i for i in range(10)]
+ 
++def send_recv_test(block):
+     # cross the network bisection
+     rank = get_rank()
+     bisection_rank = get_size() // 2
+@@ -40,20 +38,34 @@ def send_recv_test(size):
+     neighbor = (rank + bisection_rank) % get_size()
+ 
+     if rank < bisection_rank:
+-        send(my_tensor, neighbor)
+-        print(f"Rank {rank} sent tensor of size {size} to rank {neighbor}")
++        # Sender's payload identifies the sender.
++        send(torch.full((block,), float(rank + 1), dtype=torch.float32), neighbor)
++        print(f"[send] rank {rank} -> rank {neighbor} block={block}")
+     else:
+-        received_tensor = recv(my_tensor, neighbor)
+-        print(f"Rank {rank} received tensor of size {size} from rank {neighbor}")
++        # Receive into a ZEROED buffer and assert. The old test recv'd into a
++        # buffer pre-filled with ones and only printed, so a recv() that filled a
++        # GPU copy and never wrote back to this CPU tensor looked like success --
++        # which is precisely the defect this stack had to fix.
++        received_tensor = torch.zeros(block, dtype=torch.float32)
++        recv(received_tensor, neighbor)
++
++        expected = float(neighbor + 1)
++        assert torch.equal(
++            received_tensor, torch.full((block,), expected, dtype=torch.float32)
++        ), (
++            f"recv block={block} rank={rank} from {neighbor}: expected all "
++            f"{expected}, got {received_tensor.tolist()[:8]}..."
++        )
++        print(f"[PASS] rank {rank} received {expected} from rank {neighbor} block={block}")
+ 
+     barrier()
+ 
+ with training_job_context():
+-    for size in message_sizes:
+-        send_recv_test(size)
++    for block in block_sizes:
++        send_recv_test(block)
+ 
+     if get_rank() == 0:
+-        print("All send/recv tests completed successfully.")
++        print("RESULT: all send/recv tests passed.")
+ 
+ 
+ """
+diff --git a/test/infra/distribution_strategy/benchmark_mpi_collectives.py b/test/infra/distribution_strategy/benchmark_mpi_collectives.py
+index 89e8f71..4aa7bc6 100644
+--- a/test/infra/distribution_strategy/benchmark_mpi_collectives.py
++++ b/test/infra/distribution_strategy/benchmark_mpi_collectives.py
+@@ -1,7 +1,7 @@
+ import argparse
+ import time
+ import torch
+-from gpu_aware_mpi import allgather, allreduce, reduce_scatter, barrier, get_rank, get_size, finalize_mpi
++from cray_infra.training.distributed import allgather, allreduce, reduce_scatter, barrier, get_rank, get_size, finalize_mpi
+ 
+ def create_buffer(arch, size, rank):
+     if arch == 'cuda':
+diff --git a/test/infra/distribution_strategy/benchmark_mpi_sendrecv.py b/test/infra/distribution_strategy/benchmark_mpi_sendrecv.py
+index 6131e1e..8509f1d 100644
+--- a/test/infra/distribution_strategy/benchmark_mpi_sendrecv.py
++++ b/test/infra/distribution_strategy/benchmark_mpi_sendrecv.py
+@@ -1,7 +1,7 @@
+ import argparse
+ import time
+ import torch
+-from gpu_aware_mpi import send, recv, barrier, get_rank, get_size, finalize_mpi
++from cray_infra.training.distributed import send, recv, barrier, get_rank, get_size, finalize_mpi
+ 
+ def create_buffer(arch_type, size, rank):
+     if arch_type == 'cuda':
+diff --git a/test/infra/distribution_strategy/conftest.py b/test/infra/distribution_strategy/conftest.py
+new file mode 100644
+index 0000000..ae1e7a1
+--- /dev/null
++++ b/test/infra/distribution_strategy/conftest.py
+@@ -0,0 +1,100 @@
++"""Pytest hooks for distributed tests launched via torchrun."""
++
++import os
++import subprocess
++import sys
++from pathlib import Path
++
++import pytest
++
++CRAY_ROOT = Path(__file__).resolve().parents[3]
++
++_TORCHRUN_CHILD_ENV = "_TORCHRUN_CHILD"
++_ARCH_ENV = "DISTRIBUTED_TEST_ARCH"
++
++
++def pytest_configure(config):
++    config.addinivalue_line(
++        "markers",
++        "torchrun(nproc, arch): run test under torch.distributed.run",
++    )
++
++
++def pytest_collection_modifyitems(items):
++    for item in items:
++        if item.get_closest_marker("torchrun") is not None:
++            item.add_marker(pytest.mark.xdist_group("distributed_torchrun"))
++
++
++def _is_torchrun_child() -> bool:
++    return os.environ.get(_TORCHRUN_CHILD_ENV) == "1"
++
++
++@pytest.fixture(scope="session", autouse=True)
++def distributed_process_group():
++    if not _is_torchrun_child():
++        yield
++        return
++
++    from distributed_benchmarks import setup_distributed, teardown_distributed
++
++    setup_distributed()
++    yield
++    teardown_distributed()
++
++
++@pytest.fixture
++def distributed_arch(request):
++    arch = os.environ.get(_ARCH_ENV)
++    if arch is None:
++        marker = request.node.get_closest_marker("torchrun")
++        if marker is not None:
++            arch = marker.kwargs.get("arch")
++    if arch is None:
++        pytest.fail("DISTRIBUTED_TEST_ARCH is not set for distributed test worker")
++    return arch
++
++
++@pytest.hookimpl(tryfirst=True)
++def pytest_pyfunc_call(pyfuncitem):
++    marker = pyfuncitem.get_closest_marker("torchrun")
++    if marker is None:
++        return None
++    if _is_torchrun_child():
++        return None
++
++    nproc = marker.kwargs.get("nproc", 2)
++    arch = marker.kwargs.get("arch", "cpu")
++    env = {
++        **os.environ,
++        _TORCHRUN_CHILD_ENV: "1",
++        _ARCH_ENV: arch,
++    }
++
++    # nodeid is relative to pytest's rootdir, but the child is launched with
++    # cwd=CRAY_ROOT — so a nodeid collected from anywhere else ("file or
++    # directory not found"). Build an absolute file::name selector instead, which
++    # resolves no matter where pytest was invoked from.
++    node_selector = f"{pyfuncitem.path}::{pyfuncitem.name}"
++
++    cmd = [
++        sys.executable,
++        "-m",
++        "torch.distributed.run",
++        "--nnodes=1",
++        f"--nproc-per-node={nproc}",
++        "-m",
++        "pytest",
++        node_selector,
++        "-xvs",
++        "-p",
++        "no:xdist",
++        "-p",
++        "no:forked",
++    ]
++    result = subprocess.run(cmd, env=env, cwd=CRAY_ROOT)
++    if result.returncode != 0:
++        pytest.fail(
++            f"torchrun pytest failed (exit {result.returncode}): {' '.join(cmd)}"
++        )
++    return True
+diff --git a/test/infra/distribution_strategy/distributed_benchmarks.py b/test/infra/distribution_strategy/distributed_benchmarks.py
+new file mode 100644
+index 0000000..6771865
+--- /dev/null
++++ b/test/infra/distribution_strategy/distributed_benchmarks.py
+@@ -0,0 +1,164 @@
++"""Shared distributed collective benchmarks using cray_infra.training.distributed."""
++
++import time
++
++import torch
++
++from cray_infra.training.distributed import (
++    allgather,
++    allreduce,
++    barrier,
++    finalize,
++    get_rank,
++    get_size,
++    init,
++    recv,
++    reduce_scatter,
++    send,
++)
++
++DATA_SIZE_COLLECTIVES = 4_194_304
++DATA_SIZE_SENDRECV = 262_144 * 64
++COLLECTIVE_WARMUP = 10
++COLLECTIVE_ITERS = 100
++SENDRECV_WARMUP = 10
++SENDRECV_ITERS = 100
++
++
++def create_buffer(arch: str, size: int, rank: int) -> torch.Tensor:
++    if arch == "cuda":
++        return torch.ones(size, dtype=torch.float32, device="cuda")
++    if arch == "rocm":
++        return torch.ones(size, dtype=torch.float32, device=f"cuda:{rank}")
++    return torch.ones(size, dtype=torch.float32, device="cpu")
++
++
++def benchmark_collective(
++    collective_fn,
++    arch: str,
++    send_size: int,
++    recv_size: int,
++    expected_value: float,
++    all_reduce_flag: bool = False,
++    num_iters: int = COLLECTIVE_ITERS,
++    warmup: int = COLLECTIVE_WARMUP,
++) -> float:
++    size = get_size()
++    rank = get_rank()
++    sendbuf = create_buffer(arch, send_size, rank).contiguous()
++    recvbuf = torch.empty(recv_size, dtype=torch.float32, device=sendbuf.device).contiguous()
++
++    for _ in range(warmup):
++        collective_fn(sendbuf, recvbuf)
++
++    barrier()
++    t0 = time.time()
++    for _ in range(num_iters):
++        if all_reduce_flag:
++            sendbuf = create_buffer(arch, send_size, rank).contiguous()
++        collective_fn(sendbuf, recvbuf)
++    barrier()
++    dt = time.time() - t0
++
++    if all_reduce_flag:
++        assert torch.allclose(
++            sendbuf, torch.full_like(sendbuf, expected_value), atol=1e-6
++        ), "Verification failed"
++    else:
++        assert torch.allclose(
++            recvbuf, torch.full_like(recvbuf, expected_value), atol=1e-6
++        ), "Verification failed"
++
++    datatype_bytes = 4
++    total_data = send_size * datatype_bytes * 2 * size
++    return (total_data / dt) / 1e9
++
++
++def run_collectives_benchmark(arch: str) -> dict[str, float]:
++    data_size = DATA_SIZE_COLLECTIVES
++    size = get_size()
++
++    collectives = {
++        "AllGather": (
++            lambda sbuf, rbuf: allgather(sbuf, rbuf),
++            data_size,
++            data_size * size,
++            1.0,
++            False,
++        ),
++        "ReduceScatter": (
++            lambda sbuf, rbuf: reduce_scatter(sbuf, rbuf),
++            data_size,
++            data_size // size,
++            size * 1.0,
++            False,
++        ),
++        "AllReduce": (
++            lambda sbuf, rbuf: allreduce(sbuf),
++            data_size,
++            1,
++            size * 1.0,
++            True,
++        ),
++    }
++
++    results = {}
++    for name, info in collectives.items():
++        bw = benchmark_collective(info[0], arch, info[1], info[2], info[3], info[4])
++        if get_rank() == 0:
++            results[name] = bw
++    return results
++
++
++def _send_recv(sendbuf: torch.Tensor, iteration: int) -> None:
++    sender = iteration % 2
++    rank = get_rank()
++    barrier()
++    if rank == sender:
++        send(sendbuf, (rank + 1) % 2)
++    else:
++        recv(sendbuf, (rank + 1) % 2)
++    barrier()
++
++
++def benchmark_send_recv(
++    arch: str,
++    data_size: int = DATA_SIZE_SENDRECV,
++    num_iters: int = SENDRECV_ITERS,
++    warmup: int = SENDRECV_WARMUP,
++) -> float:
++    rank = get_rank()
++    sendbuf = create_buffer(arch, data_size, rank).contiguous()
++
++    if rank == 1:
++        torch.zero_(sendbuf)
++
++    for i in range(0, warmup * 2, 2):
++        _send_recv(sendbuf, i)
++
++    barrier()
++    t0 = time.time()
++    for i in range(0, num_iters * 2, 2):
++        _send_recv(sendbuf, i)
++    barrier()
++    dt = time.time() - t0
++
++    assert torch.allclose(sendbuf, torch.full_like(sendbuf, 1), atol=1e-6), (
++        "Verification failed"
++    )
++
++    total_data = data_size * 4 * num_iters
++    return (total_data / dt) / 1e9
++
++
++def run_sendrecv_benchmark(arch: str) -> float:
++    assert get_size() == 2, "Send/recv benchmark requires exactly two ranks"
++    return benchmark_send_recv(arch)
++
++
++def setup_distributed() -> None:
++    init()
++
++
++def teardown_distributed() -> None:
++    finalize()
+diff --git a/test/infra/distribution_strategy/test_distributed_collectives.py b/test/infra/distribution_strategy/test_distributed_collectives.py
+new file mode 100644
+index 0000000..9ec7f8b
+--- /dev/null
++++ b/test/infra/distribution_strategy/test_distributed_collectives.py
+@@ -0,0 +1,44 @@
++"""Pytest coverage for cray_infra.training.distributed collectives.
++
++Runs under torchrun automatically via the ``@pytest.mark.torchrun`` marker, or
++directly, for example::
++
++    torchrun --nnodes=1 --nproc-per-node=2 \\
++        -m pytest test/infra/distribution_strategy/test_distributed_collectives.py -xvs
++"""
++
++import pytest
++import torch
++
++from cray_infra.training.distributed import get_rank
++
++from distributed_benchmarks import run_collectives_benchmark
++
++
++@pytest.mark.torchrun(nproc=2, arch="cpu")
++def test_collectives_cpu(distributed_arch):
++    results = run_collectives_benchmark(distributed_arch)
++    if get_rank() == 0:
++        assert results, "rank 0 should collect benchmark results"
++        for name, bandwidth in results.items():
++            assert bandwidth > 0, f"{name} bandwidth should be positive"
++
++
++@pytest.mark.torchrun(nproc=4, arch="cuda")
++@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
++def test_collectives_cuda(distributed_arch):
++    results = run_collectives_benchmark(distributed_arch)
++    if get_rank() == 0:
++        assert results
++        for bandwidth in results.values():
++            assert bandwidth > 0
++
++
++@pytest.mark.torchrun(nproc=4, arch="rocm")
++@pytest.mark.skipif(not torch.cuda.is_available(), reason="ROCm/CUDA device is required")
++def test_collectives_rocm(distributed_arch):
++    results = run_collectives_benchmark(distributed_arch)
++    if get_rank() == 0:
++        assert results
++        for bandwidth in results.values():
++            assert bandwidth > 0
+diff --git a/test/infra/distribution_strategy/test_distributed_sendrecv.py b/test/infra/distribution_strategy/test_distributed_sendrecv.py
+new file mode 100644
+index 0000000..0dff06f
+--- /dev/null
++++ b/test/infra/distribution_strategy/test_distributed_sendrecv.py
+@@ -0,0 +1,38 @@
++"""Pytest coverage for cray_infra.training.distributed point-to-point ops.
++
++Runs under torchrun automatically via the ``@pytest.mark.torchrun`` marker, or
++directly, for example::
++
++    torchrun --nnodes=1 --nproc-per-node=2 \\
++        -m pytest test/infra/distribution_strategy/test_distributed_sendrecv.py -xvs
++"""
++
++import pytest
++import torch
++
++from cray_infra.training.distributed import get_rank
++
++from distributed_benchmarks import run_sendrecv_benchmark
++
++
++@pytest.mark.torchrun(nproc=2, arch="cpu")
++def test_sendrecv_cpu(distributed_arch):
++    bandwidth = run_sendrecv_benchmark(distributed_arch)
++    if get_rank() == 0:
++        assert bandwidth > 0
++
++
++@pytest.mark.torchrun(nproc=2, arch="cuda")
++@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
++def test_sendrecv_cuda(distributed_arch):
++    bandwidth = run_sendrecv_benchmark(distributed_arch)
++    if get_rank() == 0:
++        assert bandwidth > 0
++
++
++@pytest.mark.torchrun(nproc=2, arch="rocm")
++@pytest.mark.skipif(not torch.cuda.is_available(), reason="ROCm/CUDA device is required")
++def test_sendrecv_rocm(distributed_arch):
++    bandwidth = run_sendrecv_benchmark(distributed_arch)
++    if get_rank() == 0:
++        assert bandwidth > 0
+diff --git a/test/infra/distribution_strategy/test_fsdp_padding_mean.py b/test/infra/distribution_strategy/test_fsdp_padding_mean.py
+new file mode 100644
+index 0000000..6fef72a
+--- /dev/null
++++ b/test/infra/distribution_strategy/test_fsdp_padding_mean.py
+@@ -0,0 +1,156 @@
++"""FSDP gradient-mean correctness on the PADDED shard path, with real metadata.
++
++`test_gradient_semantics.py` covers the gradient-mean fix only for a tensor whose
++element count divides evenly across ranks, using a hand-built metadata dict. That
++is the easy half. Real models are full of parameters whose numel is not a multiple
++of world size, and for those `shard_tensor()` pads up to the next multiple and
++records a non-zero `padding` in the metadata -- a different code path through
++`collectives_reduce_scatter()`, including a trim on the last rank.
++
++These tests drive that path with metadata produced by the real `shard_tensor()`,
++so a divergence between the hand-built dict and the genuine one cannot hide a bug.
++
++Run::
++
++    torchrun --nnodes=1 --nproc-per-node=8 \\
++        -m pytest test/infra/distribution_strategy/test_fsdp_padding_mean.py -xvs
++"""
++
++import pytest
++import torch
++
++from cray_infra.training.distributed import get_rank, get_size
++
++
++def _reduce_scatter_with_real_metadata(numel):
++    """Run the FSDP gradient reduce-scatter over a `numel`-element gradient.
++
++    Metadata comes from the real `shard_tensor()`, so padding/shard_size are
++    whatever production would compute. Rank r contributes (r+1) everywhere, so a
++    correct MEAN is (world+1)/2 and a SUM would be world*(world+1)/2.
++    """
++    from cray_megatron.megatron.distribution.fsdp import (
++        collectives_reduce_scatter,
++        cuda_device,
++        shard_tensor,
++    )
++
++    rank, world = get_rank(), get_size()
++    device = cuda_device()
++
++    # Real metadata for a parameter of this size.
++    param = torch.zeros(numel, dtype=torch.float32, device=device)
++    _, metadata = shard_tensor(param)
++
++    original_numel, _, shard_size, padding = metadata[rank]
++
++    grad = torch.full((numel,), float(rank + 1), dtype=torch.float32, device=device)
++    out = collectives_reduce_scatter(grad, metadata)
++
++    return out, original_numel, shard_size, padding, world
++
++
++@pytest.mark.torchrun(nproc=4, arch="rocm")
++@pytest.mark.skipif(not torch.cuda.is_available(), reason="ROCm/CUDA device is required")
++def test_padding_is_actually_exercised(distributed_arch):
++    """Guard the guard: the chosen size must really produce padding > 0."""
++    from cray_megatron.megatron.distribution.fsdp import cuda_device, shard_tensor
++
++    world = get_size()
++    numel = world * 3 + 1  # deliberately not divisible by world size
++    param = torch.zeros(numel, dtype=torch.float32, device=cuda_device())
++    _, metadata = shard_tensor(param)
++    padding = metadata[get_rank()][3]
++
++    assert padding > 0, (
++        f"test is vacuous: numel={numel} on world={world} produced padding=0, "
++        f"so the padded path is not being exercised"
++    )
++
++
++@pytest.mark.torchrun(nproc=4, arch="rocm")
++@pytest.mark.skipif(not torch.cuda.is_available(), reason="ROCm/CUDA device is required")
++def test_reduce_scatter_mean_with_padding(distributed_arch):
++    """Every VALID element of the shard must carry the mean, not the sum.
++
++    Padding elements are contributed as zeros by every rank, so they reduce to 0
++    and stay 0 after the division; they are excluded from the check rather than
++    asserted to be the mean.
++    """
++    rank, world = get_rank(), get_size()
++    numel = world * 3 + 1
++
++    out, original_numel, shard_size, padding, world = _reduce_scatter_with_real_metadata(numel)
++
++    mean_expected = (world + 1) / 2.0
++    sum_expected = world * (world + 1) / 2.0
++
++    # Which elements of THIS rank's shard correspond to real parameter data?
++    shard_start = rank * shard_size
++    valid_in_shard = max(0, min(shard_size, original_numel - shard_start))
++    valid_in_shard = min(valid_in_shard, out.numel())
++
++    assert valid_in_shard > 0 or rank * shard_size >= original_numel, (
++        f"rank {rank}: computed 0 valid elements for a shard that should hold data"
++    )
++
++    if valid_in_shard:
++        got = out[:valid_in_shard]
++        assert torch.allclose(
++            got, torch.full_like(got, mean_expected), atol=1e-4
++        ), (
++            f"rank {rank} (numel={original_numel}, shard_size={shard_size}, "
++            f"padding={padding}): expected valid elements to be the mean "
++            f"{mean_expected}, got {got.tolist()}. "
++            f"({sum_expected} would mean the world_size division is missing on "
++            f"the padded path.)"
++        )
++
++
++@pytest.mark.torchrun(nproc=4, arch="rocm")
++@pytest.mark.skipif(not torch.cuda.is_available(), reason="ROCm/CUDA device is required")
++def test_padded_and_unpadded_agree_on_scale(distributed_arch):
++    """The padded path must not scale differently from the unpadded one.
++
++    A world_size division applied in only one of the two branches would be an
++    easy mistake to make and impossible to see in a loss curve.
++    """
++    world = get_size()
++
++    padded_out, _, _, padding, _ = _reduce_scatter_with_real_metadata(world * 3 + 1)
++    even_out, _, _, no_padding, _ = _reduce_scatter_with_real_metadata(world * 4)
++
++    assert padding > 0 and no_padding == 0, (
++        f"expected one padded and one unpadded case, got padding={padding} / {no_padding}"
++    )
++
++    # Compare the first element, which is real data on every rank in both cases.
++    assert abs(padded_out[0].item() - even_out[0].item()) < 1e-4, (
++        f"padded path scaled to {padded_out[0].item()} but unpadded path scaled "
++        f"to {even_out[0].item()} -- the two branches disagree on gradient scale"
++    )
++
++
++@pytest.mark.torchrun(nproc=4, arch="rocm")
++@pytest.mark.skipif(not torch.cuda.is_available(), reason="ROCm/CUDA device is required")
++def test_shard_shape_matches_parameter_shard(distributed_arch):
++    """The returned gradient must match the shape of the shard it updates.
++
++    `shard_tensor()` gives every rank exactly `shard_size` elements (the last
++    rank's shard includes the padding), so the gradient must be `shard_size` too
++    or the optimizer step would fail on a shape mismatch.
++    """
++    from cray_megatron.megatron.distribution.fsdp import cuda_device, shard_tensor
++
++    rank, world = get_rank(), get_size()
++    numel = world * 3 + 1
++
++    param = torch.zeros(numel, dtype=torch.float32, device=cuda_device())
++    shard, metadata = shard_tensor(param)
++    out, _, shard_size, _, _ = _reduce_scatter_with_real_metadata(numel)
++
++    assert out.numel() == shard.numel(), (
++        f"rank {rank}: gradient shard has {out.numel()} elements but the parameter "
++        f"shard has {shard.numel()} (shard_size={shard_size}) -- the optimizer step "
++        f"would fail on shape mismatch"
++    )
+diff --git a/test/infra/distribution_strategy/test_gradient_semantics.py b/test/infra/distribution_strategy/test_gradient_semantics.py
+new file mode 100644
+index 0000000..481da2b
+--- /dev/null
++++ b/test/infra/distribution_strategy/test_gradient_semantics.py
+@@ -0,0 +1,142 @@
++"""Semantic correctness of the collectives and of gradient reduction.
++
++The sibling suites assert that collectives complete and report positive
++bandwidth. That is liveness, not correctness -- a collective can run at full
++speed and produce the wrong value, or fill a GPU copy and leave the caller's CPU
++buffer untouched, and a bandwidth assertion still passes. These tests assert on
++VALUES, with rank-distinguishable payloads so that "did nothing" and "did the
++right thing" cannot produce the same result.
++
++Each of these reproduces a defect that actually shipped:
++
++* ``alltoall`` returned all zeros into a CPU caller's buffer (no write-back).
++* FSDP's gradient reduce-scatter returned the SUM where DDP returned the MEAN,
++  so the two strategies disagreed on effective learning rate by world_size.
++
++Run::
++
++    torchrun --nnodes=1 --nproc-per-node=8 \\
++        -m pytest test/infra/distribution_strategy/test_gradient_semantics.py -xvs
++"""
++
++import pytest
++import torch
++
++from cray_infra.training.distributed import (
++    allreduce,
++    alltoall,
++    get_rank,
++    get_size,
++)
++
++
++@pytest.mark.torchrun(nproc=4, arch="rocm")
++@pytest.mark.skipif(not torch.cuda.is_available(), reason="ROCm/CUDA device is required")
++def test_alltoall_writes_back_to_cpu_buffer(distributed_arch):
++    """alltoall must fill the caller's buffer even when it lives on the host.
++
++    _prepare() stages a CPU tensor on the GPU; without an explicit copy back the
++    caller keeps its original contents. Pre-fix this returned all zeros.
++    """
++    rank, world = get_rank(), get_size()
++    chunk = 4
++
++    # Rank r sends (r*world + j) to rank j, so rank r must receive
++    # (j*world + r) in chunk j. Validates routing, not just liveness.
++    send = torch.cat(
++        [torch.full((chunk,), float(rank * world + j), dtype=torch.float32)
++         for j in range(world)]
++    )
++    recv = torch.zeros(world * chunk, dtype=torch.float32)
++
++    alltoall(send, recv)
++
++    expected = torch.cat(
++        [torch.full((chunk,), float(j * world + rank), dtype=torch.float32)
++         for j in range(world)]
++    )
++    assert torch.equal(recv, expected), (
++        f"rank {rank}: alltoall did not write back to the CPU buffer. "
++        f"expected {expected.tolist()}, got {recv.tolist()}"
++    )
++
++
++@pytest.mark.torchrun(nproc=4, arch="rocm")
++@pytest.mark.skipif(not torch.cuda.is_available(), reason="ROCm/CUDA device is required")
++def test_allreduce_writes_back_to_cpu_buffer(distributed_arch):
++    """allreduce is in-place for CPU callers, and computes the true SUM."""
++    rank, world = get_rank(), get_size()
++
++    tensor = torch.full((16,), float(rank + 1), dtype=torch.float32)
++    allreduce(tensor)
++
++    expected = float(world * (world + 1) // 2)
++    assert torch.equal(tensor, torch.full((16,), expected, dtype=torch.float32)), (
++        f"rank {rank}: expected all {expected}, got {tensor.tolist()[:8]}"
++    )
++
++
++@pytest.mark.torchrun(nproc=4, arch="rocm")
++@pytest.mark.skipif(not torch.cuda.is_available(), reason="ROCm/CUDA device is required")
++def test_fsdp_reduce_scatter_returns_mean_gradient(distributed_arch):
++    """FSDP's gradient reduce-scatter must return the MEAN across ranks.
++
++    The data loader shards records by ``idx % world_size == rank``, so each
++    rank's gradient is already a mean over its own shard. Summing across ranks
++    scales the gradient by world_size -- an 8x effective learning rate on 8 GPUs.
++    Pre-fix this returned the sum.
++    """
++    from cray_megatron.megatron.distribution.fsdp import (
++        collectives_reduce_scatter,
++        cuda_device,
++    )
++
++    rank, world = get_rank(), get_size()
++
++    numel = world * 8
++    shard_size = numel // world
++    metadata = {r: (numel, (numel,), shard_size, 0) for r in range(world)}
++
++    grad = torch.full((numel,), float(rank + 1), dtype=torch.float32, device=cuda_device())
++    out = collectives_reduce_scatter(grad, metadata)
++
++    mean_expected = (world + 1) / 2.0
++    sum_expected = world * (world + 1) / 2.0
++    got = out.float().mean().item()
++
++    assert abs(got - mean_expected) < 1e-4, (
++        f"rank {rank}: FSDP reduce_scatter returned {got}; expected the mean "
++        f"{mean_expected}. ({sum_expected} would mean it is still summing, which "
++        f"scales the effective learning rate by world_size.)"
++    )
++
++
++@pytest.mark.torchrun(nproc=4, arch="rocm")
++@pytest.mark.skipif(not torch.cuda.is_available(), reason="ROCm/CUDA device is required")
++def test_ddp_and_fsdp_agree_on_gradient_scaling(distributed_arch):
++    """The two strategies must not disagree on effective learning rate."""
++    from cray_megatron.megatron.distribution.fsdp import (
++        collectives_reduce_scatter,
++        cuda_device,
++    )
++
++    rank, world = get_rank(), get_size()
++
++    # DDP path, as implemented in DDP.backward_sync().
++    ddp_grad = torch.full((16,), float(rank + 1), dtype=torch.float32)
++    allreduce(ddp_grad)
++    ddp_grad /= world
++
++    # FSDP path.
++    numel = world * 8
++    metadata = {r: (numel, (numel,), numel // world, 0) for r in range(world)}
++    fsdp_grad = torch.full(
++        (numel,), float(rank + 1), dtype=torch.float32, device=cuda_device()
++    )
++    fsdp_out = collectives_reduce_scatter(fsdp_grad, metadata)
++
++    assert abs(ddp_grad[0].item() - fsdp_out.float().mean().item()) < 1e-4, (
++        f"rank {rank}: DDP scaling {ddp_grad[0].item()} != FSDP scaling "
++        f"{fsdp_out.float().mean().item()} -- the same learning_rate would mean "
++        f"different things in the two strategies."
++    )
+diff --git a/test/unit/test_adapter_metadata.py b/test/unit/test_adapter_metadata.py
+index f4390fe..50bbe3b 100644
+--- a/test/unit/test_adapter_metadata.py
++++ b/test/unit/test_adapter_metadata.py
+@@ -11,9 +11,11 @@ from unittest.mock import patch
+ 
+ import pytest
+ 
+-# Module-level import pulls in gpu_aware_mpi. The CPU container has it,
+-# but skip gracefully if the extension isn't built.
+-gpu_aware_mpi = pytest.importorskip("gpu_aware_mpi")
++# Module-level import pulls in the collectives layer, which is now
++# cray_infra.training.distributed (torch.distributed) rather than the removed
++# gpu_aware_mpi C++ extension. Importing it is side-effect free — the process
++# group is only created on first use — so this is a plain import guard.
++pytest.importorskip("cray_infra.training.distributed")
+ 
+ from cray_megatron.megatron.training_loop import build_adapter_metadata
+ 
+diff --git a/test/unit/test_mpi_lifecycle.py b/test/unit/test_mpi_lifecycle.py
+deleted file mode 100644
+index b6e5866..0000000
+--- a/test/unit/test_mpi_lifecycle.py
++++ /dev/null
+@@ -1,53 +0,0 @@
+-"""
+-Unit tests for gpu_aware_mpi lifecycle in a singleton world.
+-
+-Contract under test: docs/gpu-aware-mpi.md §3.1 — `ensure_mpi_initialized`
+-is lazy and idempotent; `get_rank` / `get_size` / `barrier` work without
+-`mpirun` (singleton MPI world of size 1).
+-
+-Notes for maintainers:
+-- These tests call into the C++ extension exactly once to init MPI. Once
+-  MPI is initialized in a Python process, most MPI implementations do not
+-  allow re-initialization after MPI_Finalize — so we deliberately do NOT
+-  call finalize_mpi from these tests.
+-- The tests must be colocated with other tests that are safe to run
+-  post-MPI-init. Anything that expected a pristine MPI state should run
+-  in its own process (pytest --forked handles this).
+-"""
+-
+-import pytest
+-
+-pytest.importorskip("gpu_aware_mpi")
+-
+-
+-def test_get_rank_is_zero_in_singleton_world():
+-    from gpu_aware_mpi import get_rank
+-
+-    # Without mpirun, OpenMPI initializes a singleton world where the sole
+-    # process is rank 0.
+-    assert get_rank() == 0
+-
+-
+-def test_get_size_is_one_in_singleton_world():
+-    from gpu_aware_mpi import get_size
+-
+-    assert get_size() == 1
+-
+-
+-def test_get_rank_is_idempotent():
+-    from gpu_aware_mpi import get_rank
+-
+-    first = get_rank()
+-    second = get_rank()
+-
+-    assert first == second == 0
+-
+-
+-def test_barrier_returns_without_hanging():
+-    # In singleton world, MPI_Barrier returns immediately.
+-    from gpu_aware_mpi import barrier
+-
+-    # No assertion on return value — the contract is "doesn't hang, doesn't
+-    # raise". A unit-test-level timeout from pytest-timeout would catch a
+-    # regression that made it block.
+-    barrier()
+diff --git a/vllm b/vllm
+new file mode 160000
+index 0000000..281955f
+--- /dev/null
++++ b/vllm
+@@ -0,0 +1 @@
++Subproject commit 281955fc63c823e8a439db82bf02ad9fffb199e2

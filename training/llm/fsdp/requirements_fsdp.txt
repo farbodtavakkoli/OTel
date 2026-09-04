@@ -1,0 +1,61 @@
+# Environment for train_llm_fsdp.py -- PyTorch-native FSDP2 (`fully_shard`) + HF
+# Transformers + accelerate. Reference versions match the other trainers in this
+# repo (Python 3.12). DeepSpeed is deliberately absent: this folder exists to
+# provide a sharding path that does not depend on it.
+#
+# torch: install the build that matches your accelerator BEFORE this file, because
+# the PyPI default wheel is the CUDA one. FSDP2 needs torch >= 2.6; the pin below
+# is the version the rest of this repo is on. Index URLs verified against
+# download.pytorch.org 2026-08: torch 2.11.0 ROCm wheels are on rocm7.2 (rocm6.4
+# stops at 2.9.1); XPU wheels are on the xpu index.
+#   NVIDIA (CUDA)      pip install torch numpy      # NOT torch==2.11.0 -- see H100 note below
+#   AMD (ROCm)         pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
+#                      ^ TESTED 2026-08-19 on 2x MI355X (gfx950, ROCm 7.2.4, Py 3.12):
+#                        installs torch 2.11.0+rocm7.2 and this file's pins resolve
+#                        unchanged on top of it (transformers 5.5.0, accelerate 1.14.0).
+#                        See readme_fsdp.md "Tested on AMD MI355X" for the two runtime
+#                        quirks (apply_chat_template return_dict; cpu_ram_efficient_loading).
+#   Intel (XPU)        pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/xpu
+#
+#   NVIDIA H100 (CUDA 13.0)  TESTED 2026-08-22 on 1x H100 80GB (driver 580.173.02, Py 3.12):
+#     `pip install torch numpy` resolves to **torch 2.13.0+cu130** (native CUDA 13, no
+#     --index-url). There is NO cu130 wheel for the 2.11.0 pin below, so on H100 do NOT
+#     pin torch here -- install 2.13.0+cu130 FIRST, then install this file with the torch
+#     line commented out (the HF stack below resolves unchanged and does NOT clobber torch).
+#     transformers 5.5.0 / accelerate 1.14.0 / peft 0.20.0 verified on cu130.
+#     NOTE (H100): gemma-4-E4B-it needs 3 extra changes under torch 2.13 -- untie word
+#     embeddings, reshard_after_forward:false + offload, load-by-snapshot-path. See
+#     readme_fsdp.md "Tested on NVIDIA H100" (verdict WORKS-WITH-CHANGES).
+torch==2.11.0    # H100/CUDA-13: comment this out and `pip install torch` (-> 2.13.0+cu130) instead
+
+# HF training stack
+transformers==5.5.0
+accelerate==1.14.0      # supplies the FSDP2 plugin (fsdp_version: 2) to the Trainer
+datasets==4.3.0
+peft==0.20.0            # only needed for the optional --use_lora path
+tokenizers==0.22.2
+huggingface_hub==1.27.0
+safetensors==0.8.0
+sentencepiece==0.2.2
+
+# Logging
+tensorboard==2.21.0
+
+# Utilities used directly by the script
+python-dotenv==1.2.2
+numpy==2.5.1
+PyYAML==6.0.3
+tqdm==4.70.0
+
+# NOT required, and intentionally not pinned here:
+#   deepspeed        -- the whole point of this folder is to avoid it
+#   bitsandbytes     -- 4-bit params are not shardable by FSDP2; for QLoRA use
+#                      ../peft instead
+#   flash-attn       -- optional CUDA-only speedup; needs --no-build-isolation and
+#                      a matching CUDA_HOME. Not available on ROCm/XPU, which is
+#                      why --attn_implementation defaults to portable sdpa.
+#                      H100 (2026-08-22): NOT installed -- huggingface.co/PyPI are
+#                      network-blocked on this box, so no prebuilt wheel/build was
+#                      possible. Ran on sdpa (works). On a networked H100, a prebuilt
+#                      flash-attn wheel + --attn_implementation flash_attention_2 is
+#                      the intended reversal of the ROCm sdpa default.

@@ -1,0 +1,37 @@
+# Qwen3-14B on an RDMA-enabled training cluster. Durable PVC cache + a
+# hostPath /dev/shm for NCCL.
+
+image:
+  tag: v1.0rc13
+
+model: Qwen/Qwen3-14B
+gpu_memory_utilization: 0.6
+
+replicaCounts:
+  inference: 1
+  training: 1
+
+storage:
+  jobs:
+    size: 100Gi
+  cache:
+    kind: pvc
+    size: 50Gi
+    storageClass: longhorn
+
+api:
+  extraEnv:
+    NVIDIA_VISIBLE_DEVICES: "none"
+
+megatron:
+  hostIPC: true
+  extraCapabilities:
+    - SYS_PTRACE
+  extraResources:
+    rdma/hca: 1
+  dshm:
+    kind: hostPath
+    hostPath: /dev/shm
+
+cloudflared:
+  enabled: true

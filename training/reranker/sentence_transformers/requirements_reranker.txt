@@ -1,0 +1,33 @@
+# Environment for train_reranker_standalone.py (sentence-transformers CrossEncoder reranker).
+# Not preinstalled in the base training venv; install into a dedicated venv.
+#
+# Core reranker stack
+sentence-transformers==5.7.0
+
+# Training stack
+# AMD/ROCm: install the ROCm torch wheel FIRST, then the rest of this file:
+#   pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
+# (verified on MI355X / ROCm 7.2.4: installs torch==2.11.0+rocm7.2, satisfies the
+# ==2.11.0 pin below so this file does not reinstall a CPU/CUDA torch on top).
+# Skip flash-attn (CUDA-only build); the script falls back to "sdpa" automatically.
+#
+# NVIDIA/H100 (CUDA 13.0, driver 580.173.02) — verified 2026-08-22:
+#   pip install torch numpy      # -> torch==2.13.0+cu130 (native CUDA 13, NO --index-url)
+#   then install this file WITHOUT the torch line below (no +cu130 wheel exists for
+#   2.11.0), e.g.  grep -v '^torch==' requirements_reranker.txt | pip install -r /dev/stdin
+#   Re-verify afterwards: python -c "import torch;print(torch.__version__)" -> 2.13.0+cu130.
+#   flash-attn: no prebuilt wheel for torch 2.13/cu130/py3.12; script auto-falls back to
+#   "sdpa" (no edit). Build flash-attn from source to enable flash_attention_2.
+torch==2.11.0   # ROCm pin. On H100/CUDA use torch==2.13.0+cu130 (see note above); do not force this pin.
+accelerate==1.14.0
+transformers==5.5.0
+datasets==4.3.0
+
+# Optional: flash-attn is used by default (attn_implementation="flash_attention_2").
+# Change it to "sdpa" in train_reranker_standalone.py if you can't build it.
+# flash-attn==2.8.3
+
+# Utilities
+python-dotenv==1.2.2
+tensorboard==2.21.0
+numpy==2.5.1

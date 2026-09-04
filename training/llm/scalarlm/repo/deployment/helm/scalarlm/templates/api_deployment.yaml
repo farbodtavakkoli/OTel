@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "scalarlm.fullname" . }}
+  labels:
+    {{- include "scalarlm.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "scalarlm.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "scalarlm.labels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      hostname: {{ include "scalarlm.fullname" . }}
+      {{- include "scalarlm.dnsConfig" . | nindent 6 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/app/cray/scripts/start_one_server.sh"]
+          env:
+            {{- include "scalarlm.envFromMap" .Values.api.extraEnv | nindent 12 }}
+          ports:
+            - name: api
+              containerPort: {{ .Values.service.api_port }}
+              {{- if .Values.api.hostPort }}
+              hostPort: {{ .Values.service.api_port }}
+              {{- end }}
+              protocol: TCP
+            - name: ui
+              containerPort: {{ .Values.service.ui_port }}
+              {{- if .Values.api.hostPort }}
+              hostPort: {{ .Values.service.ui_port }}
+              {{- end }}
+              protocol: TCP
+            - name: slurmctld
+              containerPort: {{ .Values.service.slurmctld_port }}
+              protocol: TCP
+          {{- if .Values.api.probes.enabled }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.api.probes.livenessPath }}
+              port: api
+            periodSeconds: {{ .Values.api.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.api.probes.startup.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.api.probes.readinessPath }}
+              port: api
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.api.probes.livenessPath }}
+              port: api
+            periodSeconds: 30
+            failureThreshold: 5
+          {{- end }}
+          volumeMounts:
+            - name: scalarlm-jobs
+              mountPath: /app/cray/jobs
+            - name: scalarlm-config
+              mountPath: /app/cray/cray-config.yaml
+              subPath: cray-config.yaml
+            - name: scalarlm-slurm-config
+              mountPath: /app/cray/nfs
+            {{- if ne .Values.storage.cache.kind "disabled" }}
+            - name: scalarlm-cache
+              mountPath: /root/.cache/huggingface
+            {{- end }}
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+      volumes:
+        - name: scalarlm-jobs
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-jobs
+        - name: scalarlm-slurm-config
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-slurm-config
+        - name: scalarlm-config
+          configMap:
+            name: {{ .Release.Name }}-api-configmap
+        {{- if eq .Values.storage.cache.kind "pvc" }}
+        - name: scalarlm-cache
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-cache
+        {{- else if eq .Values.storage.cache.kind "hostPath" }}
+        - name: scalarlm-cache
+          hostPath:
+            path: {{ .Values.storage.cache.hostPath }}
+            type: DirectoryOrCreate
+        {{- else if eq .Values.storage.cache.kind "emptyDir" }}
+        - name: scalarlm-cache
+          emptyDir: {}
+        {{- end }}
+      {{- include "scalarlm.nodeAffinity" .Values.api.nodeAffinityHostnames | nindent 6 }}

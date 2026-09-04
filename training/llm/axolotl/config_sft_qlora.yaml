@@ -1,0 +1,76 @@
+# Axolotl - QLoRA SFT (4-bit frozen base + LoRA adapters) on chat JSONL.
+# Launch: python3 train_llm_axolotl.py --config config_sft_qlora.yaml --num-processes 8
+# Use this only when the bf16 base does not fit; on 8x H100 plain LoRA is faster.
+
+### model
+base_model: Qwen/Qwen3-32B
+trust_remote_code: false
+
+### quantization + adapter
+load_in_4bit: true
+adapter: qlora
+lora_r: 32
+lora_alpha: 64
+lora_dropout: 0.0
+lora_target_linear: true
+
+### data
+datasets:
+  - path: ./data/OTel_LLM_sample_10.jsonl
+    ds_type: json
+    split: train
+    type: chat_template
+    field_messages: messages
+    message_property_mappings:
+      role: role
+      content: content
+    roles_to_train: ["assistant"]
+    train_on_eos: turn
+
+chat_template: tokenizer_default
+dataset_prepared_path: ./last_run_prepared
+val_set_size: 0.02
+output_dir: ./outputs/sft-qlora
+
+### sequence handling
+sequence_len: 4096
+sample_packing: true
+eval_sample_packing: false
+pad_to_sequence_len: true
+
+### batch / optimizer
+micro_batch_size: 2
+gradient_accumulation_steps: 8
+num_epochs: 3
+learning_rate: 1.0e-4
+optimizer: adamw_torch_fused
+lr_scheduler: cosine
+warmup_ratio: 0.03
+max_grad_norm: 1.0
+
+### precision / kernels
+bf16: auto
+tf32: true
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+attn_implementation: flash_attention_2
+
+### distributed
+# Default here is DDP (one 4-bit replica per GPU) - simplest and known-good.
+# Sharding a 4-bit base needs the FSDP+QLoRA recipe; see
+# https://docs.axolotl.ai/docs/fsdp_qlora.html before enabling fsdp_config below.
+# fsdp_version: 2
+# fsdp_config:
+#   auto_wrap_policy: TRANSFORMER_BASED_WRAP
+#   transformer_layer_cls_to_wrap: Qwen3DecoderLayer
+#   state_dict_type: FULL_STATE_DICT
+#   cpu_ram_efficient_loading: true
+#   reshard_after_forward: true
+
+### logging / checkpoints
+logging_steps: 10
+saves_per_epoch: 1
+evals_per_epoch: 1
+save_total_limit: 3
+seed: 42

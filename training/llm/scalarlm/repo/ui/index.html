@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>ScalarLM</title>
+    <script>
+      // Resolve theme before first paint to avoid a light->dark flash when
+      // the saved preference is "dark" or OS prefers-color-scheme is dark.
+      // Mirrors ui/src/stores/theme.ts::resolveTheme.
+      (function () {
+        try {
+          var raw = localStorage.getItem("scalarlm:theme.mode");
+          var mode = raw ? JSON.parse(raw) : "auto";
+          var resolved =
+            mode === "dark"
+              ? "dark"
+              : mode === "light"
+              ? "light"
+              : window.matchMedia &&
+                window.matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light";
+          if (resolved === "dark") {
+            document.documentElement.classList.add("dark");
+          }
+        } catch (e) {
+          /* ignore */
+        }
+      })();
+    </script>
+  </head>
+  <body class="bg-bg text-fg font-sans antialiased">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

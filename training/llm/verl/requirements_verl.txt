@@ -1,0 +1,111 @@
+# verl - RL post-training (GRPO / PPO / DAPO / RLOO) for LLMs
+#
+# verl orchestrates THREE stacks at once: a training engine (FSDP2 or Megatron),
+# a rollout/inference engine (vLLM or SGLang), and Ray for placement. Those three
+# have tight, mutually-hostile version constraints, which is why upstream ships
+# Docker images and a uv.lock. Prefer the image; treat this file as the
+# "I insist on a venv" path.
+#
+# RECOMMENDED instead of pip: the official images
+#   NVIDIA     : verlai/verl:app-verl0.5-vllm0.10.0-mcore0.13.0   # DEAD TAG — 404s on Docker Hub as of 2026-08.
+#   NVIDIA     : verlai/verl:uv.cu130   # VERIFIED on H100 2026-08-22 (readme § "NVIDIA H100 (CUDA 13.0) — TESTED").
+#                # CUDA 13.0 / torch 2.11.0+cu130. 12.8 GB pull -> 43.3 GB on disk. NO ready .venv:
+#                # ships only the uv package cache. After `docker run`, inside the container run
+#                #   cd /workspace/verl && python3 manage_envs.py sync vllm -- --frozen   (offline, ~9 s)
+#                # -> verl 0.9.0.dev0, vllm 0.24.0, ray 2.55.1, transformers 5.5.3, triton 3.6.0.
+#                # flash_attn is NOT installed in the vllm slice; force
+#                #   +actor_rollout_ref.model.override_config.attn_implementation=sdpa   (see readme).
+#                # verl 0.9 reward drift: also pass reward.custom_reward_function.{path,name} (abs path).
+#                # `unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy` before pulling.
+#                # Query live tags: curl -s "https://hub.docker.com/v2/repositories/verlai/verl/tags/?page_size=100&ordering=last_updated"
+#   AMD (ROCm) : rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2
+#                (AMD tutorial image: amdagi/verl-dev:rocm7.14_torch2.12_release_0724;
+#                 source build: docker/rocm/Dockerfile.rocm upstream — see
+#                 docs/amd_tutorial/amd_quick_start.rst)
+# Check https://verl.readthedocs.io/en/latest/start/install.html for the current tag.
+#
+# ---------------------------------------------------------------------------
+# AMD MI355X (gfx950) / ROCm 7.2.4 — TESTED 2026-08-19. Details: readme_verl.md
+# § "MI355X (ROCm 7.2) — TESTED".
+#
+# VERDICT: use the container. There is NO working pip route to a trainable
+# state on ROCm, because no ROCm vLLM wheel is published on PyPI and modern
+# verl has no vLLM-free rollout engine (`rollout.name=hf` was deleted from
+# verl/workers/rollout/base.py::_ROLLOUT_REGISTRY in 0.6.0).
+#
+#   docker pull rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2
+#   # 12 GB compressed -> 42.5 GB on disk. Tag understates the contents:
+#   # verl 0.8.0.dev0, torch 2.9.1.dev20251204+rocm7.0.2,
+#   # vllm 0.20.2rc1.dev253+g1ff9d3353.rocm702, ray 2.55.1, transformers 5.14.1,
+#   # flash_attn 2.8.4 (ROCm/CK build, preinstalled), amd-aiter 0.1.12.
+#   # Ran fine against a ROCm 7.2.4 host kernel driver.
+#
+# Required at runtime on ROCm (see readme for why):
+#   RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0   # else Triton "0 active drivers" in TaskRunner
+#   # set NEITHER HIP_VISIBLE_DEVICES NOR CUDA_VISIBLE_DEVICES — vLLM's ROCm
+#   # platform raises if both are set and differ; pin GPUs with per-device
+#   # `--device /dev/dri/renderDxxx` on `docker run` instead.
+#   VLLM_ROCM_USE_AITER=1                  # image default, left on
+#   VLLM_ROCM_USE_AITER_MOE=0              # AITER MoE kernels are unsafe on gfx950
+#
+# The pip lines below DO work on ROCm but only get you data prep + `--dry-run`
+# (converter, launcher, Hydra override validation) — not training:
+#   python3 -m venv .env_train_llm_verl && source .env_train_llm_verl/bin/activate
+#   pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
+#   #   -> torch 2.11.0+rocm7.2, both MI355X visible as gfx950:sramecc+:xnack-
+#   git clone https://github.com/volcengine/verl.git && cd verl
+#   pip install --no-deps -e .
+#   pip install accelerate codetiming datasets dill hydra-core "numpy<2.0.0" \
+#       pandas peft "pyarrow>=19.0.0" pybind11 pylatexenc "ray[default]>=2.41.0" \
+#       torchdata "tensordict>=0.8.0,<=0.10.0,!=0.9.0" transformers wandb \
+#       "packaging>=20.0" tensorboard python-dotenv
+#   # NEVER `pip install flash-attn` on ROCm. verl >= 0.6 imports it lazily via
+#   # verl/utils/attention_utils.py, so it is only needed when
+#   # use_remove_padding=True actually runs. verl 0.5.0 imports it eagerly in
+#   # workers/actor/dp_actor.py under `if is_cuda_available:` (True on ROCm),
+#   # so verl 0.5.0 cannot even be imported in a ROCm venv without it.
+# ---------------------------------------------------------------------------
+
+# Install verl itself from source (recommended over the PyPI wheel; the
+# examples/, recipe/ and config defaults only exist in the git tree):
+#   git clone https://github.com/volcengine/verl.git
+#   cd verl
+#   pip install --no-deps -e .
+#
+# Pin a release instead of main if you want reproducibility:
+#   pip install "verl[vllm]==0.5.0"
+
+# Core training stack
+torch>=2.6.0
+transformers>=4.51.0
+accelerate>=1.4.0
+datasets>=3.2.0
+peft>=0.14.0                  # LoRA RL: actor_rollout_ref.model.lora_rank>0
+
+# Rollout engine: pick exactly ONE, do not install both
+vllm>=0.8.2                   # avoid 0.7.x entirely - known OOM/correctness bugs
+                              # NVIDIA-only on PyPI. On ROCm there is no wheel:
+                              # use the rocm/verl image (vllm 0.20.2+rocm702).
+# sglang[all]>=0.4.6          # alternative rollout backend (untested on gfx950)
+
+# Orchestration
+ray[default]>=2.41.0
+hydra-core>=1.3.2
+omegaconf>=2.3.0
+codetiming>=1.4.0
+tensordict>=0.6.0
+
+# Data (required by prepare_data_verl.py even without a GPU)
+pandas>=2.2.0
+pyarrow>=17.0.0               # parquet writer behind DataFrame.to_parquet
+
+# Misc
+python-dotenv>=1.0.1          # dev.env / HF_TOKEN
+wandb>=0.19.0                 # optional: trainer.logger=console,wandb
+
+# Optional performance
+# flash-attn>=2.7.0           # NVIDIA only: needs --no-build-isolation and CUDA_HOME.
+                              # On ROCm do NOT pip-install it — the rocm/verl image
+                              # already ships flash_attn 2.8.4 (CK build); sdpa/CK is
+                              # the ROCm attention path.
+# liger-kernel>=0.5.0         # enable with USE_LIGER=1

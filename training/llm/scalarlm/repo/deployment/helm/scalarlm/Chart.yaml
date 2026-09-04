@@ -1,0 +1,17 @@
+apiVersion: v2
+name: scalarlm
+description: |
+  ScalarLM — closed-loop LLM inference + post-training in one deployment.
+  A single parameterized chart for all ScalarLM releases; per-model values
+  live under values/.
+type: application
+version: 2.0.0
+appVersion: "1.0.0"
+keywords:
+  - llm
+  - inference
+  - training
+  - vllm
+  - slurm
+sources:
+  - https://github.com/supermassive-intelligence/scalarlm

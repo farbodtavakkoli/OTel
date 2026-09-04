@@ -1,0 +1,59 @@
+groups:
+  - name: inference_slos
+    interval: 30s
+    rules:
+      # Alert if p99 TTFT exceeds 2 seconds
+      - alert: HighTTFT
+        expr: histogram_quantile(0.99, rate(vllm_time_to_first_token_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Time to First Token (p99 > 2s)"
+          description: "p99 TTFT is {{ $value }}s, exceeding SLO of 2s"
+
+      # Alert if queue depth sustained above 100
+      - alert: HighQueueDepth
+        expr: scalarlm_queue_depth > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Work queue depth sustained above 100"
+          description: "Queue depth for {{ $labels.model }} is {{ $value }}"
+
+  - name: training_health
+    interval: 30s
+    rules:
+      # Alert on gradient explosion (>10x baseline)
+      - alert: GradientExplosion
+        expr: scalarlm_training_grad_norm > 10 * avg_over_time(scalarlm_training_grad_norm[1h])
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Gradient explosion detected"
+          description: "Gradient norm {{ $value }} exceeds 10x baseline"
+
+      # Alert if MFU drops below 30%
+      - alert: LowMFU
+        expr: scalarlm_training_mfu < 0.30
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Model FLOP Utilization below 30%"
+          description: "MFU is {{ $value | humanizePercentage }}, check for bottlenecks"
+
+  - name: gpu_health
+    interval: 15s
+    rules:
+      # Alert if GPU temperature exceeds 85°C
+      - alert: HighGPUTemperature
+        expr: DCGM_FI_DEV_GPU_TEMP > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU temperature above 85°C"
+          description: "GPU {{ $labels.gpu }} temp is {{ $value }}°C"

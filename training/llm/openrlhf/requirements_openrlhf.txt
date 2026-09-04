@@ -1,0 +1,203 @@
+# Environment for train_llm_openrlhf.py -- UNTESTED, written against upstream docs (August 2026).
+#
+# STRONG RECOMMENDATION: upstream considers Docker the supported install path, because the
+# Ray + vLLM + DeepSpeed + flash-attn combination is version-sensitive. See the Install
+# section of readme_openrlhf.md. This file is the pip equivalent for an existing CUDA
+# environment.
+#
+# NVIDIA/CUDA only: OpenRLHF has no first-party AMD/ROCm support (no ROCm docs, image, or
+# install path upstream as of August 2026). For AMD hardware use ../verl instead.
+# The pins below are the NVIDIA ones and are left exactly as upstream intends them.
+# For what actually resolves on AMD/ROCm, see the ROCm block at the bottom of this file.
+#
+# prepare_data_openrlhf.py is stdlib-only and needs nothing from this file.
+
+# --- NVIDIA H100 (CUDA 13.0) -- VERIFIED 2026-08-22, 1x H100 80GB, driver 580.173.02, py3.12 ---
+# Unlike AMD, the plain-venv route WORKS for ALL tiers here (SFT/DPO AND PPO/GRPO), because the
+# CUDA-only vLLM wheel that forced a container on ROCm is the native wheel on NVIDIA. Steps:
+#
+#   pip install torch numpy                 # -> torch 2.13.0+cu130 (native CUDA 13; proxy OK, pypi.org allowlisted)
+#   pip install openrlhf[vllm]              # ~90 s, exit 0. torch is NOT clobbered (vllm 0.27.1 pins the same
+#                                           #   torch==2.13.0); `pip check` stays clean. No --no-deps needed.
+#   # flash-attn: the wheel openrlhf[vllm] pulls is ABI-broken vs torch 2.13.0
+#   #   (ImportError: undefined symbol _ZN3c10...materialize_cow_storage). openrlhf imports
+#   #   flash_attn.bert_padding at module load, so EVERY trainer dies until this is fixed.
+#   #   REBUILD it from source against the installed torch (verified, ~15 min nvcc build):
+#   pip uninstall -y flash-attn
+#   MAX_JOBS=32 TORCH_CUDA_ARCH_LIST="9.0" FLASH_ATTENTION_FORCE_BUILD=TRUE \
+#     pip install flash-attn==2.8.3 --no-build-isolation --no-cache-dir   # needs nvcc (CUDA 13 at /usr/local/cuda)
+#   #   (Alternative if you can't spend the build time: shim flash_attn/__init__ so the eager
+#   #    compiled import is guarded -- bert_padding + utils/distributed are pure torch -- and run
+#   #    with --ds.attn_implementation sdpa. SFT and GRPO were both evidenced this way first.)
+#
+# VERIFIED VERSIONS ON H100 (all from `pip install openrlhf[vllm]` unless noted):
+#   torch==2.13.0            (+cu130, native CUDA 13.0; installed first, survived the [vllm] resolve)
+#   vllm==0.27.1             (NATIVE CUDA wheel -- this is the AMD blocker, gone on NVIDIA)
+#   flash-attn==2.8.3        (prebuilt wheel is ABI-broken; SOURCE build works, ~15 min)
+#   openrlhf==0.11.0  deepspeed==0.19.5  transformers==5.15.0  accelerate==1.14.0
+#   ray==2.55.0  datasets==5.0.1  flashinfer-python==0.6.16  numpy==2.3.5  python-dotenv==1.2.3
+# RUNTIME on H100 (reverse of the ROCm flags): --ds.attn_implementation flash_attention_2 (default)
+#   works once flash-attn is source-built; --ds.packing_samples default is fine (no need to drop it).
+#   DeepSpeed device pinning on a shared node: `deepspeed --num_gpus 1` IGNORES CUDA_VISIBLE_DEVICES
+#   and forces device 0 -- use `deepspeed --include localhost:<gpu>` (and `unset CUDA_VISIBLE_DEVICES`).
+#   DeepSpeed FusedAdam JIT-compiles at first run: needs `ninja` (venv bin) on PATH + CUDA_HOME set.
+# --------------------------------------------------------------------------------------------
+
+# Core. The [vllm] extra pulls a vLLM version the release was tested against (0.27.1 at the
+# time of writing) -- prefer it over installing vllm separately and hoping the pins agree.
+#   pip install openrlhf[vllm]            # recommended
+#   pip install openrlhf[vllm_latest]     # newest vLLM instead of the pinned one
+#   pip install openrlhf[vllm,ring,liger] # + ring-attention and Liger kernels
+openrlhf[vllm]
+
+# Ray is the distributed scheduler: it places actor / critic / reference / reward models and
+# the vLLM engines across GPUs, and provides the `ray job submit` entrypoint this script uses.
+# Installed as an openrlhf dependency; pinned here for visibility.
+ray[default]>=2.40.0
+
+# DeepSpeed provides ZeRO-3 sharding for the training-side models.
+# Muon optimizer support requires deepspeed >= 0.18.2.
+deepspeed>=0.18.2
+
+# Read by train_llm_openrlhf.py to load dev.env (HF_TOKEN).
+python-dotenv==1.2.2
+
+# --- Packages that must NOT come from a plain `pip install` ------------------------
+#
+# flash-attn: MUST be built with --no-build-isolation, or the build cannot see torch and
+# fails. Install it AFTER torch is already present:
+#     pip install flash-attn==2.8.3 --no-build-isolation
+# Needed for --ds.attn_implementation flash_attention_2 (this launcher's default; pass
+# --flash_attn to turn it off by editing the default if you cannot build it).
+#
+# ring_flash_attn: only needed for long-context training via --ds.ring_attn_size.
+# Ships as the `ring` extra above, or from source:
+#     pip install ring_flash_attn --no-build-isolation
+#
+# OpenRLHF from source, if you need an unreleased fix (the namespaced --model.* / --actor.*
+# CLI is recent and moves quickly, so this is more likely than usual):
+#     git clone https://github.com/OpenRLHF/OpenRLHF.git
+#     cd OpenRLHF && pip install -e .
+#
+# torch: install from the PyTorch index matching your CUDA, not plain PyPI, e.g.
+#     pip install torch --index-url https://download.pytorch.org/whl/cu126
+
+# --- Conflicting packages -----------------------------------------------------------
+# Inside NVIDIA's NGC pytorch containers, upstream instructs removing these first because
+# they collide with OpenRLHF's own versions:
+#     pip uninstall xgboost transformer_engine flash_attn pynvml -y
+# (then reinstall flash-attn with --no-build-isolation as above)
+
+# --- Optional -----------------------------------------------------------------------
+# Experiment tracking. wandb via --logger.wandb.key, tensorboard via --logger.tensorboard_dir.
+wandb>=0.18.0
+tensorboard>=2.18.0
+
+# --- AMD / ROCm reality (tested 1x MI355X gfx950, ROCm 7.2.4, py3.12, August 2026) ----
+#
+# `pip install -r` of THIS file fails on ROCm. Do not try. Root cause, in order:
+#
+#   1. openrlhf lists flash-attn==2.8.3 in install_requires -- NOT in an extra (true for
+#      0.9.x .. 0.11.0). So `pip install openrlhf[vllm]` always tries to build flash-attn:
+#          ERROR: Failed to build 'flash-attn' when getting requirements to build wheel
+#          ModuleNotFoundError: No module named 'torch'
+#      flash-attn 2.8.3 *does* allow gfx950 (setup.py allowed_archs) and bundles
+#      composable_kernel, but it is a multi-hour hipcc build with no prebuilt ROCm wheel.
+#
+#   2. vllm==0.27.1 (what the [vllm] extra pins) is CUDA-only ON PyPI. It declares
+#      torch==2.13.0 (the plain CUDA wheel), flashinfer-python, nvidia-cudnn-frontend and
+#      nvidia-cutlass-dsl[cu13]. Installing it OVERWRITES a working ROCm torch. This blocks
+#      PPO/GRPO *on the pip route only* -- ROCm builds of vLLM exist in AMD's first-party
+#      images, and OpenRLHF drives one of them fine. See "ROCm CONTAINER ROUTE" at the
+#      bottom of this file: PPO and GRPO both trained on 4x MI355X that way (2026-08-19).
+#
+# WHICH PINS RESOLVE ON ROCm
+#   resolve fine : ray[default]==2.55.0 (detects MI355X, accelerator_type:AMD-Instinct-MI355X-OAM)
+#                  deepspeed==0.19.5 (pure-python wheel, JIT ops -- verified training on gfx950)
+#                  transformers==5.15.0, accelerate, datasets, peft, optimum, torchmetrics,
+#                  torchdata, wandb, tensorboard, python-dotenv, loralib, jsonlines
+#   installs but  bitsandbytes (PyPI wheel is the CUDA build; AMD publish separate ROCm
+#   is wrong-arch wheels), pynvml / nvidia-ml-py (NVIDIA-only; unused on the SFT/DPO path)
+#   CUDA-ONLY    : flash-attn==2.8.3, vllm==0.27.1, ring_flash_attn
+#
+# WORKING INSTALL LINES -- VENV ROUTE (SFT + DPO only; for PPO/GRPO see the container
+# route at the bottom of this file):
+#
+#   python3 -m venv .env_openrlhf && source .env_openrlhf/bin/activate
+#   export HIP_VISIBLE_DEVICES=0 CUDA_VISIBLE_DEVICES=0      # never leave these empty
+#
+#   # ROCm torch FIRST, or a later resolve will pull a CUDA build.
+#   pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
+#
+#   # --no-deps is what skips the unconditional flash-attn requirement.
+#   pip install openrlhf==0.11.0 --no-deps
+#
+#   pip install accelerate aiohttp bitsandbytes datasets deepspeed==0.19.5 einops \
+#     'grpcio>=1.74.0' 'huggingface-hub>=1.0.0' isort jsonlines loralib optimum \
+#     'optree>=0.15.0' packaging peft pylatexenc 'pynvml>=12.0.0' 'ray[default]==2.55.0' \
+#     sympy tensorboard torchdata torchmetrics tqdm transformers==5.15.0 \
+#     transformers-stream-generator wandb wheel python-dotenv
+#
+#   # Then shim the pure-python half of flash-attn (bert_padding + utils/distributed, both
+#   # plain torch+einops) into site-packages/flash_attn/ -- openrlhf/models/actor.py imports
+#   # it at module level, so even SFT dies without it. Details in readme_openrlhf.md.
+#
+#   pip check   # expect only: openrlhf 0.11.0 requires flash-attn==2.8.3, which is not installed
+#   python -c "import torch; print(torch.__version__)"   # must still end in +rocm7.2
+#
+# RUNTIME FLAGS THAT MUST CHANGE ON ROCm
+#   --ds.attn_implementation sdpa      (flash_attention_2 is unavailable)
+#   DROP --ds.packing_samples          (train_sft.py:324 silently forces flash_attention_2
+#                                       back on whenever packing is enabled)
+#   Both are ON by default in train_llm_openrlhf.py and cannot be disabled from the CLI --
+#   edit the defaults, or call `deepspeed --module openrlhf.cli.train_sft` directly.
+#
+# Verified working on MI355X: torch 2.11.0+rocm7.2, deepspeed 0.19.5, transformers 5.15.0,
+# ray 2.55.0, openrlhf 0.11.0 (--no-deps). SFT and DPO both step and checkpoint.
+
+# --- ROCm CONTAINER ROUTE for the RL tiers (PPO / GRPO / RLOO / REINFORCE++) ----------
+# TESTED 2026-08-19 on 4x MI355X (gfx950), ROCm 7.2.4 host. GRPO: 3 steps, exit 0, HF
+# checkpoint written. PPO (with critic): 3 steps, exit 0, critic_loss 0.213 -> 0.088.
+# Full walkthrough + evidence: readme_openrlhf.md, "RL tiers unblocked on MI355X".
+#
+# There is no pip line for this. The dependency you cannot get from PyPI -- a ROCm build of
+# vLLM -- comes from the image; OpenRLHF is then dropped in with --no-deps.
+#
+#   IMAGE: rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2
+#          (rocm/vllm works the same way; this one was chosen because it was already local)
+#          ships torch 2.9.1.dev+rocm7.0.2 | vllm 0.20.2rc1.dev253+rocm702 | ray 2.55.1
+#                transformers 5.14.1 | flash_attn 2.8.4 (ROCm/CK) | amd-aiter
+#          -> flash-attn blocker (1) and vLLM blocker (2) are BOTH void inside it.
+#
+#   docker run -d --name orlhf_mi355x \
+#     --device /dev/kfd --device /dev/dri/renderD128 --device /dev/dri/renderD136 \
+#     --device /dev/dri/renderD144 --device /dev/dri/renderD152 \
+#     --group-add 44 --group-add 993 --ipc=host --cap-add=SYS_PTRACE \
+#     --security-opt seccomp=unconfined --shm-size=64g --network=host \
+#     -e HF_HOME=/hf_cache -v "$PWD":/workspace/train_llm_openrlhf \
+#     -v /mnt/data_1.5t/hf_cache:/hf_cache -v /mnt/data_1.5t/outputs/train_llm_openrlhf:/outputs \
+#     -w /workspace/train_llm_openrlhf <IMAGE> sleep infinity
+#
+#   # THE ONLY pip line needed inside. --no-deps everywhere is load-bearing: a plain
+#   # `pip install openrlhf` re-triggers the flash-attn source build AND the CUDA torch swap.
+#   docker exec orlhf_mi355x pip install --no-deps \
+#     openrlhf==0.11.0 deepspeed==0.19.5 hjson py-cpuinfo nvidia-ml-py pynvml python-dotenv
+#   # (deepspeed + its 4 pure-python deps are the ONLY things the image was missing;
+#   #  python-dotenv only if you drive it through train_llm_openrlhf.py)
+#
+#   docker exec orlhf_mi355x bash -lc \
+#     'ulimit -n 262144; ray start --head --num-gpus 4 --num-cpus 64 --port 6379 --dashboard-port 8265'
+#
+# RUNTIME FLAGS ON THIS ROUTE
+#   KEEP --ds.packing_samples and --ds.attn_implementation flash_attention_2 (both are the
+#     launcher defaults and both WORK here -- ROCm flash-attn 2.8.4 is preinstalled)
+#   --vllm.sync_backend nccl        resolves to RCCL; actor->engine weight sync works as-is
+#   colocate_all wants  vllm.num_engines * vllm.tensor_parallel_size == actor GPUs
+#   --reward.remote_url must be a path visible to the Ray WORKERS (it is imported inside the
+#     vLLM engine actor) -- use a mounted absolute path, e.g. /outputs/reward_func.py
+#   --working_dir must NOT be this folder: Ray would upload .env_openrlhf/
+#     (libmagma.so 1.29 GB, libMIOpen.so 1.02 GB, ...). Point it at a dir holding just data/.
+#
+# GOTCHA THAT LOOKS LIKE A ROCm BUG BUT IS NOT: the image's nofile soft limit is 1024, so
+# the raylet SIGABRTs with `epoll: Too many open files [system:24]` as soon as a driver
+# connects. Run `ulimit -n 262144` in every shell that starts or submits to Ray.

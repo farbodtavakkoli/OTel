@@ -1,0 +1,60 @@
+# MI355X (ROCm 7.2) 8-GPU variant of config_sft_lora_smoke_mi355x.yaml.
+# Same model / template / method as the verified 1-GPU smoke; only the data slice,
+# batch geometry, step count and checkpoint policy differ. See readme_llamafactory.md
+# section 2, "8-GPU run (8x MI355X, ROCm 7.2.4)".
+# Parallelism: plain torchrun DDP (no deepspeed:) — llamafactory-cli auto-torchruns
+# when get_device_count() > 1.
+# Launch: HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+#   MASTER_PORT=29710 python3 train_llm_llamafactory.py \
+#     --config config_sft_lora_smoke_mi355x_8gpu.yaml --num-gpus 8
+
+### model
+model_name_or_path: Qwen/Qwen3-0.6B   # same stand-in the 1-GPU smoke used
+trust_remote_code: true
+flash_attn: sdpa                # ROCm: no flash-attn wheel — fa2 must fall back to sdpa
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 64
+lora_alpha: 128
+lora_dropout: 0.0
+lora_target: all
+
+### dataset
+# 2560 rows = the shipped 10-row sample replicated x256, written OUTSIDE the repo and
+# registered as `otel_chat_sft_x256` in data/dataset_info.json (absolute file_name).
+# The 10-row sample cannot feed 8 ranks x batch 4 for 20 steps; this is a pipeline
+# proof, not a learning result.
+dataset: otel_chat_sft_x256
+dataset_dir: ./data
+template: qwen3_nothink
+cutoff_len: 512
+overwrite_cache: true
+preprocessing_num_workers: 8
+dataloader_num_workers: 2
+packing: false
+
+### output — NO checkpoints (disk hygiene); no load_best_model_at_end anywhere
+output_dir: /mnt/data_1.5t/outputs/train_llm_llamafactory/gpu8/sft_lora_8gpu
+logging_steps: 1
+save_strategy: "no"
+plot_loss: false
+overwrite_output_dir: true
+report_to: none
+
+### train — 20 steps; global batch = 4 per device x 2 accum x 8 GPUs = 64
+max_steps: 20
+per_device_train_batch_size: 4
+gradient_accumulation_steps: 2
+learning_rate: 1.0e-4
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+bf16: true
+ddp_timeout: 180000000
+seed: 42
+
+### eval — disabled ("no" must stay quoted or YAML reads it as False)
+val_size: 0.0
+eval_strategy: "no"

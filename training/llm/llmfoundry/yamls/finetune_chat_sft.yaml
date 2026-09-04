@@ -1,0 +1,164 @@
+# LLM Foundry -- instruction finetuning an HF causal LM on local chat JSONL.
+#
+# Data: chat JSONL, each line {"messages": [{"role": ..., "content": ...}, ...]}.
+# Defaults to the 10-row sample shipped in ./data so the recipe is self-contained.
+#
+# Run:  composer scripts/train/train.py yamls/finetune_chat_sft.yaml
+# Or:   python3 train_llm_llmfoundry.py --recipe sft
+# Point variables.data_local / --data-local at your own directory for a real run.
+#
+# Targets 8x H100 80GB. UNTESTED -- see readme_llmfoundry.md.
+
+variables:
+  global_seed: 17
+  max_seq_len: 4096
+  model_name: meta-llama/Llama-3.1-8B-Instruct
+  data_local: ./data                    # shipped 10-row sample lives here
+  train_file: OTel_LLM_sample_10.jsonl
+
+max_seq_len: ${variables.max_seq_len}
+
+# If left blank, read from the $RUN_NAME environment variable.
+run_name:
+
+# Model: load pretrained weights from the Hub (or a local path).
+model:
+  name: hf_causal_lm
+  pretrained: true
+  pretrained_model_name_or_path: ${variables.model_name}
+  # For any HF model with FlashAttention-2 support (Llama, Mistral, Qwen, ...).
+  # Drop this line to fall back to the model's default attention.
+  attn_implementation: flash_attention_2
+  # Required for gated repos; the token is read from the HF_TOKEN env var.
+  use_auth_token: true
+  init_device: mixed          # rank 0 loads real weights, other ranks init on meta,
+                              # then FSDP syncs. Avoids N copies of the model in CPU RAM.
+
+tokenizer:
+  name: ${variables.model_name}
+  kwargs:
+    model_max_length: ${variables.max_seq_len}
+
+# Dataloaders -- `finetuning` is the instruction-tuning loader.
+train_loader:
+  name: finetuning
+  dataset:
+    hf_name: json                       # local JSONL via the HF `json` builder
+    hf_kwargs:
+      data_files: ${variables.data_local}/${variables.train_file}
+    split: train
+    # The sample rows carry metadata columns besides `messages` (unmask, flow,
+    # source_*). Foundry's loader requires messages-only examples, so this
+    # upstream preprocessor extracts the `messages` key. Drop it if your JSONL
+    # has no extra columns.
+    preprocessing_fn: llmfoundry.data.finetuning.tasks:messages_format_preprocessor
+    max_seq_len: ${variables.max_seq_len}
+    allow_pad_trimming: false
+    decoder_only_format: true
+    shuffle: true
+    # Which spans generate loss. 'none'/'last' are the library defaults:
+    #   target_prompts:   none | all | length>=XX
+    #   target_responses: last | all      <- use 'all' to supervise every assistant
+    #                                        turn of a multi-turn conversation
+    target_prompts: none
+    target_responses: last
+    # Sequence packing: 'auto' profiles the dataset and picks the highest ratio with
+    # ~zero waste. Big throughput win on short examples. If you enable it for an MPT
+    # model you must also set attn_uses_sequence_id: true in config_overrides.
+    # packing_ratio: auto
+  drop_last: true
+  num_workers: 8
+  pin_memory: false
+  prefetch_factor: 2
+  persistent_workers: true
+  timeout: 0
+
+eval_loader:
+  name: finetuning
+  dataset:
+    hf_name: json
+    hf_kwargs:
+      data_files: ${variables.data_local}/${variables.train_file}
+    split: train                        # sample has no val split; reuses train for a smoke eval
+    preprocessing_fn: llmfoundry.data.finetuning.tasks:messages_format_preprocessor
+    max_seq_len: ${variables.max_seq_len}
+    allow_pad_trimming: false
+    decoder_only_format: true
+    shuffle: false
+    target_prompts: none
+    target_responses: last
+  drop_last: false
+  num_workers: 8
+  pin_memory: false
+  prefetch_factor: 2
+  persistent_workers: true
+  timeout: 0
+
+# Optimization
+scheduler:
+  name: cosine_with_warmup
+  t_warmup: 20ba
+  alpha_f: 0.1
+
+optimizer:
+  name: decoupled_adamw
+  lr: 1.0e-5                  # full fine-tune territory; 5e-6 for a gentler pass
+  betas:
+  - 0.9
+  - 0.95
+  eps: 1.0e-8
+  weight_decay: 0.0
+
+algorithms:
+  gradient_clipping:
+    clipping_type: norm
+    clipping_threshold: 1.0
+
+max_duration: 3ep
+eval_interval: 1ep
+eval_first: false
+eval_subset_num_batches: -1
+global_train_batch_size: 64   # across ALL ranks; grad accumulation is derived
+
+# System
+seed: ${variables.global_seed}
+device_eval_batch_size: 4
+device_train_microbatch_size: auto    # let Composer find the largest that fits
+precision: amp_bf16
+
+# FSDP. NOTE: this is a top-level `fsdp_config` block, not `parallelism_config` --
+# the train script folds it into Composer's parallelism_config itself.
+fsdp_config:
+  sharding_strategy: FULL_SHARD
+  mixed_precision: PURE
+  activation_checkpointing: true
+  activation_checkpointing_reentrant: false
+  activation_cpu_offload: false
+  limit_all_gathers: true
+  state_dict_type: full
+
+# Logging
+progress_bar: false
+log_to_console: true
+console_log_interval: 10ba
+
+callbacks:
+  speed_monitor:
+    window_size: 10
+  lr_monitor: {}
+  memory_monitor: {}
+  runtime_estimator: {}
+  # Write a ready-to-serve Hugging Face folder alongside the Composer checkpoints,
+  # so you never have to run a conversion script by hand.
+  hf_checkpointer:
+    save_folder: ./llmfoundry_run/hf_checkpoints
+    save_interval: 1ep
+    precision: bfloat16
+
+# loggers:
+#   wandb: {}
+
+# Checkpointing
+save_folder: ./llmfoundry_run/checkpoints
+save_interval: 1ep
+save_num_checkpoints_to_keep: 1   # important: cleans up checkpoints on DISK

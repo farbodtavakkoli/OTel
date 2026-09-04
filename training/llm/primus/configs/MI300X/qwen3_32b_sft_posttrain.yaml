@@ -1,0 +1,56 @@
+# Primus post-training config -- SFT (full fine-tune), Qwen3-32B, MI300X (gfx942).
+#
+# Post-training in Primus runs through the Megatron-Bridge backend via
+# `train posttrain`. The values below follow the MI300X reference config
+# documented upstream (TP 2, GBS 8, MBS 2, seq_length 8192).
+#
+# VERIFY against examples/megatron_bridge/configs/MI300X/ in your Primus
+# checkout before a long run -- the surrounding schema (work_group, exp_name,
+# and the modules block) is version-specific and changes between releases.
+
+work_group: local
+user_name: local
+exp_name: qwen3_32b_sft_posttrain
+# REQUIRED by primus/core/launcher/parser.py::parse_meta_info -- omitting it aborts with
+# "AssertionError: Failed to find key(workspace)". Verified on MI355X, ROCm 7.2.4.
+workspace: ${PRIMUS_WORKSPACE:./output}
+
+modules:
+  post_trainer:
+    framework: megatron_bridge
+    config: sft_trainer.yaml
+    model: qwen3_32b.yaml
+
+    overrides:
+      # --- method: SFT trains every parameter ---
+      peft: "none"
+
+      # --- optimizer ---
+      # SFT wants a low LR; 5e-6 to 1e-5 is the documented range.
+      finetune_lr: 5.0e-6
+      min_lr: 5.0e-7
+      lr_warmup_iters: 20
+      lr_decay_iters: 500
+
+      # --- precision ---
+      precision_config: bf16_mixed
+
+      # --- parallelism (MI300X reference: TP 2) ---
+      tensor_model_parallel_size: 2
+      pipeline_model_parallel_size: 1
+      context_parallel_size: 1
+      # Legal here (TP 2), but every upstream reference config sets this false --
+      # matching upstream. With TP 1 it is fatal: Megatron raises
+      # "Cannot use sequence parallelism without tensor parallelism".
+      sequence_parallel: false
+
+      # --- batching / length ---
+      train_iters: 500
+      global_batch_size: 8
+      micro_batch_size: 2
+      seq_length: 8192
+
+      # --- activation recompute: trade compute for memory, enable on OOM ---
+      recompute_granularity: full
+      recompute_method: uniform
+      recompute_num_layers: 1

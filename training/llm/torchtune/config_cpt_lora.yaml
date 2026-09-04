@@ -1,0 +1,110 @@
+# torchtune continued pre-training (LoRA) on a local {text} JSONL.
+#
+# Recipe: lora_finetune_distributed  (2+ GPUs). For one GPU use
+#         lora_finetune_single_device and drop the --nproc_per_node flag.
+#
+# Data: prepare_data_torchtune.py writes data/otel_cpt.jsonl from the shipped sample.
+# Weights: `tune download Qwen/Qwen2.5-7B --output-dir ./assets/Qwen2.5-7B`
+#
+# Launch:
+#   python train_llm_torchtune.py --nproc-per-node 8
+#
+# Upstream development wound down in 2025. This folder is a CPT example against
+# the last stable API (torchtune 0.6), not a long-term target.
+
+output_dir: ./outputs/torchtune_cpt_lora
+
+model:
+  _component_: torchtune.models.qwen2_5.lora_qwen2_5_7b
+  lora_attn_modules: ['q_proj', 'v_proj', 'output_proj']
+  apply_lora_to_mlp: True
+  apply_lora_to_output: False
+  lora_rank: 16
+  lora_alpha: 32
+  lora_dropout: 0.0
+
+tokenizer:
+  _component_: torchtune.models.qwen2_5.qwen2_5_tokenizer
+  path: ./assets/Qwen2.5-7B/vocab.json
+  merges_file: ./assets/Qwen2.5-7B/merges.txt
+  max_seq_len: 4096
+
+checkpointer:
+  _component_: torchtune.training.FullModelHFCheckpointer
+  checkpoint_dir: ./assets/Qwen2.5-7B
+  checkpoint_files: [
+    model-00001-of-00004.safetensors,
+    model-00002-of-00004.safetensors,
+    model-00003-of-00004.safetensors,
+    model-00004-of-00004.safetensors,
+  ]
+  recipe_checkpoint: null
+  output_dir: ${output_dir}
+  model_type: QWEN2
+resume_from_checkpoint: False
+save_adapter_weights_only: False
+
+# Continued pre-training: next-token prediction on unstructured text.
+# `column: text` matches prepare_data_torchtune.py. packed=True concatenates
+# short documents into full sequences (the usual CPT setting).
+dataset:
+  _component_: torchtune.datasets.text_completion_dataset
+  source: json
+  data_files: ./data/otel_cpt.jsonl
+  column: text
+  split: train
+  packed: True
+
+seed: 42
+shuffle: True
+
+run_val_every_n_steps: null
+
+optimizer:
+  _component_: torch.optim.AdamW
+  fused: True
+  weight_decay: 0.01
+  lr: 1.0e-4
+lr_scheduler:
+  _component_: torchtune.training.lr_schedulers.get_cosine_schedule_with_warmup
+  num_warmup_steps: 20
+
+# NOTE: LinearCrossEntropyLoss is a post-0.6 (main-branch) API and does not exist
+# in torchtune 0.6.1 — it fails with InstantiationError on any platform.
+# CEWithChunkedOutputLoss is the 0.6.1 CE loss. (Found during MI355X testing.)
+loss:
+  _component_: torchtune.modules.loss.CEWithChunkedOutputLoss
+
+epochs: 1
+batch_size: 1
+max_steps_per_epoch: null
+gradient_accumulation_steps: 8
+clip_grad_norm: 1.0
+compile: False
+
+metric_logger:
+  _component_: torchtune.training.metric_logging.DiskLogger
+  log_dir: ${output_dir}/logs
+log_every_n_steps: 1
+log_peak_memory_stats: True
+log_level: INFO
+
+device: cuda
+dtype: bf16
+enable_activation_checkpointing: True
+enable_activation_offloading: False
+
+profiler:
+  _component_: torchtune.training.setup_torch_profiler
+  enabled: False
+  output_dir: ${output_dir}/profiling_outputs
+  cpu: True
+  cuda: True
+  profile_memory: False
+  with_stack: False
+  record_shapes: True
+  with_flops: False
+  wait_steps: 5
+  warmup_steps: 3
+  active_steps: 2
+  num_cycles: 1

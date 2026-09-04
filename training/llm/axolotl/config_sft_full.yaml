@@ -1,0 +1,70 @@
+# Axolotl - FULL-parameter SFT on chat JSONL. Single node, 8x H100 80GB, ZeRO-3.
+# Launch: python3 train_llm_axolotl.py --config config_sft_full.yaml --num-processes 8
+# Full FT = no `adapter:` and no `load_in_*bit:` keys at all.
+
+### model
+base_model: Qwen/Qwen3-8B
+trust_remote_code: false
+
+### data
+datasets:
+  - path: ./data/OTel_LLM_sample_10.jsonl
+    ds_type: json
+    split: train
+    type: chat_template
+    field_messages: messages
+    message_property_mappings:
+      role: role
+      content: content
+    roles_to_train: ["assistant"]
+    train_on_eos: turn
+
+chat_template: tokenizer_default
+dataset_prepared_path: ./last_run_prepared
+val_set_size: 0.02
+output_dir: ./outputs/sft-full
+
+### sequence handling
+sequence_len: 4096
+sample_packing: true
+eval_sample_packing: false
+pad_to_sequence_len: true
+
+### batch / optimizer  (full FT wants a much smaller LR than LoRA)
+micro_batch_size: 1
+gradient_accumulation_steps: 8
+num_epochs: 3
+learning_rate: 1.0e-5
+optimizer: adamw_torch_fused
+lr_scheduler: cosine
+warmup_ratio: 0.03
+weight_decay: 0.0
+max_grad_norm: 1.0
+
+### precision / kernels
+bf16: auto
+tf32: true
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: true      # ZeRO-3 wants reentrant checkpointing
+attn_implementation: flash_attention_2
+
+### distributed - shard params/grads/optimizer across the 8 GPUs.
+# Fetch the shipped configs once with: axolotl fetch deepspeed_configs
+deepspeed: deepspeed_configs/zero3_bf16.json
+# Alternative (upstream recommends FSDP2 for new setups):
+# fsdp_version: 2
+# fsdp_config:
+#   auto_wrap_policy: TRANSFORMER_BASED_WRAP
+#   transformer_layer_cls_to_wrap: Qwen3DecoderLayer
+#   state_dict_type: FULL_STATE_DICT
+#   cpu_ram_efficient_loading: true
+#   reshard_after_forward: true
+
+### logging / checkpoints
+logging_steps: 10
+saves_per_epoch: 1
+evals_per_epoch: 1
+save_total_limit: 2
+save_only_model: false
+seed: 42

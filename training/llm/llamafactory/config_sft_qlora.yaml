@@ -1,0 +1,62 @@
+# LLaMA-Factory - QLoRA SFT (on-the-fly 4-bit quantization + LoRA) on chat JSONL.
+# Launch: python3 train_llm_llamafactory.py --config config_sft_qlora.yaml
+# Mirrors upstream examples/train_qlora/qwen3_lora_sft_otfq.yaml.
+# On 8x H100 prefer plain LoRA; use this only when the bf16 base does not fit.
+
+### model
+model_name_or_path: Qwen/Qwen3-32B
+quantization_bit: 4             # choices: [8 (bnb/hqq/eetq), 4 (bnb/hqq), 3 (hqq), 2 (hqq)]
+quantization_method: bnb        # choices: [bnb, hqq, eetq, gptq, awq, ...]
+quantization_type: nf4          # bitsandbytes int4 dtype: [fp4, nf4]
+double_quantization: true
+trust_remote_code: true
+flash_attn: fa2
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 32
+lora_alpha: 64
+lora_dropout: 0.0
+lora_target: all
+
+### dataset
+dataset: otel_chat_sft
+dataset_dir: ./data
+template: qwen3_nothink
+cutoff_len: 4096
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+packing: false
+
+### output
+output_dir: saves/qwen3-32b/qlora/sft
+logging_steps: 10
+save_steps: 500
+save_total_limit: 3
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: none
+
+### train
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 8
+learning_rate: 1.0e-4
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+bf16: true
+ddp_timeout: 180000000
+seed: 42
+
+### eval
+val_size: 0.02
+per_device_eval_batch_size: 2
+eval_strategy: steps
+eval_steps: 500
+
+# Note: a quantized base cannot be sharded by DeepSpeed ZeRO-3. This config is meant to run
+# one 4-bit replica per GPU (DDP). For sharded QLoRA see upstream examples/extras/fsdp_qlora.

@@ -1,0 +1,32 @@
+{{- if .Values.cloudflared.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "scalarlm.cloudflaredFullName" . }}
+  labels:
+    {{- include "scalarlm.cloudflaredLabels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "scalarlm.cloudflaredSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "scalarlm.cloudflaredLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: cloudflared
+          image: {{ .Values.cloudflared.image | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "scalarlm.cloudflaredSecretName" . }}
+                  key: tunnelToken
+          args:
+            - tunnel
+            - --no-autoupdate
+            - run
+{{- end }}

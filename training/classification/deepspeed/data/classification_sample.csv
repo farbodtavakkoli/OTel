@@ -1,0 +1,278 @@
+text,label
+"# ietf — 2009-02-10 (part 5915)
+
+## From: Ed Juskevicius  Time: 13:48  Subject: Re: [Trustees] Last Call for Comments: Proposed work-around to
+ thePre-5378 Problem
+
+Cullen, in answer to your question, Yes.
+
+A penultimate draft of the proposed changes to the Legal Provisions document is available from the IETF Trust website at http://trustee.ietf.org/policyandprocedures.html
+
+Please look at the version labelled: Draft Legal Provisions Relating to IETF Documents after Community Last Call (2009-02-09) FYI this draft is currently before the Trustees, for a decision by end of tomorrow.  If the Trustees accept this draft, then two final edits will be required to formally adopt this policy document.  The edits will be:
+
+1) To finalize and identify the ""Effective Date"" in the title on page 1, and
+2) To insert the effective date into the header information of pages 2-7 of the document.
+
+Regards,
+
+Ed Juskevicius
+
+## From: Hallam-Baker, Phillip  Time: 14:00  Subject: RE: Ah, I see the cause of the situation now... (tls-authz situation)
+
+I think Melinda makes a good point here.
+
+The fundamental problem with these RMS-grams is that RMS has a longstanding habit of working in write only mode. He makes little or often no effort to determine what the situation is. I have in the past found him entirely interested in responding to enquires as to the purpose of his campaigns.
+
+RMS has a certain number of supporters who are willing to write letters. That does not mean that RMS's opinion should hold greater weight than that of other people.
+
+As I have argued in the past, the IETF should have an IPR policy precisely because of this type of situation. I do not see why there should be a need to reopen this debate every single time RMS wants to reopen it.
+
+I suggest that we first eliminate from consideration all the submissions which make no reference to the specific TLS-Authz document in question. In other words, the one liners of the form 'standards should not have patents' without making ",doc_direct
+"### Extracts from the Passage:
+
+1. > ""This short document fixes some overlapping issues in IANA registration (RFC 8928 did not register correctly one field and this field was re-used by RFC 9685).""
+
+2. > ""As RFC 9685 is intended to be used by Wi-SUN and nobody in 6LO WG knows about any use of RFC 8928, the choice (6LO WG & AD + IANA) was to update only the RFC 8928.""
+
+3. > ""This is a very short document, i.e., I do not expect any big issues during the IETF Last Call and it would be convenient to have its ballot done in the same time as draft-ietf-6lo-prefix-registration as they will be a cluster for the RFC editor.""
+
+4. > ""Hence, putting this I-D on a telechat during the IETF Last Call.""
+
+---
+
+### Annotations:
+
+### Extract 1
+> ""This short document fixes some overlapping issues in IANA registration (RFC 8928 did not register correctly one field and this field was re-used by RFC 9685).""
+
+**Context Marker**: Opening statement that defines the core problem being addressed—an IANA registration conflict between two RFCs.
+
+**Relevance**: **Very High** – Establishes the fundamental technical issue that necessitates this draft: a registration error in RFC 8928 that created overlap with RFC 9685.
+
+**Relationship**: Provides the foundational problem that Extract 2 explains the resolution approach for; the simplicity mentioned here supports the procedural decisions in Extracts 3 and 4.
+
+---
+
+### Extract 2
+> ""As RFC 9685 is intended to be used by Wi-SUN and nobody in 6LO WG knows about any use of RFC 8928, the choice (6LO WG & AD + IANA) was to update only the RFC 8928.""
+
+**Context Marker**: Explains the decision-making rationale for which RFC to modify, based on deployment status and stakeholder input.
+
+**Relevance**: **High** – Reveals the strategic reasoning behind the technical solution: RFC 9685 has active use cases (Wi-SUN) while RFC 8928 appears unused, making it the logical candidate for updating.
+
+**Relationship**: Directly resolves the conflict introduced in Extract 1 ",extractive_summary
+"### Abstract Conceptual Layer Summary
+
+**Overarching Themes:**
+1. **Federated Sign-On Protocol**: Focus on secure identity token issuance and usage between Identity Providers, clients, and Relying Parties.
+2. **Token Binding for Security**: Enhancing security by binding identity tokens to TLS connections, ensuring tokens are used only by the intended client.
+3. **Federation Scenarios**: Generalized process of token issuance and consumption, emphasizing security through token binding.
+
+**Main Arguments:**
+1. **Identity Token Security**: Using TLS binding of identity tokens to restrict their use to the issuing client, as seen in protocols like OpenID Connect and SAML.
+2. **Token Binding Protocol**: Utilizing the Token Binding protocol to associate tokens with a client's specific TLS connection, preventing misuse by unauthorized parties.
+3. **Token Consumer and Provider Interaction**: Token Consumers request token binding to ensure tokens are tied to the legitimate client, with Token Providers embedding the Token Binding ID in the token.
+
+**Core Principles:**
+1. **Authentication and Authorization**: Identity tokens authenticate clients to Relying Parties, with token binding providing an additional security layer.
+2. **Token Binding Mechanism**: The Token Binding ID, derived from a client's key pair, is used to verify the legitimacy of token usage by comparing it with the TLS connection's Token Binding ID.
+3. **Communication of Token Binding ID**: Token Binding IDs are communicated from the client to the Token Provider during token requests, ensuring the token is bound to the client's identity.
+
+**Details:**
+- **Identity Token Binding**: The Identity Provider binds identity tokens to the client's TLS connection to ensure secure authentication with the Relying Party.
+- **Token Consumer's Role**: Token Consumers request token binding to ensure tokens are used only by the intended client, leveraging the Token Binding protocol.
+- **Token Provider's Responsibility**: Token P",detailed_summary
+"# Microsoft
+
+### 6 IANA Considerations
+
+Since this MIB is for an experimental protocol, it uses an experimental OID.
+
+Decimal   Name         Description                      References -------   ----         -----------                      ---------- 92   MSDP-MIB     Multicast Source Discovery MIB    RFC 4624
+
+### 7 Acknowledgements
+
+Tom Pusateri and Billy Ng both provided valuable input on early versions of this document.  It was completed with feedback from Mike Davison and Ketan Talaulikar.  Lucy Lynch provided a desperately needed reminder to finish this document.
+
+### 8.1 Normative References
+
+[1] Fenner, B., Ed., and D. Meyer, Ed., ""Multicast Source Discovery Protocol (MSDP)"", RFC 3618, October 2003.
+
+[2] Blumenthal, U. and B. Wijnen, ""User-based Security Model (USM) for version 3 of the Simple Network Management Protocol (SNMPv3)"", STD 62, RFC 3414, December 2002.
+
+[3] Wijnen, B., Presuhn, R., and K. McCloghrie, ""View-based Access Control Model (VACM) for the Simple Network Management Protocol (SNMP)"", STD 62, RFC 3415, December 2002.
+
+[4] McCloghrie, K., Perkins, D., and J. Schoenwaelder, ""Structure of Management Information Version 2 (SMIv2)"", STD 58, RFC 2578, April 1999.
+
+[5] McCloghrie, K., Perkins, D., and J. Schoenwaelder, ""Textual Conventions for SMIv2"", STD 58, RFC 2579, April 1999.
+
+[6] McCloghrie, K., Perkins, D., and J. Schoenwaelder, ""Conformance Statements for SMIv2"", STD 58, RFC 2580, April 1999.
+
+### 8.2 Informative References
+
+[7] Case, J., Mundy, R., Partain, D., and B. Stewart, ""Introduction and Applicability Statements for Internet-Standard Management Framework"", RFC 3410, December 2002.
+
+Authors' Addresses
+
+Bill Fenner 1 River Oaks Place San Jose, CA 95134-1918
+
+Phone: +1 (408 493-8505 EMail: [email]
+
+Dave Thaler Microsoft Corporation One Microsoft Way Redmond, WA  98052-6399
+
+Phone: +1 425 703 8835 EMail: [email]
+
+Full Copyright Statement
+
+Copyright (C) The Internet Society (2006).
+
+This document is subject to the rights, licenses and ",doc_direct
+"1. **An interconnection node's forwarding actions are modeled as a concatenation of an egress node functional model and an ingress node functional model.**
+  → This explains the theoretical framework used to describe how traffic moves through a node that connects two different rings.
+
+2. **The egress model handles traffic exiting a ring, while the ingress model handles traffic entering a ring.**
+  → This clarifies the specific roles of the two functional models mentioned in the concatenation process.
+
+3. **Interconnection nodes F and A both belong to Ring 1 and Ring 2.**
+  → This establishes the topology of the network, identifying F and A as the shared points between the two ring structures.
+
+4. **Node A is an adjacent node to node F in both rings.**
+  → Because both nodes are members of both rings, they maintain a neighbor relationship across both network segments.
+
+5. **The process for packets entering node F from Ring 1 involves a label pop, a label swap, and a label push.**
+  → This summarizes the three-step label manipulation sequence required to transition traffic from one ring's tunnel to another.
+
+6. **The ring tunnel label [R1cW\_F&A(F)] is popped when packets are received from the West ring port of Ring 1.**
+  → This is the first step of the forwarding process, removing the outer ring tunnel identifier upon arrival at the interconnection node.
+
+7. **The MPLS packet label [LSP1(F&A)] is swapped to [LSP1(I)] via the MT LSP sub-layer.**
+  → This is the second step, where the internal LSP label is updated to reflect the next hop (Node I) from the perspective of the MT layer.
+
+8. **The ring tunnel label [R2cW\_I(G)] is pushed before the traffic enters Ring 2.**
+  → This is the final step, adding the necessary ring tunnel label for the destination ring to ensure proper routing.
+
+9. **MPLS-TP section layer OAM monitors connectivity between adjacent ring nodes.**
+  → This identifies the specific tool (Operations, Administration, and Maintenance) used to ensure th",key_facts
+"### Extracts from the Passage:
+1. > “Segment Routing (SR) allows for a flexible definition of end-to-end paths by encoding paths as sequences of topological sub-paths, called ‘segments’.”
+2. > “Segment Routing architecture can be implemented over an MPLS data plane as well as an IPv6 data plane.”
+3. > “This draft describes the OSPFv3 extensions required to support Segment Routing over an IPv6 data plane (SRv6).”
+
+### Annotations:
+
+### Extract 1
+> “Segment Routing (SR) allows for a flexible definition of end-to-end paths by encoding paths as sequences of topological sub-paths, called ‘segments’.”
+
+**Context Marker**: This is the opening definition that frames the core concept and terminology (SR and “segments”).  
+**Relevance**: **Very High** — Establishes the document’s subject and explains the mechanism that the rest of the draft is intended to support.  
+**Relationship**: Provides the conceptual baseline for why routing protocol extensions are needed later (leading into SR over IPv6 in Extracts 2 and 3).
+
+### Extract 2
+> “Segment Routing architecture can be implemented over an MPLS data plane as well as an IPv6 data plane.”
+
+**Context Marker**: Follows the definition by situating SR within multiple underlying network data planes.  
+**Relevance**: **High** — Narrows the scope from general SR applicability to the specific IPv6 context that motivates SRv6.  
+**Relationship**: Sets up the contrast/transition from MPLS to IPv6; directly supports the focus on “SR over an IPv6 data plane” stated in Extract 3.
+
+### Extract 3
+> “This draft describes the OSPFv3 extensions required to support Segment Routing over an IPv6 data plane (SRv6).”
+
+**Context Marker**: Concludes the introductory framing by stating the document’s purpose and technical target (OSPFv3 extensions for SRv6).  
+**Relevance**: **Very High** — Explicitly identifies the deliverable and the exact problem the draft addresses.  
+**Relationship**: Builds on Extracts 1 and 2: SR’s definition (Extract 1) and its I",extractive_summary
+"# WMLP
+
+WMLP (radio station in Milton, Pennsylvania) [instance of: radio station]
+- FCC Facility ID: 
+- Freebase ID: 
+- inception: 
+- official website:  [language of work or name=English]
+- frequency: 
+- call sign: 
+- coordinate location: 
+- country: United States
+- located in the administrative territorial entity: Pennsylvania
+- instance of: radio station
+
+How does the call sign of a radio station help in its identification?",doc_direct
+"1. **References in the document are either specific or non-specific.**  
+   → This is stated in section “4 Overview” where the text explains that references are categorized as specific (with publication date/edition/version, etc.) or non-specific.
+
+2. **For a specific reference, subsequent revisions do not apply.**  
+   → The passage says that if a reference is specific, later updates are not used.
+
+3. **For a non-specific reference, the latest version applies.**  
+   → The passage specifies the rule for non-specific references: use the newest version.
+
+4. **For non-specific references to 3GPP documents, “latest version” is restricted to the same Release as the present document.**  
+   → The passage adds an interpretation rule for 3GPP (including GSM) documents: latest version must be within the same Release.
+
+5. **ETSI ES 282 001 (V3.4.1) is referenced as “NGN Functional Architecture Release 1” (TISPAN).**  
+   → Appears in the numbered reference list as [1] with that title.
+
+6. **ETSI ES 282 007 (V2.1.1) is referenced as “IP Multimedia Subsystem (IMS); Functional architecture” (TISPAN).**  
+   → Appears as [2] in the reference list.
+
+7. **ETSI TS 182 012 (V2.1.4) is referenced as “IMS-based PSTN/ISDN Emulation Subsystem; Functional architecture” (TISPAN).**  
+   → Appears as [3] in the reference list.
+
+8. **ETSI ETS 300 738 (First edition) is referenced as a Human Factors (HF) MMI standard for public network supplementary services.**  
+   → Appears as [4] in the reference list.
+
+9. **3GPP TS 23.228 is referenced and concerns IMS stage 2.**  
+   → Appears as [5] with the title “IP Multimedia Subsystem (IMS); Stage 2”.
+
+10. **3GPP TS 23.167 is referenced and concerns IMS emergency sessions.**  
+   → Appears as [6] with that title.
+
+11. **3GPP TS 33.203 is referenced and concerns 3G security access security for IP-based services.**  
+   → Appears as [7] with the title “3G Security; Access security for IP-based services”.
+
+12. **IETF RFC 3323 (December 2002) is refere",key_facts
+"1. **The YANG module is named _3gpp-common-measurements.**  
+   → This is the identifier of the module whose code is shown in the passage; all subsequent definitions belong to it.  
+
+2. **The module uses YANG version 1.1.**  
+   → Indicates the language version required to parse the module, as declared by the line `yang-version 1.1;`.  
+
+3. **Its namespace is “urn:3gpp:sa5:_3gpp-common-measurements”.**  
+   → Provides the globally unique identifier for the module, ensuring that its definitions do not clash with those from other modules.  
+
+4. **The module’s prefix is meas3gpp.**  
+   → The short name that must be used when referencing items from this module in other YANG files (e.g., `meas3gpp:ThresholdInfoGrp`).  
+
+5. **The module imports three other modules: _3gpp-common-top (prefix top3gpp), _3gpp-common-yang-types (prefix types3gpp), and _3gpp-common-yang-extensions (prefix yext3gpp).**  
+   → Shows the dependencies on other 3GPP YANG modules, allowing reuse of common definitions such as top‑level groups or data types.  
+
+6. **The organization responsible for the module is 3GPP SA5.**  
+   → The “organization” statement attributes authorship and governance to the 3GPP Service Area 5 group.  
+
+7. **The contact URL for the module is https://www.3gpp.org/DynaReport/TSG-WG--S5--officials.htm?Itemid=464.**  
+   → Provides a web address where readers can obtain further information or contact the standards body.  
+
+8. **The module’s description states that it defines measurement and KPI related groupings for use in other classes.**  
+   → Summarises the purpose of the module: to supply reusable groupings that describe how measurements and key‑performance‑indicators are modeled.  
+
+9. **A feature named MeasurementsUnderMyClass is defined to indicate whether a class supports measurements/KPIs.**  
+   → The feature (shown in the code block beginning with `feature MeasurementsUnderMyClass`) can be enabled or disabled to control inclusion of measurement‑related statements. ",key_facts
+"# R3-070965
+
+- **Agenda Item:** 13.2.2.3
+
+- **Source:** Motorola
+
+- **Title:** Paging load reduction in synchronized cells
+
+- **Document for:** Discussion and Approval
+
+## # 1. Introduction
+
+In this contribution, we introduce a paging scheme for UEs that is applicable in cells that are time-synchronized. The proposed scheme offers significant reduction in paging load without impacting the battery life of the UE or the paging delay. Note that mixed cells in LTE offering both MBMS and unicast services in SFN mode are expected to be time-synchronized. Therefore, the scheme discussed in this paper can be utilized in all those cells.
+
+## # 2. Cascaded paging
+
+In idle mode, a paging channel (PCH) is assigned to the UE and the UE wakes up to check for any page message in that resource. In case there are multiple PCHs in a cell, the UE shall be assigned to one of them. The paging scheme proposed here is mainly motivated by the fact that UEs are typically found with a high probability at the last known cell, where it performed a tracking area update (TAU) or ended its last call. From field statistics, a mobile can be found in the same cell as was last observed in, approximately 50% to 90% of the time.
+
+Based on this, it is proposed to page the UE in a sequential fashion. However, normal sequential paging may result in a longer paging delay when the UE is not present in the area in which it is paged first. As a result, it is important to design a paging scheme that provides the benefits of reduced paging load offered by sequential paging without introducing considerable delay. In our proposal, when a call arrives for the UE, the UE is initially paged only in its last known cell as shown in Figure 1. In case there is no response, the UE is paged in the remaining cells of the tracking area after a finite time duration *T* (e.g., 100 ms). The value of *T* includes the timeout required at the last known eNB to figure out that the UE has not responded.
+
+In current systems, the PCH",doc_direct

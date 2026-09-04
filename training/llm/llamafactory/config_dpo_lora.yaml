@@ -1,0 +1,59 @@
+# LLaMA-Factory - DPO preference tuning with LoRA. Single node, 8x H100 80GB.
+# Launch: python3 train_llm_llamafactory.py --config config_dpo_lora.yaml
+# Trains on ./data/dpo_sample.jsonl (registered as `otel_chat_dpo`, "ranking": true) -
+# a tiny SYNTHETIC smoke sample; swap in real preference data for a real run.
+
+### model
+model_name_or_path: Qwen/Qwen3-8B
+trust_remote_code: true
+flash_attn: fa2
+
+### method
+stage: dpo
+do_train: true
+finetuning_type: lora
+lora_rank: 32
+lora_alpha: 64
+lora_dropout: 0.0
+lora_target: all
+pref_beta: 0.1
+pref_loss: sigmoid              # choices: [sigmoid (dpo), hinge, ipo, kto_pair, orpo, simpo]
+pref_ftx: 0.0                   # optional SFT-loss coefficient mixed into DPO
+# adapter_name_or_path: saves/qwen3-8b/lora/sft   # continue DPO on top of an SFT adapter
+
+### dataset
+dataset: otel_chat_dpo
+dataset_dir: ./data
+template: qwen3_nothink
+cutoff_len: 2048
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/qwen3-8b/lora/dpo
+logging_steps: 10
+save_steps: 500
+save_total_limit: 2
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: none
+
+### train  (each step holds chosen + rejected + reference activations - keep the batch small)
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+learning_rate: 5.0e-6
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+seed: 42
+resume_from_checkpoint: null
+
+### eval
+val_size: 0.02
+per_device_eval_batch_size: 1
+eval_strategy: steps
+eval_steps: 500

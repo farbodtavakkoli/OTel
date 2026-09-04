@@ -1,0 +1,161 @@
+# ----------------------------------------------------------------------------
+# ScalarLM default values. Per-model overrides live in values/*.yaml.
+# ----------------------------------------------------------------------------
+
+image:
+  repository: gdiamos/scalarlm-nvidia-12.0
+  tag: v1.0rc13
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Model + cray-config.yaml. extraConfig is merged verbatim into every
+# ConfigMap, so you can set any key the server's get_config() reads.
+model: Qwen/Qwen3-14B
+gpu_memory_utilization: 0.85
+max_train_time: 86400
+extraConfig: {}
+# Example:
+#   extraConfig:
+#     dtype: bfloat16
+#     max_model_length: 32768
+
+replicaCounts:
+  inference: 1   # spec.replicas on the vllm deployment
+  training: 1   # spec.replicas on the megatron statefulset
+
+# ----------------------------------------------------------------------------
+# Service ports. api_port / ui_port / vllm_port are exposed via ClusterIP;
+# slurmctld/slurmd ports are internal.
+# ----------------------------------------------------------------------------
+service:
+  type: ClusterIP
+  api_port: 8000
+  ui_port: 3000
+  vllm_port: 8001
+  slurmctld_port: 6817
+  slurmd_port: 6818
+
+# ----------------------------------------------------------------------------
+# Storage. `cache.kind` switches between a PVC, a hostPath, or an emptyDir:
+#   pvc      → durable, survives pod moves, but slower first pull
+#   hostPath → fastest, but pods pin to the node holding the cache
+#   emptyDir → ephemeral, re-downloads on every pod start
+# ----------------------------------------------------------------------------
+storage:
+  jobs:
+    size: 100Gi
+    storageClass: longhorn
+    accessMode: ReadWriteMany
+  slurmConfig:
+    size: 1Gi
+    storageClass: longhorn
+    accessMode: ReadWriteMany
+  cache:
+    kind: pvc
+    size: 50Gi
+    storageClass: longhorn
+    accessMode: ReadWriteOnce
+    hostPath: /root/.cache
+
+# ----------------------------------------------------------------------------
+# API server (control plane). GPU-less; serves /v1/*, the UI, and slurmctld.
+# ----------------------------------------------------------------------------
+api:
+  resources:
+    limits:
+      nvidia.com/gpu: 0
+  extraEnv: {}
+  # Expose api/ui containerPort as hostPort — useful when the cluster has no
+  # LoadBalancer in front and you want to hit the pod directly via the node IP.
+  hostPort: false
+  # Preferred node hostnames; empty list = no affinity.
+  nodeAffinityHostnames: []
+  # Probes — see docs/deploying.md for the contract.
+  probes:
+    enabled: true
+    livenessPath: /v1/health
+    readinessPath: /v1/health
+    startup:
+      # Model download + vLLM warmup can take a while. Default tolerates
+      # 30 × 30s = 15 min before pronouncing the pod dead.
+      periodSeconds: 30
+      failureThreshold: 30
+
+# ----------------------------------------------------------------------------
+# vLLM (inference). One GPU per replica.
+# ----------------------------------------------------------------------------
+vllm:
+  enabled: true
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+  # Each entry becomes one token in SCALARLM_VLLM_ARGS.
+  extraArgs: []
+  extraEnv: {}
+  nodeAffinityHostnames: []
+  probes:
+    enabled: true
+    livenessPath: /health
+    readinessPath: /health
+    startup:
+      periodSeconds: 30
+      failureThreshold: 60   # 30 min: big models + capture-graph warmup
+
+# ----------------------------------------------------------------------------
+# Megatron (training). StatefulSet. hostPID is required so slurmd can see
+# the training processes; hostIPC is opt-in for frameworks that need host
+# shared memory.
+# ----------------------------------------------------------------------------
+megatron:
+  enabled: true
+  hostPID: true
+  hostIPC: false
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+  extraResources: {}
+  # Example for RDMA-enabled clusters:
+  #   extraResources:
+  #     rdma/hca: 1
+  capabilities:
+    - NET_ADMIN
+    - SYS_ADMIN
+    - IPC_LOCK
+    - SYS_RESOURCE
+    - SYS_RAWIO
+  extraCapabilities: []
+  # Example:
+  #   extraCapabilities: [SYS_PTRACE, IPC_OWNER]
+  extraEnv: {}
+  # Extra hostPath volumes mounted into the training container.
+  #   extraVolumes:
+  #     - name: dataset-mirror
+  #       mountPath: /datasets
+  #       hostPath: /srv/datasets
+  extraVolumes: []
+  # Shared-memory volume for torch DDP / NCCL. `disabled` = don't mount.
+  dshm:
+    kind: disabled    # disabled | emptyDir | hostPath
+    sizeLimit: 64Gi
+    hostPath: /dev/shm
+  nodeAffinityHostnames: []
+  probes:
+    enabled: true
+    # slurmd TCP port — treated as up once slurmd is listening.
+    tcpPort: 6818
+    startup:
+      periodSeconds: 20
+      failureThreshold: 30
+
+# ----------------------------------------------------------------------------
+# Cloudflare tunnel (optional). The tunnel token is written to a Secret
+# rather than passed on the command line so it isn't visible in `ps` or in
+# kubectl describe. Set `existingSecret` to reuse an externally-managed
+# Secret (must contain key `tunnelToken`).
+# ----------------------------------------------------------------------------
+cloudflared:
+  enabled: false
+  image: cloudflare/cloudflared:2024.8.3
+  tunnelToken: ""
+  existingSecret: ""

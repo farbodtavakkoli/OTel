@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "reshard_after_forward": true,
+  "auto_wrap_policy": "TRANSFORMER_BASED_WRAP",
+  "cpu_offload": false,
+  "state_dict_type": "FULL_STATE_DICT",
+  "cpu_ram_efficient_loading": true,
+  "activation_checkpointing": false
+}

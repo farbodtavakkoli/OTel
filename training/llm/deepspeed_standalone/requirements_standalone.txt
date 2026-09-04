@@ -1,0 +1,52 @@
+# Pinned environment for train_llm_deepspeed_standalone.py — tested set (Python 3.12, CUDA 13.0, H100).
+# Standalone HF Transformers + DeepSpeed (ZeRO) SFT trainer (full fine-tuning, SFT only).
+# Core training stack
+torch==2.11.0          # ROCm build pins this exactly; on CUDA 13 use 2.13.0+cu130 — see NVIDIA note below
+deepspeed==0.19.4
+
+# NVIDIA CUDA variant — TESTED 2026-08-22 on 1x H100 80GB HBM3 (Hopper cc9.0), driver
+# 580.173.02, CUDA 13.0, Python 3.12.3 (single-GPU full FT of LiquidAI/LFM2.5-350M under
+# ZeRO-3; see readme_standalone.md "NVIDIA H100 80GB (CUDA 13.0) — tested"). There is NO
+# cu130 wheel for torch==2.11.0, so install the native CUDA-13 stable FIRST, then this
+# file with the torch line stripped (all other pins install unchanged and torch is NOT
+# clobbered — re-verify after):
+#   pip install torch numpy                                   # -> torch 2.13.0+cu130, numpy 2.5.2
+#   pip install -r <(grep -v '^torch==' requirements_standalone.txt)
+#   python -c "import torch;print(torch.__version__, torch.version.cuda)"   # 2.13.0 13.0
+# No --index-url needed (native CUDA 13 wheel on PyPI). deepspeed==0.19.4 installs from
+# PyPI unchanged (JIT ops build on demand — none were needed for the tested smoke; CUDA
+# toolkit at /usr/local/cuda-13.0, nvcc 13.0.88). bitsandbytes==0.50.0 CUDA wheel imports
+# cleanly and the default adamw_bnb_8bit optimizer works (adamw_torch remains the fallback).
+
+# AMD ROCm variant — TESTED 2026-08-19 on 2x MI355X (gfx950), ROCm 7.2.4, Python 3.12
+# (see readme_standalone.md "AMD MI355X (ROCm 7.2) — tested"). Install torch from the
+# ROCm wheel index FIRST, then this file (the torch==2.11.0 pin is satisfied by the
+# +rocm7.2 build and left alone):
+#   pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
+#   pip install -r requirements_standalone.txt
+# deepspeed==0.19.4 installs from PyPI unchanged as a pure-python wheel (no hipcc at
+# install time; ops JIT on demand — none were needed for the tested run).
+# bitsandbytes==0.50.0 PyPI wheel ships ROCm binaries — confirmed working on gfx950
+# with the default adamw_bnb_8bit optimizer (adamw_torch remains the fallback).
+
+# HF training stack
+transformers==5.5.0
+trl==0.24.0
+datasets==4.3.0
+accelerate==1.14.0
+bitsandbytes==0.50.0
+tokenizers==0.22.2
+huggingface_hub==1.27.0
+safetensors==0.8.0
+sentencepiece==0.2.2
+
+# Logging / kernels DeepSpeed builds against
+tensorboard==2.21.0
+ninja==1.13.0
+
+# Utilities
+python-dotenv==1.2.2
+numpy==2.5.1
+protobuf==7.35.1
+tqdm==4.70.0
+PyYAML==6.0.3

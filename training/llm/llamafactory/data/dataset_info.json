@@ -1,0 +1,49 @@
+{
+  "otel_chat_sft": {
+    "file_name": "OTel_LLM_sample_10.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+
+  "otel_chat_sft_x256": {
+    "file_name": "/mnt/data_1.5t/outputs/train_llm_llamafactory/gpu8/data/otel_chat_sft_x256.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+
+  "otel_chat_dpo": {
+    "file_name": "dpo_sample.jsonl",
+    "formatting": "sharegpt",
+    "ranking": true,
+    "columns": {
+      "messages": "messages",
+      "chosen": "chosen",
+      "rejected": "rejected"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  }
+}

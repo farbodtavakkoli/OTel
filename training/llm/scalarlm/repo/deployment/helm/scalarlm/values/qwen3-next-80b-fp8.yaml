@@ -1,0 +1,37 @@
+# Qwen3-Next 80B A3B Instruct (FP8). Inference-only on a shared host
+# that already has the HF cache on disk.
+
+image:
+  tag: v1.0rc14
+
+model: Qwen/Qwen3-Next-80B-A3B-Instruct-FP8
+gpu_memory_utilization: 0.85
+
+replicaCounts:
+  inference: 1
+  training: 0
+
+storage:
+  jobs:
+    size: 10Gi
+  cache:
+    kind: hostPath
+    hostPath: /root/.cache
+
+extraConfig:
+  dtype: bfloat16
+
+vllm:
+  extraArgs:
+    - "--max-cudagraph-capture-size=8"
+    - "--kv-cache-dtype=fp8"
+    - "--max_num_seqs=8"
+    - "--swap-space=8"
+  extraEnv:
+    TOKENFORMER_R: "1"
+
+megatron:
+  enabled: false
+
+cloudflared:
+  enabled: true

@@ -1,0 +1,63 @@
+# Environment for train_llm_peft.py / merge_adapter.py -- standalone Hugging Face
+# PEFT (LoRA, QLoRA, DoRA, rsLoRA). No Unsloth, no DeepSpeed.
+# Reference versions match the other trainers in this repo (Python 3.12, CUDA, H100).
+#
+# torch: the PyPI default wheel is the CUDA build. On AMD, install torch first
+# from the ROCm index (TESTED 2026-08-19 on MI355X/gfx950, ROCm 7.2.4: installs
+# torch 2.11.0+rocm7.2 and satisfies this ==2.11.0 pin, so the line below is
+# skipped; the older rocm6.4 index stops at 2.9.1):
+#   NVIDIA (CUDA)      pip install torch==2.11.0
+#   AMD (ROCm)         pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
+#
+# TESTED 2026-08-22 on NVIDIA H100 80GB (driver 580.173.02, CUDA 13.0, Python
+# 3.12.3): the ==2.11.0 pin has NO cu130 wheel. Per the H100 campaign recipe,
+# `pip install torch` (no pin, no --index-url) resolves torch 2.13.0+cu130
+# (native CUDA 13, bf16 matmul + bnb 4-bit round-trip confirmed on-GPU). Install
+# torch UNPINNED first on CUDA 13 hosts, then the rest of this file. See the
+# "Tested: NVIDIA H100" section of readme_peft.md.
+#   NVIDIA (CUDA 13)   pip install torch    # -> 2.13.0+cu130 (2.11.0 has no cu130 wheel)
+torch==2.11.0
+
+# HF training stack
+transformers==5.5.0
+peft==0.20.0            # LoraConfig(use_dora=..., use_rslora=...), merge_and_unload()
+accelerate==1.14.0      # only needed for the multi-GPU (accelerate launch) route
+datasets==4.3.0
+tokenizers==0.22.2
+huggingface_hub==1.27.0
+safetensors==0.8.0
+sentencepiece==0.2.2
+
+# QLoRA only: 4-bit nf4 base weights. Upstream officially supports NVIDIA CUDA,
+# AMD ROCm (PyPI wheels built for ROCm 6.4.4-7.14.0; CDNA gfx90a/gfx942/gfx950
+# and current RDNA) and Intel XPU -- the same PyPI package covers all three.
+# TESTED 2026-08-19 on MI355X (gfx950, ROCm 7.2.4): this exact plain-PyPI wheel
+# bundles the ROCm binaries, auto-selects libbitsandbytes_rocm72.so, and full
+# QLoRA training (nf4 + paged_adamw_8bit) runs. No special index or source
+# build needed. If the import or kernels fail on an unlisted card, drop
+# --load_in_4bit and train plain bf16 LoRA.
+# TESTED 2026-08-22 on NVIDIA H100 (CUDA 13.0, torch 2.13.0+cu130): the SAME
+# plain-PyPI 0.50.0 wheel ships a libbitsandbytes_cuda130.so and auto-selects it
+# (no ROCm .so loaded); quantize/dequantize_4bit round-trips and full QLoRA
+# training run on-GPU. On CUDA the QLoRA path "just works" -- no build step.
+bitsandbytes==0.50.0
+
+# Logging
+tensorboard==2.21.0
+
+# Utilities used directly by the scripts
+python-dotenv==1.2.2
+numpy==2.5.1   # H100 2026-08-22: unpinned `pip install torch numpy` pulled numpy 2.5.2; harmless, runs verified on it
+tqdm==4.70.0
+
+# Optional, NOT installed by default:
+#   flash-attn   -- CUDA-only speedup for --attn_implementation flash_attention_2.
+#                  Must be built against your toolkit and needs
+#                  `pip install flash-attn --no-build-isolation` with CUDA_HOME set.
+#                  The default sdpa path needs nothing extra.
+#                  H100 note (2026-08-22): `pip install flash-attn` is still a
+#                  from-source nvcc build even on CUDA 13; it did not finish
+#                  inside the smoke time-box, so the H100 runs used the default
+#                  sdpa and PASSED. Pre-build the wheel offline if you want FA2.
+#   trl          -- not used here; this folder drives peft with the plain HF Trainer.
+#                  Install it only if you swap in SFTTrainer/DPOTrainer yourself.

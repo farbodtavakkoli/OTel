@@ -1,0 +1,106 @@
+# Megatron-LM continued pre-training config.
+#
+# Consumed by train_llm_megatron.py, which turns every key below into the
+# matching pretrain_gpt.py flag: `num_layers = 32` becomes `--num-layers 32`,
+# `swiglu = true` becomes `--swiglu`, and `false` means "do not pass the flag".
+# The [table] names are cosmetic grouping only - keys must be unique across the
+# whole file.
+#
+# Shipped values target Llama 3.1 8B on a single node of 8x H100 80GB.
+# Every flag here was read from upstream Megatron-LM docs/examples; see the
+# "Where this folder is uncertain" section of readme_megatron.md.
+
+[launcher]
+# torchrun arguments, not Megatron flags.
+nproc_per_node = 8
+nnodes = 1
+node_rank = 0
+master_addr = "localhost"
+master_port = 29500
+
+[model]
+# Llama 3.1 8B geometry. With use_checkpoint_args = true these are cross-checked
+# against (and largely taken from) the converted checkpoint.
+use_mcore_models = true
+num_layers = 32
+hidden_size = 4096
+ffn_hidden_size = 14336
+num_attention_heads = 32
+group_query_attention = true
+num_query_groups = 8
+seq_length = 8192
+max_position_embeddings = 131072
+normalization = "RMSNorm"
+position_embedding_type = "rope"
+rotary_base = 500000
+rotary_percent = 1.0
+use_rope_scaling = true          # Llama 3.1 RoPE scaling; drop for Llama 3.0
+swiglu = true
+disable_bias_linear = true
+untie_embeddings_and_output_weights = true
+no_masked_softmax_fusion = true
+attention_softmax_in_fp32 = true
+attention_dropout = 0.0
+hidden_dropout = 0.0
+init_method_std = 0.01
+transformer_impl = "transformer_engine"
+attention_backend = "auto"       # auto | flash | fused | unfused | local
+
+[data]
+# data_path is a PREFIX, not a file: preprocess_megatron_data.py writes
+# <prefix>.bin and <prefix>.idx. For a run built with --output-prefix data/otel
+# and --json-keys text, the prefix is:
+data_path = "./data/otel_text_document"
+split = "990,8,2"                # train,valid,test document split
+tokenizer_type = "HuggingFaceTokenizer"
+tokenizer_model = "meta-llama/Llama-3.1-8B"
+
+[training]
+micro_batch_size = 1
+global_batch_size = 128          # must be divisible by micro_batch_size * data-parallel degree
+train_iters = 2000
+lr = 1e-5                        # continued pre-training wants a low LR
+min_lr = 1e-6
+lr_decay_style = "cosine"
+lr_decay_iters = 2000
+lr_warmup_iters = 100
+weight_decay = 0.1
+clip_grad = 1.0
+adam_beta1 = 0.9
+adam_beta2 = 0.95
+bf16 = true
+
+[parallelism]
+tensor_model_parallel_size = 1
+pipeline_model_parallel_size = 1
+context_parallel_size = 1
+sequence_parallel = false        # only meaningful when tensor_model_parallel_size > 1
+use_distributed_optimizer = true # ZeRO-1 style optimizer-state sharding across DP ranks
+overlap_grad_reduce = true
+overlap_param_gather = true
+# tp_comm_overlap = true         # requires tensor_model_parallel_size >= 2 AND sequence_parallel
+
+[memory]
+recompute_granularity = "selective"
+# Optional, for CPU-launch-bound runs (see Megatron Core's MoE README):
+# manual_gc = true
+# manual_gc_interval = 100
+
+[checkpoint]
+# load must be a MEGATRON-format checkpoint. Convert the HF one first with
+# Megatron-Bridge (see readme_megatron.md section 1).
+load = "./checkpoints/llama3_1_8b"
+save = "./checkpoints/llama3_1_8b_domain"
+save_interval = 500
+no_load_optim = true             # the converted checkpoint has no optimizer state
+no_load_rng = true
+use_checkpoint_args = true       # take architecture args from the checkpoint
+exit_on_missing_checkpoint = true
+
+[logging]
+log_interval = 10
+eval_interval = 500
+eval_iters = 20
+tensorboard_dir = "./checkpoints/llama3_1_8b_domain/tensorboard"
+# wandb_project = "megatron-cpt"
+# wandb_exp_name = "llama3_1_8b_domain"

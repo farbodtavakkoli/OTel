@@ -1,0 +1,96 @@
+# AMD Primus (Primus-LM) - large-model training on AMD Instinct GPUs (ROCm)
+#
+# IMPORTANT: this is NOT a normal pip environment. Primus targets ROCm and AMD
+# publishes Docker images containing the full training stack (ROCm PyTorch,
+# Megatron-LM, TorchTitan, Primus-Turbo kernels, hipBLASLt, AITer). Upstream
+# explicitly recommends the published images. The pip wheel installs the
+# `primus-cli` launcher ONLY -- it deliberately does not carry the heavy backends.
+#
+# Do not install this file into a CUDA venv and expect training to work.
+
+# ==============================================================================
+# PATH A (recommended): container  -- VERIFIED on MI355X, ROCm 7.2.4, Aug 2026
+# ==============================================================================
+# This is the route that was actually run and proven on this hardware. See
+# readme_primus.md section 8.1 for the full evidence (600/600 SFT iterations,
+# lm loss 9.75 -> <1, zero NaN, both assigned GPUs at 98-99%).
+#
+#   docker pull rocm/primus:v26.5
+#   # digest verified 2026-08:
+#   #   sha256:3040bf42974d791dd42de2e36b3c919a00869a5754cfc57a06b96d004c55eed1
+#   #   14.1 GB compressed / 54.8 GB on disk
+#
+#   docker run -d --name primus --device /dev/kfd --device /dev/dri \
+#       --group-add video --group-add render --ipc=host \
+#       --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
+#       --shm-size 64G \
+#       -v /mnt/data_1.5t/hf_cache:/root/.cache/huggingface \
+#       -v $PWD:/workspace/folder \
+#       rocm/primus:v26.5 sleep infinity
+#
+# GPU SCOPING TRAP (verified): primus-cli OVERWRITES HIP_VISIBLE_DEVICES in
+# runner/helpers/envs/base_env.sh, so `-e HIP_VISIBLE_DEVICES=2,3` is silently
+# ignored and you train on GPU 0,1. Scope with explicit devices instead:
+#   --device /dev/dri/renderD<N> per GPU (see readme section 8.1).
+#
+# In-image versions as tested: torch 2.12.0+rocm7.15.0a20260720, primus 0.2.0
+# (checkout b511d1b), Megatron-Bridge 9577b12, Megatron-LM d3528a2.
+# The whole stack ships pre-built at /workspace/Primus -- no pip install needed.
+#
+#   # Megatron-LM and TorchTitan backends:
+#   docker pull rocm/primus:v26.5
+#   # MaxText (JAX) backend:
+#   docker pull rocm/jax-training:maxtext-v26.5
+#
+#   git clone --recurse-submodules https://github.com/AMD-AGI/Primus.git
+#   cd Primus
+#   git checkout release/v26.5
+#   git submodule update --init --recursive
+#
+# Check current tags: https://hub.docker.com/r/rocm/primus/tags
+# (v26.5 re-verified live on Docker Hub in August 2026 — pushed 2026-07-23,
+#  alias v26.5-pytorch2.12-te2.15 points at the same digest.)
+
+# ==============================================================================
+# PATH B: pip wheel (CLI only; still launches training inside the container)
+# ==============================================================================
+#   python -m venv primus-env && source primus-env/bin/activate
+#
+#   # from the GitHub Pages index (recommended, pin the version):
+#   pip install "primus==26.5.0" --no-deps \
+#       --extra-index-url https://amd-agi.github.io/Primus/simple/
+#
+#   # or straight from git, pinned to a tag:
+#   pip install "git+https://github.com/AMD-AGI/Primus.git@v26.2.0rc1"
+#
+#   # fetch the pinned backend sources (incl. nested submodules):
+#   primus-cli deps sync --dir ~/.cache/Primus/third_party
+#
+# `primus-cli direct` auto-runs `deps sync` on first use when sources are
+# missing; set PRIMUS_AUTO_DEPS_SYNC=0 to disable that.
+
+# ==============================================================================
+# PATH C: bare metal host
+# ==============================================================================
+# See docs/01-getting-started/installation.md -> "Bare-metal host setup".
+# Upstream notes the automated install script is still in development.
+
+# ------------------------------------------------------------------------------
+# Prerequisites (host, all paths)
+# ------------------------------------------------------------------------------
+#   ROCm drivers >= 7.0
+#   Docker >= 24.0 with ROCm support
+#   AMD Instinct GPU: MI300X / MI325X (gfx942) or MI350X / MI355X (gfx950)
+#   Verify with: rocm-smi && docker --version
+
+# ------------------------------------------------------------------------------
+# Extra deps for THIS folder's launcher only (safe in any venv)
+# ------------------------------------------------------------------------------
+python-dotenv>=1.0.1          # dev.env / HF_TOKEN
+pyyaml>=6.0                   # inspect/edit the configs under configs/
+
+# ------------------------------------------------------------------------------
+# Related Primus ecosystem repos (installed inside the image, listed for reference)
+# ------------------------------------------------------------------------------
+#   Primus-Turbo : https://github.com/AMD-AGI/Primus-Turbo   (fused kernels)
+#   Primus-SaFE  : https://github.com/AMD-AGI/Primus-SaFE    (cluster/scheduling)

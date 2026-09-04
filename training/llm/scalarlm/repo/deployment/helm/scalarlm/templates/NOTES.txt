@@ -1,0 +1,35 @@
+ScalarLM {{ .Chart.AppVersion }} installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Model: {{ .Values.model }}
+vLLM replicas:      {{ .Values.replicaCounts.inference }}{{ if not .Values.vllm.enabled }} (disabled){{ end }}
+Megatron replicas:  {{ .Values.replicaCounts.training }}{{ if not .Values.megatron.enabled }} (disabled){{ end }}
+
+1. Wait for the rollout:
+
+   kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "scalarlm.fullname" . }} --timeout=20m
+{{- if .Values.vllm.enabled }}
+   kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "scalarlm.vllmname" . }} --timeout=30m
+{{- end }}
+{{- if .Values.megatron.enabled }}
+   kubectl -n {{ .Release.Namespace }} rollout status statefulset/{{ include "scalarlm.megatronname" . }} --timeout=20m
+{{- end }}
+
+2. Run the bundled health check (curls /v1/health inside the cluster):
+
+   helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+3. Port-forward the API + UI to localhost:
+
+   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "scalarlm.fullname" . }} \
+     {{ .Values.service.api_port }}:{{ .Values.service.api_port }} \
+     {{ .Values.service.ui_port }}:{{ .Values.service.ui_port }}
+
+   curl http://localhost:{{ .Values.service.api_port }}/v1/health
+   open  http://localhost:{{ .Values.service.ui_port }}/app/
+
+{{- if .Values.cloudflared.enabled }}
+
+4. Cloudflare tunnel is enabled. Check its state:
+
+   kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "scalarlm.cloudflaredFullName" . }} --tail=50
+{{- end }}

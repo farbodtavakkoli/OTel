@@ -1,0 +1,5 @@
+# Intentionally empty.
+# The Dockerfile bind-mounts ./vllm at build time, so this directory must exist,
+# but VLLM_SOURCE defaults to 'remote' and vLLM is cloned at the pinned commit
+# 281955fc63c823e8a439db82bf02ad9fffb199e2. A missing ./vllm fails the build with
+#   ERROR: failed to compute cache key: "/vllm": not found

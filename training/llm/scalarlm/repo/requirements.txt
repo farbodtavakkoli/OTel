@@ -1,0 +1,19 @@
+# These are infra dependencies
+# Don't put vLLM or Megatron dependencies in here because they will bloat the api
+numpy>=2.0.0,<2.5.0
+jsonlines
+aiofiles
+persist-queue
+matplotlib
+streaming-form-data==1.15.0
+openai>=1.40.0  # Ensure modern openai package (ensure types module present)
+openai-harmony
+humanize
+atomicwrites
+cryptography==46.0.0
+sortedcontainers
+# >=4.8: older datasets (3.6.0) hard-imports `VideoReader` from torchvision.io in
+# its torch formatter, which AMD's torchvision (0.27.0+rocm) does not export ->
+# every training job dies with ImportError before step 0. 4.8+ wraps that import
+# in try/except ImportError.
+datasets>=4.8

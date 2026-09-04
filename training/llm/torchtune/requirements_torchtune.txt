@@ -1,0 +1,69 @@
+# torchtune - continued pre-training example (LoRA, text-completion dataset)
+#
+# Upstream development wound down in 2025 (legacy). Pin the last stable release
+# rather than installing from main. There is still no official ROCm / XPU support
+# STATEMENT from upstream — but torchtune 0.6.1 is pure Python on top of torch and
+# it does run on AMD: smoke-tested on MI355X / ROCm 7.2.4 (see readme §7a).
+#
+#   python3.12 -m venv .venv && source .venv/bin/activate
+#   pip install -r requirements_torchtune.txt
+#
+# Then download the base weights once:
+#   tune download Qwen/Qwen2.5-7B --output-dir ./assets/Qwen2.5-7B
+#
+# ---------------------------------------------------------------------------
+# AMD ROCm — VERIFIED WORKING (MI355X gfx950, ROCm 7.2.4, Python 3.12, Aug 2026)
+# ---------------------------------------------------------------------------
+# Install ROCm torch FIRST from the ROCm index, then torchtune normally. A torch
+# NIGHTLY is NOT required and `--no-deps` is NOT required — torchtune==0.6.1
+# resolves cleanly against the stable ROCm wheel and pip does not pull a CUDA
+# torch over it. (The older note in this file claiming otherwise was wrong.)
+#
+#   pip install --index-url https://download.pytorch.org/whl/rocm7.2 torch torchvision
+#   pip install torchtune==0.6.1 python-dotenv
+#
+# Resolved versions in the tested venv:
+#   torch 2.11.0+rocm7.2   torchvision 0.26.0+rocm7.2   torchtune 0.6.1
+#   torchao 0.10.0   torchdata 0.11.0   datasets 5.0.1   safetensors 0.8.0
+#
+# Do NOT pip install flash-attn on ROCm — torchtune uses torch SDPA / flex
+# attention, which is the supported ROCm path and needs no extra package.
+# Keep `device: cuda` in the YAML; ROCm torch exposes HIP via the torch.cuda API.
+#
+# Source: https://github.com/pytorch/torchtune
+#
+# ---------------------------------------------------------------------------
+# NVIDIA H100 — VERIFIED WORKING (H100 80GB, CUDA 13.0, driver 580.173.02, Python 3.12, Aug 2026)
+# ---------------------------------------------------------------------------
+# On a CUDA-13 host the DEFAULT stable torch wheel is already native cu130 — no --index-url.
+# Install torch FIRST, then torchtune, then PIN torchao==0.10.0 with --no-deps.
+#
+#   pip install torch numpy                       # -> torch 2.13.0+cu130, numpy 2.5.2
+#   pip install torchtune==0.6.1 torchvision python-dotenv
+#   pip install torchao==0.10.0 --no-deps         # REQUIRED: see note below
+#
+# WHY torchao==0.10.0 (both platforms): torchtune 0.6.1 does `import torchao.dtypes.nf4tensor`
+# at import time, and torchtune==0.6.1 does NOT pull torchao itself. A bare `pip install torchao`
+# grabs 0.18.x, which moved that module, so `import torchtune` dies with
+# ModuleNotFoundError: No module named 'torchao.dtypes.nf4tensor'. Pin 0.10.0 (--no-deps keeps
+# it from dragging torch off cu130). The ROCm venv above already resolved 0.10.0 transitively.
+#
+# Resolved versions in the tested H100 venv:
+#   torch 2.13.0+cu130   torchvision 0.28.0   torchtune 0.6.1   torchao 0.10.0
+#   torchdata 0.11.0   datasets 5.0.1   safetensors 0.8.0   numpy 2.5.2   omegaconf 2.3.1
+#
+# Do NOT pip install flash-attn on CUDA either — torchtune uses torch flex/SDPA attention
+# (no attn_implementation knob in these configs). `device: cuda` in the YAML is correct on H100.
+# tf32 engages automatically (torchtune sets set_float32_matmul_precision("high") on cuda).
+# See readme §7c for the smoke-run evidence.
+
+torchtune==0.6.1
+torch>=2.5.0            # H100: resolves to 2.13.0+cu130 from the default index (no --index-url)
+torchvision
+torchao==0.10.0         # PIN: torchtune 0.6.1 needs the 0.6-era torchao.dtypes.nf4tensor API
+
+# this folder's launcher / converter
+python-dotenv>=1.0.1
+
+# optional: faster Hub downloads
+# hf_transfer>=0.1.9

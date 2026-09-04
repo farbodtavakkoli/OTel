@@ -1,0 +1,71 @@
+# Environment for train_llm_redhat.py (OSFT via Red Hat's training_hub).
+#
+# training_hub is installed from PyPI and pulls its own pinned deps (torch,
+# transformers, trl, mini-trainer, flash-attn, liger, ...). Install in order
+# (see readme_redhat.md for the full NVIDIA and AMD/ROCm paths):
+#
+#   pip install torch torchvision
+#   pip install training-hub[grpo,lora]
+#   pip install training-hub[cuda] --no-build-isolation   # NVIDIA only — builds flash-attn
+#
+# AMD/ROCm: install a ROCm PyTorch build instead of the CUDA wheels and SKIP the
+# [cuda] extra (it builds CUDA flash-attn — CUDA-only; NEVER pip-install flash-attn
+# on ROCm). Reference env: MI355X, ROCm 7, torch 2.11.0.
+#
+# VERIFIED on MI355X + ROCm 7.2.4 (2026-08-19) — exact sequence that worked:
+#
+#   pip install torch==2.11.0 torchvision --index-url https://download.pytorch.org/whl/rocm7.2
+#   pip install "training-hub[grpo,lora]"     # leaves ROCm torch in place
+#   pip install "liger-kernel>=0.5.10"        # required: script sets use_liger=True but
+#                                             # upstream ships liger only in the [cuda] extra;
+#                                             # liger is Triton-based and works on ROCm
+#   pip install -r requirements_redhat.txt
+#
+# At run time on ROCm: export TESTING=true   (mini-trainer 0.8.1 otherwise requires
+# import flash_attn; TESTING=true switches it to SDPA — AOTriton flash attn on gfx950).
+# Landed versions: training-hub 0.9.7, instructlab-training 0.16.2,
+# rhai-innovation-mini-trainer 0.8.1, transformers 5.5.0, trl 0.24.0, liger-kernel 0.8.2.
+#
+# Source: https://github.com/Red-Hat-AI-Innovation-Team/training_hub
+#
+# ----------------------------------------------------------------------------
+# VERIFIED on NVIDIA H100 80GB + CUDA 13.0, driver 580.173.02 (2026-08-22) —
+# exact sequence that worked (single-GPU OSFT smoke, flash-attn built & engaged):
+#
+#   pip install torch numpy                     # -> torch 2.13.0+cu130 (native CUDA 13)
+#   pip install "training-hub[grpo,lora]"       # DOWNGRADES torch -> 2.11.0+cu130 (still CUDA 13)
+#   export CUDA_HOME=/usr/local/cuda-13.0 PATH=$CUDA_HOME/bin:$PATH \
+#          LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+#   pip install "training-hub[cuda]" --no-build-isolation  # BUILDS flash-attn 2.8.3 (+mamba-ssm,
+#                                                           # causal-conv1d, liger) ~24 min via nvcc
+#   pip install "kernels>=0.12,<0.13"           # REQUIRED: [cuda] pulls kernels 0.16.0 which breaks
+#                                               # transformers 5.5.0 import (LayerRepository needs a
+#                                               # revision/version); 0.12.3 restores the import.
+#   pip install -r requirements_redhat.txt
+#
+# On CUDA, flash-attn IS available so do NOT set TESTING=true (mini-trainer selects
+# flash_attention_2 on its own). Keep HF datasets cache off any network mount at run
+# time: export HF_DATASETS_CACHE=/dev/shm/... (the mount rejects .arrow writes: Errno 1).
+# Landed versions: training-hub 0.9.7, instructlab-training 0.16.2,
+# rhai-innovation-mini-trainer 0.8.1, transformers 5.5.0, trl 0.24.0,
+# accelerate 1.14.0, liger-kernel 0.8.2, flash-attn 2.8.3.post1, kernels 0.12.3,
+# torch 2.11.0+cu130.
+#
+# Verified CUDA pins (informational — training_hub pins torch itself; the kernels
+# and flash-attn pins are the ones YOU must enforce on the [cuda] path):
+#   torch==2.11.0            # +cu130 wheel; CUDA 13, torch.cuda.is_available()==True
+#   transformers==5.5.0
+#   trl==0.24.0
+#   flash-attn==2.8.3.post1  # built from source via [cuda] --no-build-isolation
+#   kernels>=0.12,<0.13      # MUST pin down from the 0.16 that [cuda] pulls
+#   hf_transfer==0.1.9
+# ----------------------------------------------------------------------------
+#
+# This folder's own direct imports (beyond what training_hub installs):
+python-dotenv==1.2.2
+#
+# Reference versions from a known-good env (informational — training_hub pins these):
+#   torch==2.11.0
+#   transformers==5.5.0
+#   trl==0.24.0
+#   hf_transfer==0.1.9

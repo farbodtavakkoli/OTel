@@ -1,0 +1,170 @@
+name: scalarlm
+help: ScalarLM CLI
+version: 0.5.0
+
+
+commands:
+
+- name: build-image
+  help: |-
+    Build image from dockerfile.
+    Targets:
+      cpu    - CPU-only image; auto-detects host arch (x86_64 or arm64).
+      nvidia - NVIDIA CUDA image for x86_64 hosts. Pass sm_arch to pick GPU.
+      arm    - (stub) reserved for cross-built arm64 CPU image.
+      amd    - AMD ROCm image for MI300-class GPUs (x86_64).
+      spark  - NVIDIA DGX Spark: aarch64 Grace CPU + Blackwell GPU (sm_arch=12.0).
+  args:
+    - name: target
+      allowed: ["cpu", "nvidia", "arm", "amd", "spark"]
+      default: "cpu"
+    - name: sm_arch
+      help: GPU streaming multiprocessor architecture, e.g. 7.5, 8.0, 8.6, 12.0, auto
+      default: "auto"
+
+- name: up
+  help: |-
+    Start the container.
+    Targets:
+      cpu    - CPU-only (x86_64 or arm64 host).
+      nvidia - NVIDIA CUDA on x86_64.
+      amd    - AMD ROCm on x86_64.
+      spark  - NVIDIA DGX Spark (aarch64 Grace + Blackwell, sm_arch=12.0).
+  args:
+    - name: target
+      allowed: ["cpu", "nvidia", "amd", "spark"]
+      default: "cpu"
+    - name: sm_arch
+      allowed: ["7.5", "8.6", "12.0", "auto"]
+      help: GPU streaming multiprocessor architecture, e.g. 7.5, 8.0, 8.6, 12.0, auto
+      default: "auto"
+
+- name: test
+  help: |-
+    Run the ScalarLM test suite.
+
+    Levels (see docs/test-plan.md):
+      unit         Layer 3 - in-process, <1s each. Runs on the host, no Docker.
+      component    Layer 2 - per-component. Runs inside the CPU container.
+      e2e          Layer 1 - full ASGI / container. Runs inside the CPU container.
+      ui           React / Vite unit + component tests via npm (host).
+      collectives  Standalone SHM-channel Python tests (host, no MPI).
+      fast         unit + ui + collectives. Matches the CI "fast" profile.
+      cpu          fast + component + e2e. Matches the CI "cpu" profile.
+      live         Opt-in live-server inference smoke tests in Docker.
+      all          Every non-live level. Live is opt-in because it needs a model.
+
+    If a test-path is provided it overrides --level and is passed straight to
+    pytest inside the container. Combine --keyword / --mark with --level to
+    filter within a level.
+  args:
+    - name: test-path
+      required: false
+      help: Optional pytest path. Overrides --level when set (e.g. test/unit/test_config_override.py).
+  flags:
+    - long: --level
+      arg: level
+      help: Which test level to run. See command help for values.
+      default: "cpu"
+      allowed: ["unit", "component", "e2e", "ui", "collectives", "fast", "cpu", "live", "all"]
+    - long: --keyword
+      short: -k
+      arg: keyword
+      help: Pytest -k expression to filter tests by name substring.
+    - long: --mark
+      short: -m
+      arg: mark
+      help: Pytest -m expression to filter by marker (e.g. "not slow").
+    - long: --tag
+      arg: tag
+      help: Docker image tag used for container-based levels.
+      default: "cray:latest"
+    - long: --coverage-path
+      arg: coverage-path
+      help: Absolute path to a directory to write coverage results into.
+      default: /tmp/cray/coverage
+    - long: --verbose
+      help: Prints DEBUG logs while running.
+      arg: verbose
+      allowed: ["yes", "no"]
+      default: "no"
+    - long: --workers
+      arg: workers
+      help: Pytest-xdist worker count ("auto" or an integer). Pass "1" to serialize (recommended for e2e).
+      default: "auto"
+    - long: --no-build
+      arg: no-build
+      help: Skip the image build step before running container-based levels.
+      allowed: ["yes", "no"]
+      default: "no"
+    - long: --model
+      arg: model
+      help: Model loaded by the live-server profile.
+      default: "tiny-random/gemma-4-dense"
+    - long: --live-target
+      arg: live-target
+      help: Hardware target for the live-server profile.
+      allowed: ["cpu", "nvidia", "amd", "spark"]
+      default: "cpu"
+    - long: --live-timeout
+      arg: live-timeout
+      help: Seconds to wait for API and vLLM readiness in the live profile.
+      default: "600"
+  examples:
+    - ./scalarlm test                                      # default: --level cpu
+    - ./scalarlm test --level unit                          # only Layer 3
+    - ./scalarlm test --level fast                          # unit + ui + collectives
+    - ./scalarlm test --level component -k work_queue       # Layer 2 tests matching "work_queue"
+    - ./scalarlm test --level ui                            # npm-side tests only
+    - ./scalarlm test --level e2e --workers 1               # serialized E2E
+    - ./scalarlm test --level live --live-target spark --model Qwen/Qwen3-0.6B --tag cray:latest --no-build yes
+    - ./scalarlm test test/unit/test_config_override.py     # explicit path (runs in container)
+
+- name: llm
+  help: Invoke the LLM tool
+
+  commands:
+    - name: plot
+      help: Plot the LLM data
+      args:
+        - name: model
+          help: Model name to plot
+
+
+    - name: logs
+      help: Get the logs for the LLM model
+      args:
+        - name: model
+          help: Model name to get logs for
+      flags:
+        - long: --tail
+          short: -t
+          help: Whether to tail the logs
+        - long: --follow
+          short: -f
+          help: Whether to follow the logs
+        - long: --lines
+          short: -l
+          arg: lines
+          help: Number of lines to show
+          default: "100"
+
+
+    - name: ls
+      help: List all the LLM models
+
+    - name: squeue
+      help: Invoke the squeue tool from SLURM
+
+- name: pypi
+  help: Publish the client package to pypi
+
+- name: benchmark
+  help: Run the benchmark tests
+  args:
+    - name: target
+      allowed: ["cpu", "nvidia", "arm", "amd"]
+      default: "cpu"
+    - name: visible-gpus
+      help: Comma separated list of the IDs of visible gpus
+      default: "0"

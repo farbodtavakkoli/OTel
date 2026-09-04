@@ -1,0 +1,185 @@
+# Environment for train_llm_nemo.py (NVIDIA NeMo AutoModel: SFT + LoRA on an HF checkpoint).
+#
+# ============================================================================
+# STRONGLY RECOMMENDED: use the NGC container instead of pip-installing this.
+# ============================================================================
+# NeMo is heavy and container-bound. The stack below pulls Transformer Engine,
+# Megatron-FSDP, custom Triton/CUDA kernels and (optionally) flash-attn, several
+# of which compile against the exact CUDA/torch in the image. A from-scratch pip
+# install on a bare host is the single most likely thing to fail.
+#
+#   docker pull nvcr.io/nvidia/nemo-automodel:26.06.00
+#
+# Tag verified from the NeMo AutoModel v0.5.0 release notes (26.06 container);
+# the v0.5.0 <-> 26.06 pairing was re-checked against the upstream README in
+# August 2026. Check for a newer tag before pinning:
+#   https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo-automodel/tags
+#
+# For the RLHF/GRPO side (NeMo RL, a separate repo -- see readme section 5):
+#   docker pull nvcr.io/nvidia/nemo-rl:latest
+#
+# ============================================================================
+# If you must install natively: upstream uses `uv`, NOT plain pip.
+# ============================================================================
+#   uv venv && uv sync --frozen                  # LLM recipes (default)
+#   uv sync --frozen --extra cuda                # + Transformer Engine, Mamba SSM
+# The `cuda` extra builds transformer-engine / mamba-ssm / causal-conv1d /
+# nv-grouped-gemm, all of which upstream marks no-build-isolation. With plain pip
+# those need `--no-build-isolation` and a matching CUDA toolkit (CUDA_HOME set).
+#
+# The pins below are the pip approximation of that environment. Python 3.10+.
+#
+# On AMD Instinct / ROCm: skip the container, install ROCm torch first, then this
+# file as-is. Verified working on MI355X -- see the AMD/ROCm section at the bottom.
+#
+# On NVIDIA H100: the NGC container IS available and IS the native/supported path
+# (unlike AMD, where it cannot run) -- prefer it. `nvcr.io/nvidia/nemo-automodel:26.06.00`
+# ships torch 2.12.0a0+...nv26.04 (CUDA 13.2, fwd-compat over driver 580.173.02),
+# nemo-automodel 0.5.0, transformers 5.8.1, AND transformer-engine 2.14.1 (the exact
+# component that fails to even build on ROCm). The bare-host pip route below ALSO works
+# on H100 and is the tested fallback -- see the "H100" section in readme_nemo.md.
+
+# --- Core: NeMo AutoModel (SFT + PEFT/LoRA on HF checkpoints, DTensor-native) ---
+# On PyPI as `nemo-automodel`. The [cli] extra adds NeMo-Run for cluster submission.
+nemo-automodel==0.5.0
+
+# --- Training stack (pulled in by nemo-automodel; pinned here for visibility) ---
+torch>=2.6.0                       # H100 bare-host pip route (verified 2026-08-22):
+                                   # `pip install torch numpy` -> torch 2.13.0+cu130
+                                   # (CUDA 13.0, cuda.is_available()=True). NOT clobbered
+                                   # by the nemo-automodel install. No --index-url needed.
+                                   # (NGC container ships torch 2.12.0a0+...nv26.04 / CUDA 13.2.)
+transformers==5.8.1               # MUST match nemo-automodel 0.5.0's exact pin. This said
+                                  # 5.12.1, which is a hard ResolutionImpossible on EVERY
+                                  # platform -- see the AMD section below for the verbatim
+                                  # resolver error. Do not "upgrade" it.
+datasets>=4.0.0
+torchdata                          # StatefulDataLoader, used by the recipe's dataloader
+megatron-fsdp==0.5.0
+
+# --- Config / launch ---
+pyyaml                             # this script generates the recipe YAML
+python-dotenv                      # loads dev.env for HF_TOKEN
+
+# --- Logging ---
+wandb>=0.28.0
+tensorboard
+
+# --- OPTIONAL: HF <-> Megatron checkpoint conversion (replaces llm.import_ckpt) ---
+# Only needed if you want the Megatron-Core training path or Megatron-format
+# checkpoints. NOT on PyPI under a stable name at time of writing -- install from
+# source. See readme section 5.
+# pip install git+https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
+
+# --- OPTIONAL: flash-attention (only if you pass --attn_implementation flash_attention_2) ---
+# Needs --no-build-isolation and a matching CUDA toolkit; slow, finicky build.
+# Upstream caps it: flash-attn<=2.8.3
+# pip install "flash-attn<=2.8.3" --no-build-isolation
+# CUDA-ONLY. Do not attempt on ROCm -- use the default --attn_implementation sdpa.
+
+# ============================================================================
+# NVIDIA H100 -- verified 2026-08-22 (single-GPU smoke; both routes work)
+# ============================================================================
+# 1x NVIDIA H100 80GB HBM3, driver 580.173.02, Python 3.12.3. Full narrative +
+# logs: readme_nemo.md section 2, "NVIDIA H100 80GB (CUDA 13) - verified".
+#
+# TWO working routes, unlike AMD (where only the pip route runs):
+#
+# A) NGC CONTAINER (native/supported/recommended on H100):
+#      unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+#      docker pull nvcr.io/nvidia/nemo-automodel:26.06.00        # ~20GB, exit 0
+#      docker run --rm --gpus '"device=5"' --ipc host \
+#        -e HF_HOME=/models -v <hf_cache>:/models -v <repo>:/work \
+#        -w /work/training/llm/nemo nvcr.io/nvidia/nemo-automodel:26.06.00 bash
+#    NOTE: on docker 29.1.3 here, `--runtime=nvidia` is NOT a registered runtime
+#    (only runc); the `--gpus` flag alone is the working GPU-passthrough mechanism.
+#    Inside: torch 2.12.0a0+...nv26.04 (CUDA 13.2), nemo-automodel 0.5.0,
+#    transformers 5.8.1, transformer-engine 2.14.1 (the TE that CANNOT build on
+#    ROCm -- this is the concrete H100 upgrade). SFT trained to exit 0 in-container.
+#
+# B) BARE-HOST PIP (tested fallback, mirrors the AMD route but CUDA wheels):
+#      python3 -m venv .env_nemo && source .env_nemo/bin/activate
+#      pip install torch numpy                    # -> torch 2.13.0+cu130 (CUDA 13.0)
+#      pip install nemo-automodel==0.5.0 transformers==5.8.1 \
+#                  datasets torchdata megatron-fsdp==0.5.0 pyyaml python-dotenv
+#      python -c "import torch;print(torch.__version__, torch.cuda.is_available())"
+#          -> 2.13.0+cu130 True   (torch NOT clobbered by the nemo install)
+#    SFT (12 steps) + LoRA (24 steps, use_triton:true) both ran to exit 0.
+#    triton 3.7.1 lands (same as ROCm note below) and stays benign on CUDA.
+#
+# RUNTIME NOTE (both routes): the shipped 9-row sample + seq_length 512 truncates
+# many long OTel docs so some steps log `num_label_tokens 0 | loss 0.0000`. Use
+# seq_length 2048 to keep assistant tokens; the LoRA validation loss then falls
+# cleanly (0.9033 -> 0.8330). Not H100-specific -- a data/seq-len artifact.
+
+# ============================================================================
+# AMD / ROCm -- which pins above are CUDA-only, with observed errors
+# ============================================================================
+# Verified 2026-08-19 on 1x AMD Instinct MI355X (gfx950, 288 GB), ROCm 7.2,
+# Ubuntu, Python 3.12.3. Full narrative + logs: readme_nemo.md section 2,
+# "AMD MI355X (ROCm 7.2) - attempted".
+#
+# RESULT: every pin in THIS file installs and runs on ROCm. The SFT and LoRA
+# paths of train_llm_nemo.py were executed to completion on the MI355X.
+# Install order that worked:
+#
+#   python3 -m venv .env_train_llm_nemo && source .env_train_llm_nemo/bin/activate
+#   pip install --index-url https://download.pytorch.org/whl/rocm7.2 torch
+#       -> torch-2.13.0+rocm7.2, triton-rocm-3.7.1
+#   pip install -r requirements_nemo.txt
+#       -> nemo-automodel-0.5.0 megatron-fsdp-0.5.0 transformers-5.8.1
+#          torchao-0.18.0 flashoptim-0.1.4 datasets-5.0.1 ... (torch untouched)
+#
+# Why it resolves: nemo-automodel 0.5.0 ships a pure-Python `py3-none-any`
+# wheel, and none of its REQUIRED deps is CUDA-bound. megatron-fsdp 0.5.0 is
+# also pure Python (torch/einops/packaging only). Everything NVIDIA-specific is
+# behind optional extras, which this file deliberately does not install.
+#
+# ---------------------------------------------------------------------------
+# BLOCKER 1 (platform-neutral, now fixed above): the transformers pin.
+#   $ pip install -r requirements_nemo.txt          # with transformers==5.12.1
+#   ERROR: Cannot install -r requirements_nemo.txt (line 34) and
+#   transformers==5.12.1 because these package versions have conflicting
+#   dependencies.
+#   The conflict is caused by:
+#       The user requested transformers==5.12.1
+#       nemo-automodel 0.5.0 depends on transformers==5.8.1
+#   ERROR: ResolutionImpossible
+# This failed on ROCm and would fail identically on CUDA. Fixed to 5.8.1.
+#
+# ---------------------------------------------------------------------------
+# CUDA-ONLY, CANNOT BE SATISFIED ON ROCm -- all optional, none required here:
+#
+#   transformer-engine[pytorch]>=2.14.1      (extra "cuda")  <-- THE hard dep
+#     $ pip install --no-build-isolation "transformer-engine[pytorch]>=2.14.1"
+#     Collecting transformer_engine_torch==2.18.0
+#       Preparing metadata (pyproject.toml): finished with status 'error'
+#       File ".../build_tools/pytorch.py", line 60, in setup_pytorch_extension
+#         include_dirs = get_cuda_include_dirs()
+#       File ".../build_tools/utils.py", line 241, in get_cuda_include_dirs
+#         raise RuntimeError("CUDA not found.")
+#     error: metadata-generation-failed
+#     TE's build backend cannot even generate METADATA without a CUDA toolkit;
+#     there is no ROCm fallback. Consequence on AMD: no FP8/MXFP8, no TE fused
+#     kernels, no TE FusedAdam master_weights.
+#
+#   causal-conv1d, mamba-ssm, nv-grouped-gemm, tilelang, tile-kernels,
+#   apache-tvm-ffi, onnxscript                (extra "cuda")   -- CUDA sources
+#   flash-attn<=2.8.3                          (extra "fa")    -- CUDA-only
+#   deep_ep                                    (extra "moe")   -- NVSHMEM/CUDA
+#
+#   => On ROCm, NEVER install nemo-automodel[cuda] / [fa] / [moe] / [all].
+#      Plain `nemo-automodel==0.5.0` (as pinned above) is the AMD-safe target.
+#
+#   The NGC container is likewise unavailable on an AMD host: it requires
+#   --runtime=nvidia and CUDA devices, neither of which exists under ROCm.
+#
+# ---------------------------------------------------------------------------
+# HAZARD: `triton` clobbers `triton-rocm`.
+# flashoptim (a REQUIRED nemo-automodel dep) requires
+# `triton>=3.0.0; sys_platform == "linux"`, so pip installs the NVIDIA-published
+# `triton` wheel over the `triton-rocm` shipped by the ROCm torch wheel. Benign
+# at triton 3.7.1 (that wheel carries BOTH `amd` and `nvidia` backends, and the
+# LoRA `use_triton: true` path JIT-compiled fine for gfx950), but verify after
+# install and reinstall pytorch-triton-rocm if a future release drops AMD:
+#   python -c "import torch; print(torch.cuda.is_available())"   # must be True

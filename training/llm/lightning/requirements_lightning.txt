@@ -1,0 +1,65 @@
+# PyTorch Lightning LLM fine-tuning -- deps for train_llm_lightning.py
+#
+# Everything here is on PyPI. Nothing needs a git checkout, and only
+# flash-attn needs --no-build-isolation (see the bottom of this file).
+#
+# Install torch FIRST, matched to your accelerator, then the rest. The PyPI
+# default wheel is the CUDA build; index URLs verified against
+# download.pytorch.org 2026-08 (torch 2.11.0 ROCm wheels are on rocm7.2; the
+# older rocm6.4 index stops at 2.9.1):
+#   NVIDIA (CUDA)      pip install torch==2.11.0
+#   AMD (ROCm)         pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
+#   pip install -r requirements_lightning.txt
+#
+# VERIFIED on AMD Instinct MI355X (gfx950), ROCm 7.2.4, Python 3.12.3, 2026-08-19:
+# the two lines above installed clean (torch 2.11.0+rocm7.2 stayed put through the
+# requirements pass) and resolved to: lightning 2.6.5, transformers 5.15.0,
+# tokenizers 0.22.2, accelerate 1.14.0, tensorboard 2.21.0. Smoke SFT run passed
+# (see readme_lightning.md "Tested on AMD MI355X"). On ROCm do NOT install
+# flash-attn (CUDA-only wheel); the sdpa default needs nothing extra.
+#
+# VERIFIED on NVIDIA H100 80GB HBM3 (Hopper cc9.0), driver 580.173.02, CUDA 13.0,
+# Python 3.12.3, 2026-08-22 (see readme_lightning.md "Tested on NVIDIA H100"):
+#   pip install torch numpy        # -> torch 2.13.0+cu130 (native CUDA 13; the
+#                                  #    torch==2.11.0 pin below has NO cu130 wheel,
+#                                  #    so the default stable was used instead)
+#   pip install -r requirements_lightning.txt
+# torch STAYED at 2.13.0+cu130 through the requirements pass (no clobber), and the
+# requirements resolved to: lightning 2.6.5, transformers 5.15.1, tokenizers 0.22.2,
+# accelerate 1.14.0, tensorboard 2.21.0, python-dotenv 1.2.3. This folder's loader
+# reads the chat JSONL directly (no HF `datasets`), so no HF_DATASETS_CACHE tweak is
+# needed. NOTE: the prebuilt PyPI `flash-attn` wheel (2.8.3.post1) fails to import
+# against this torch (`undefined symbol` in c10 -- ABI mismatch), so the smoke run
+# used --attn_implementation sdpa (the default). To use flash_attention_2 on H100 you
+# must build flash-attn from source against torch 2.13/CUDA 13 (--no-build-isolation).
+
+# Core
+lightning>=2.4.0              # the `lightning` meta-package: gives you both
+                              #   `import lightning as L` (Trainer/LightningModule)
+                              #   and `lightning.fabric` (the lighter-weight loop).
+                              # The `pytorch-lightning` package is the same Trainer
+                              # under the older import root -- do NOT install both.
+torch>=2.4.0                  # repo reference version is 2.11.0 (see install note above)
+transformers>=4.51.0          # AutoModelForCausalLM, chat templates, LR schedules
+tokenizers>=0.20.0
+accelerate>=1.0.0             # not required by Lightning, but transformers pulls
+                              # helpers from it for some model loading paths
+python-dotenv>=1.0.1          # dev.env / HF_TOKEN
+huggingface_hub>=0.26.0       # gated-checkpoint downloads
+
+# Optional: DeepSpeed backend (only if you pass --strategy deepspeed).
+# Lightning refuses to start with torch >= 2.6 and deepspeed < 0.16.0, because
+# torch.load switched to weights_only=True. Pin accordingly.
+# deepspeed>=0.16.0
+
+# Logging backends (Trainer(logger=...))
+tensorboard>=2.16.0
+# wandb>=0.18.0
+
+# Optional: FlashAttention-2 (--attn_implementation flash_attention_2, CUDA only).
+# MUST be installed with --no-build-isolation, and only AFTER torch is present,
+# otherwise the build picks up a different torch and the extension will not load:
+#   pip install flash-attn --no-build-isolation
+#
+# `--attn_implementation sdpa` (the default here) needs none of this and is the
+# portable choice.

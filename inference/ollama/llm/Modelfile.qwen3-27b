@@ -1,0 +1,3 @@
+# Registers the already-cached unsloth/Qwen3.8-27B-GGUF Q8_0 with Ollama without a second 29 GB pull.
+# The path is INSIDE the container: /mnt/data_1.5t/hf_cache/llama_cpp is bind-mounted read-only at /ggufs.
+FROM /ggufs/models--unsloth--Qwen3.8-27B-GGUF/snapshots/27af057ecb382ddfea5d12837360a8980560e3ed/Qwen3.8-27B-Q8_0.gguf

@@ -1,0 +1,2292 @@
+[
+  {
+    "sentence1": "What is machine learning?",
+    "sentence2": "Machine learning is a branch of artificial intelligence (AI) that focuses on building systems that can learn from and make decisions based on data. Instead of being explicitly programmed to perform a task, machine learning algorithms use statistical techniques to identify patterns in data and improve their performance over time through experience. Common applications include image recognition, natural language processing, recommendation systems, and predictive analytics.",
+    "score": 1
+  },
+  {
+    "sentence1": "How does a neural network work?",
+    "sentence2": "A neural network is a computational model inspired by the human brain's structure. It consists of interconnected layers of nodes (neurons): an input layer that receives data, one or more hidden layers that process information, and an output layer that produces results. Each connection has a weight that gets adjusted during training. The network learns by feeding data forward through the layers, calculating errors using a loss function, and then using backpropagation to adjust weights. This iterative process continues until the network achieves acceptable performance on the training data.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is the difference between supervised and unsupervised learning?",
+    "sentence2": "Supervised learning and unsupervised learning are two fundamental approaches in machine learning. Supervised learning uses labeled training data where the correct output is known for each input. The algorithm learns to map inputs to outputs by minimizing prediction errors. Common tasks include classification and regression. Unsupervised learning, on the other hand, works with unlabeled data and tries to find hidden patterns or structures without predefined categories. Common techniques include clustering (grouping similar data points) and dimensionality reduction (simplifying data while preserving important information).",
+    "score": 0
+  },
+  {
+    "sentence1": "What is deep learning?",
+    "sentence2": "Deep learning is a subset of machine learning that uses artificial neural networks with multiple layers (hence 'deep') to progressively extract higher-level features from raw input. Unlike traditional machine learning methods that require manual feature engineering, deep learning models automatically learn hierarchical representations of data. For example, in image recognition, early layers might detect edges, middle layers recognize shapes, and deeper layers identify complex objects. Deep learning has achieved breakthrough results in computer vision, speech recognition, natural language processing, and game playing.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is overfitting in machine learning?",
+    "sentence2": "Overfitting occurs when a machine learning model learns the training data too well, including its noise and outliers, resulting in poor performance on new, unseen data. An overfitted model has high accuracy on training data but low accuracy on validation or test data. This happens when the model is too complex relative to the amount of training data available. Common solutions include using more training data, reducing model complexity, applying regularization techniques (L1, L2), using dropout in neural networks, early stopping during training, and cross-validation to monitor generalization performance.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is gradient descent?",
+    "sentence2": "Gradient descent is an optimization algorithm used to minimize the loss function in machine learning models by iteratively adjusting model parameters. It works by calculating the gradient (partial derivatives) of the loss function with respect to each parameter, which indicates the direction of steepest increase. The algorithm then moves in the opposite direction (downhill) by a step size determined by the learning rate. This process repeats until convergence. Variants include batch gradient descent (uses all training data), stochastic gradient descent (uses one sample at a time), and mini-batch gradient descent (uses small batches), each with different trade-offs between speed and accuracy.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is a convolutional neural network?",
+    "sentence2": "A Convolutional Neural Network (CNN) is a specialized type of neural network designed primarily for processing grid-like data such as images. CNNs use convolutional layers that apply filters (kernels) to input data to detect features like edges, textures, and patterns. Key components include convolutional layers for feature extraction, pooling layers for dimensionality reduction, and fully connected layers for classification. The architecture exploits spatial relationships in data and uses parameter sharing, making CNNs highly efficient for image recognition, object detection, and computer vision tasks. CNNs have revolutionized fields like medical imaging, autonomous vehicles, and facial recognition.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is transfer learning?",
+    "sentence2": "Transfer learning is a machine learning technique where a model trained on one task is reused as the starting point for a model on a second related task. Instead of training a model from scratch, transfer learning leverages knowledge gained from solving one problem and applies it to a different but related problem. This is particularly useful when you have limited training data for your target task. For example, a model pre-trained on millions of general images can be fine-tuned for a specific image classification task with just hundreds of examples. This approach saves computational resources, reduces training time, and often achieves better performance, especially in domains like computer vision and natural language processing.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is a recurrent neural network?",
+    "sentence2": "A Recurrent Neural Network (RNN) is a type of neural network designed to work with sequential data by maintaining an internal state (memory) that captures information about previous inputs in the sequence. Unlike feedforward networks, RNNs have connections that loop back, allowing information to persist. This makes them ideal for tasks involving time series, natural language, speech, and video. However, traditional RNNs suffer from vanishing and exploding gradient problems when dealing with long sequences. This led to the development of advanced architectures like Long Short-Term Memory (LSTM) and Gated Recurrent Units (GRU), which use gating mechanisms to better control information flow and capture long-term dependencies.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is reinforcement learning?",
+    "sentence2": "Reinforcement learning (RL) is a machine learning paradigm where an agent learns to make decisions by interacting with an environment. The agent takes actions, receives feedback in the form of rewards or penalties, and learns to maximize cumulative reward over time. Unlike supervised learning, there's no labeled dataset; instead, the agent learns through trial and error. Key concepts include the state (current situation), action (what the agent can do), reward (feedback signal), and policy (strategy for choosing actions). RL has achieved remarkable success in game playing (Chess, Go, video games), robotics, autonomous vehicles, and resource management. Famous algorithms include Q-learning, Deep Q-Networks (DQN), and Policy Gradient methods.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is supervised learning?",
+    "sentence2": "Supervised learning is a type of machine learning where models are trained using labeled data, meaning that each input is paired with the correct output. The goal is for the model to learn to predict the output from the input data.",
+    "score": 1
+  },
+  {
+    "sentence1": "Define unsupervised learning.",
+    "sentence2": "Unsupervised learning is a machine learning approach where models are trained on data without labeled outputs, seeking to identify patterns, clusters, or structure in the input data.",
+    "score": 1
+  },
+  {
+    "sentence1": "Explain semi-supervised learning.",
+    "sentence2": "Semi-supervised learning is a blend of supervised and unsupervised learning where the algorithm is trained on a small amount of labeled data and a large amount of unlabeled data to improve learning accuracy.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is a decision tree?",
+    "sentence2": "A decision tree is a supervised machine learning algorithm used for classification and regression tasks. It splits the data into branches based on feature values, creating a tree-like model of decisions.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is pruning in decision trees?",
+    "sentence2": "Pruning is a technique in decision trees where branches that have little importance or contribute to overfitting are removed, leading to simpler and more generalizable models.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is a random forest?",
+    "sentence2": "Random forest is an ensemble learning technique that builds multiple decision trees during training and outputs the mode or mean of their predictions to improve accuracy and control overfitting.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is bagging in machine learning?",
+    "sentence2": "Bagging, or bootstrap aggregating, is an ensemble method that trains multiple models on different random subsets of the data and then aggregates their predictions to reduce variance and improve stability.",
+    "score": 0
+  },
+  {
+    "sentence1": "What does boosting mean in machine learning?",
+    "sentence2": "Boosting is an ensemble technique that builds models sequentially, each focusing on correcting the errors of the previous one. Examples include AdaBoost and Gradient Boosting.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is the k-nearest neighbors algorithm?",
+    "sentence2": "K-nearest neighbors (KNN) is a simple, non-parametric algorithm that classifies data points based on the labels of their k closest neighbors in the feature space.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is cross-validation?",
+    "sentence2": "Cross-validation is a technique for assessing how a machine learning model will generalize to an independent dataset. It involves partitioning the data into subsets, training on some and validating on others, to reduce overfitting.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is a confusion matrix?",
+    "sentence2": "A confusion matrix is a table used to evaluate the performance of a classification algorithm, showing the counts of true positives, false positives, true negatives, and false negatives.",
+    "score": 1
+  },
+  {
+    "sentence1": "Define precision and recall.",
+    "sentence2": "Precision is the proportion of true positive predictions among all positive predictions made, while recall is the proportion of true positives identified among all actual positive cases.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is F1 score?",
+    "sentence2": "The F1 score is the harmonic mean of precision and recall, providing a single metric that balances both, especially useful for imbalanced datasets.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is ROC curve?",
+    "sentence2": "A Receiver Operating Characteristic (ROC) curve is a graphical plot that illustrates the diagnostic ability of a binary classifier by plotting the true positive rate against the false positive rate at various threshold settings.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is area under the curve (AUC)?",
+    "sentence2": "AUC stands for Area Under the ROC Curve, and it quantifies the overall ability of the model to discriminate between positive and negative classes.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is regularization?",
+    "sentence2": "Regularization is a technique used to prevent overfitting in machine learning models by adding a penalty term to the loss function, discouraging overly complex models.",
+    "score": 1
+  },
+  {
+    "sentence1": "Describe L1 and L2 regularization.",
+    "sentence2": "L1 regularization (lasso) adds the absolute values of model coefficients as a penalty, encouraging sparsity, while L2 regularization (ridge) adds the squared values, discouraging large weights.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is dropout in deep learning?",
+    "sentence2": "Dropout is a regularization method where, during training, random neurons are ignored (dropped out) in each forward pass, helping prevent overfitting in neural networks.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is an activation function?",
+    "sentence2": "An activation function is used in neural networks to introduce non-linearity, enabling the network to learn complex patterns. Examples include ReLU, sigmoid, and tanh.",
+    "score": 1
+  },
+  {
+    "sentence1": "Explain ReLU activation.",
+    "sentence2": "The Rectified Linear Unit (ReLU) is an activation function that outputs zero for negative values and the input itself for positive values, helping neural networks converge faster.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is the softmax function used for?",
+    "sentence2": "Softmax is an activation function used in the output layer of a classifier to convert raw scores into probabilities, often applied in multi-class classification problems.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is backpropagation?",
+    "sentence2": "Backpropagation is the algorithm used to train neural networks, calculating the gradient of the loss function with respect to each weight by the chain rule, and updating weights accordingly.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is a loss function?",
+    "sentence2": "A loss function is a measure of how well a machine learning model's predictions match the true data. It guides the training by quantifying error to be minimized.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is mean squared error?",
+    "sentence2": "Mean squared error (MSE) is a common loss function for regression tasks, computed as the average of the squared differences between predicted and actual values.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is cross-entropy loss?",
+    "sentence2": "Cross-entropy loss measures the performance of a classification model whose output is a probability value between 0 and 1, penalizing the divergence between predicted and actual distributions.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is feature engineering?",
+    "sentence2": "Feature engineering is the process of selecting, modifying, or creating new input features from raw data to improve the performance of machine learning models.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is dimensionality reduction?",
+    "sentence2": "Dimensionality reduction refers to techniques that reduce the number of input variables in a dataset, making models faster and less prone to overfitting. Examples include PCA and t-SNE.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is principal component analysis?",
+    "sentence2": "Principal Component Analysis (PCA) is a technique for reducing the dimensionality of data by transforming it into a new set of orthogonal features called principal components that capture the most variance.",
+    "score": 1
+  },
+  {
+    "sentence1": "Explain clustering in machine learning.",
+    "sentence2": "Clustering is an unsupervised learning technique that groups similar data points together based on features. Popular algorithms include K-means and hierarchical clustering.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is K-means clustering?",
+    "sentence2": "K-means is a clustering algorithm that partitions data into k clusters by minimizing the within-cluster variance, assigning each data point to the nearest cluster center.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is hierarchical clustering?",
+    "sentence2": "Hierarchical clustering is a method of cluster analysis that builds a hierarchy of clusters either by agglomerative (bottom up) or divisive (top down) approaches.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is a support vector machine?",
+    "sentence2": "A Support Vector Machine (SVM) is a supervised learning model used for classification and regression that finds the hyperplane best separating classes in the feature space.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is kernel trick in SVM?",
+    "sentence2": "The kernel trick allows SVMs to efficiently perform non-linear classification by implicitly mapping input features into higher-dimensional spaces without computing coordinates explicitly.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is a hyperparameter?",
+    "sentence2": "A hyperparameter is a configuration that is set before the learning process begins and controls the training of the model, such as learning rate, number of layers, or number of clusters.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is grid search?",
+    "sentence2": "Grid search is a method for systematically working through multiple combinations of hyperparameters to find the best model configuration for a given problem.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is early stopping?",
+    "sentence2": "Early stopping is a regularization technique where training is halted as soon as the model's performance on a validation set starts to degrade, preventing overfitting.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is a validation set?",
+    "sentence2": "A validation set is a subset of data not used in training but in tuning model parameters and selecting the best model during the development process.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is a test set?",
+    "sentence2": "A test set is a portion of the dataset reserved to provide an unbiased evaluation of a final model fit on the training dataset.",
+    "score": 1
+  },
+  {
+    "sentence1": "What does data normalization mean?",
+    "sentence2": "Data normalization is the process of scaling input features so that they have a similar range, often between 0 and 1, improving the performance and convergence of machine learning models.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is data augmentation?",
+    "sentence2": "Data augmentation refers to techniques for increasing the diversity of your training data by applying transformations such as rotations, flipping, or cropping, often used in image processing.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is natural language processing?",
+    "sentence2": "Natural language processing (NLP) is a field of artificial intelligence focused on the interaction between computers and human language, enabling machines to understand, interpret, and generate natural language.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is tokenization in NLP?",
+    "sentence2": "Tokenization is the process of breaking down text into smaller units such as words, subwords, or characters, serving as the first step in many NLP pipelines.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is stemming?",
+    "sentence2": "Stemming is an NLP technique that reduces words to their root form by removing suffixes and prefixes, helping with text normalization.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is lemmatization?",
+    "sentence2": "Lemmatization is the process of reducing words to their base or dictionary form, considering the context, and is more accurate than stemming.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is word embedding?",
+    "sentence2": "Word embeddings are vector representations of words that capture semantic meaning and relationships, enabling machine learning models to process text data more effectively.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is Word2Vec?",
+    "sentence2": "Word2Vec is a popular algorithm for learning word embeddings from large datasets, creating dense vector representations that capture word meanings and relationships.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is BERT?",
+    "sentence2": "BERT (Bidirectional Encoder Representations from Transformers) is a transformer-based model that achieves state-of-the-art results in NLP by pre-training on large corpora and fine-tuning for specific tasks.",
+    "score": 1
+  },
+  {
+    "sentence1": "What are attention mechanisms?",
+    "sentence2": "Attention mechanisms are components in neural networks, especially in NLP, that allow models to focus on specific parts of the input sequence when making predictions.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is a transformer in deep learning?",
+    "sentence2": "A transformer is a neural network architecture based entirely on attention mechanisms, enabling parallel processing and achieving breakthroughs in NLP tasks.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is sequence-to-sequence learning?",
+    "sentence2": "Sequence-to-sequence (seq2seq) learning is a framework where an input sequence is transformed into an output sequence, commonly used for tasks like machine translation and text summarization.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is data preprocessing?",
+    "sentence2": "Data preprocessing is the series of steps taken to clean and transform raw data into a suitable format for machine learning, including handling missing values and scaling features.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is one-hot encoding?",
+    "sentence2": "One-hot encoding is a method for representing categorical variables as binary vectors, where only one bit is set to 1, and all others are 0.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is label encoding?",
+    "sentence2": "Label encoding converts categorical labels into numeric form, assigning a unique integer to each class.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is batch normalization?",
+    "sentence2": "Batch normalization is a technique for training deep neural networks that normalizes the inputs of each layer, improving convergence speed and stability.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is ensemble learning?",
+    "sentence2": "Ensemble learning combines the predictions from multiple models to improve overall performance and robustness compared to individual models.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is anomaly detection?",
+    "sentence2": "Anomaly detection is the identification of rare items, events, or observations that do not conform to the expected pattern in a dataset.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is time series forecasting?",
+    "sentence2": "Time series forecasting involves predicting future values based on previously observed data points, using models like ARIMA, LSTM, or Prophet.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is ARIMA model?",
+    "sentence2": "ARIMA (AutoRegressive Integrated Moving Average) is a popular statistical model used for time series forecasting by combining autoregression, differencing, and moving average components.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is a generative adversarial network?",
+    "sentence2": "A Generative Adversarial Network (GAN) is a deep learning architecture where two neural networks, a generator and a discriminator, compete to create data resembling real data.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is transfer learning in computer vision?",
+    "sentence2": "Transfer learning in computer vision involves using a pre-trained model, such as ResNet or VGG, and fine-tuning it on a new dataset to achieve good performance with less data.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is data leakage?",
+    "sentence2": "Data leakage occurs when information from outside the training dataset is used to create the model, leading to overly optimistic results and poor generalization.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is the vanishing gradient problem?",
+    "sentence2": "The vanishing gradient problem is an issue in training deep neural networks where gradients become too small for effective learning, hindering weight updates in early layers.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is the exploding gradient problem?",
+    "sentence2": "The exploding gradient problem occurs when gradients become excessively large during training, causing unstable updates and potentially leading to model divergence.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is a confusion matrix used for?",
+    "sentence2": "A confusion matrix helps evaluate the accuracy of a classification model by showing the counts of correct and incorrect predictions for each class.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is a ROC curve?",
+    "sentence2": "A ROC curve is used to measure the performance of classification models at different thresholds, plotting true positive rate against false positive rate.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is natural language processing?",
+    "sentence2": "Natural Language Processing (NLP) is a field of artificial intelligence that focuses on enabling computers to understand, interpret, and generate human language. It combines computational linguistics, machine learning, and deep learning to process text and speech data. NLP applications include machine translation, sentiment analysis, chatbots, text summarization, named entity recognition, and question answering systems. Modern NLP heavily relies on transformer-based models like BERT and GPT, which use attention mechanisms to capture contextual relationships between words. Challenges in NLP include handling ambiguity, understanding context, dealing with different languages and dialects, and capturing nuanced meanings like sarcasm or idioms.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is the purpose of activation functions?",
+    "sentence2": "Activation functions are mathematical functions applied to the output of neurons in a neural network to introduce non-linearity into the model. Without activation functions, a neural network would simply be a linear regression model, regardless of how many layers it has. Common activation functions include ReLU (Rectified Linear Unit) which outputs the input if positive or zero otherwise, Sigmoid which maps values between 0 and 1, Tanh which maps values between -1 and 1, and Leaky ReLU which allows small negative values. The choice of activation function affects the network's ability to learn complex patterns, training speed, and susceptibility to problems like vanishing gradients.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is ensemble learning?",
+    "sentence2": "Ensemble learning is a machine learning technique that combines multiple models (called base learners or weak learners) to create a stronger, more robust predictor. The key idea is that by aggregating predictions from multiple models, you can reduce errors and improve generalization. Common ensemble methods include Bagging (Bootstrap Aggregating) which trains models on different random subsets of data, Boosting which sequentially trains models where each focuses on correcting errors from previous ones, and Stacking which combines different types of models using a meta-learner. Random Forests and Gradient Boosting Machines are popular ensemble algorithms that have achieved excellent results across various domains.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is regularization in machine learning?",
+    "sentence2": "Regularization is a set of techniques used to prevent overfitting by adding a penalty term to the loss function that discourages model complexity. The two most common regularization methods are L1 regularization (Lasso), which adds the absolute value of coefficients to the loss function and can drive some coefficients to exactly zero (feature selection), and L2 regularization (Ridge), which adds the squared value of coefficients and shrinks them towards zero without eliminating them. Other regularization techniques include dropout for neural networks, early stopping, data augmentation, and adding noise to inputs. The regularization strength is controlled by a hyperparameter (lambda or alpha) that balances between fitting the training data and keeping the model simple.",
+    "score": 1
+  },
+  {
+    "sentence1": "What are transformers in deep learning?",
+    "sentence2": "Transformers are a neural network architecture introduced in 2017 that revolutionized natural language processing and other sequence modeling tasks. Unlike RNNs, transformers don't process sequences step-by-step but instead use self-attention mechanisms to process all positions simultaneously, allowing for better parallelization. The architecture consists of encoder and decoder stacks, each containing multi-head self-attention layers and feed-forward networks. Self-attention allows the model to weigh the importance of different words in a sequence when processing each word. Transformers have become the foundation for breakthrough models like BERT, GPT, T5, and have expanded beyond NLP to computer vision (Vision Transformers) and multimodal tasks.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is the difference between classification and regression?",
+    "sentence2": "Classification and regression are two fundamental types of supervised learning tasks. Classification involves predicting discrete categories or classes (e.g., spam vs. not spam, cat vs. dog vs. bird). The output is a categorical label, and models are evaluated using metrics like accuracy, precision, recall, and F1-score. Regression, on the other hand, involves predicting continuous numerical values (e.g., house prices, temperature, stock prices). The output is a real number, and models are evaluated using metrics like Mean Squared Error (MSE), Root Mean Squared Error (RMSE), and R-squared. While the fundamental learning process is similar, the loss functions, output layers, and evaluation metrics differ between these two task types.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is batch normalization?",
+    "sentence2": "Batch normalization is a technique used in deep neural networks to normalize the inputs of each layer across a mini-batch of training examples. It addresses the internal covariate shift problem where the distribution of inputs to a layer changes during training. Batch normalization standardizes the inputs by subtracting the batch mean and dividing by the batch standard deviation, then applies learnable scaling and shifting parameters. Benefits include faster training, allowing higher learning rates, reduced sensitivity to initialization, and acting as a form of regularization. It's typically applied before or after activation functions in convolutional and fully connected layers, significantly improving training stability and convergence speed.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is feature engineering?",
+    "sentence2": "Feature engineering is the process of using domain knowledge to create, transform, or select features (input variables) from raw data to improve machine learning model performance. It involves techniques like creating interaction features (combining multiple features), polynomial features, binning continuous variables, encoding categorical variables (one-hot encoding, label encoding), extracting date/time components, scaling and normalization, and handling missing values. Good feature engineering can dramatically improve model accuracy and is often more impactful than choosing sophisticated algorithms. In traditional machine learning, feature engineering is crucial, though deep learning has reduced this need by automatically learning feature representations from raw data.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is cross-validation?",
+    "sentence2": "Cross-validation is a resampling technique used to evaluate machine learning models and assess how well they generalize to independent datasets. The most common method is k-fold cross-validation, where the dataset is divided into k equal subsets (folds). The model is trained k times, each time using k-1 folds for training and the remaining fold for validation. Results from all k iterations are averaged to produce a final performance estimate. This provides a more reliable assessment than a single train-test split, especially with limited data. Variants include stratified k-fold (maintains class proportions), leave-one-out cross-validation, and time-series cross-validation for temporal data. Cross-validation helps in hyperparameter tuning and model selection.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is attention mechanism?",
+    "sentence2": "The attention mechanism is a technique in neural networks that allows models to focus on specific parts of the input when producing each part of the output. Originally developed for sequence-to-sequence models in machine translation, attention computes weights that determine how much focus to place on different input positions. Self-attention, a variant used in Transformers, allows each position in a sequence to attend to all other positions. The mechanism works by computing three vectors for each input: Query (what we're looking for), Key (what each position offers), and Value (the actual information). Attention scores are calculated by comparing queries and keys, then used to create weighted sums of values. This enables models to capture long-range dependencies and contextual relationships effectively.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is data augmentation?",
+    "sentence2": "Data augmentation is a technique used to artificially increase the size and diversity of training datasets by creating modified versions of existing data. In computer vision, this includes transformations like rotation, flipping, cropping, color adjustments, and adding noise to images. For NLP, it involves techniques like synonym replacement, back-translation, and paraphrasing. Data augmentation helps improve model generalization, reduces overfitting, and is especially valuable when labeled data is scarce or expensive to obtain. Modern approaches include learned augmentation strategies (AutoAugment) and generative models like GANs to create synthetic training examples. This technique is now standard practice in training robust deep learning models.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is the vanishing gradient problem?",
+    "sentence2": "The vanishing gradient problem occurs during backpropagation in deep neural networks when gradients become extremely small as they propagate backward through layers. This happens particularly with activation functions like sigmoid and tanh that squash inputs into small ranges, causing their derivatives to be small. As gradients are multiplied layer by layer during backpropagation, they can diminish exponentially, making it nearly impossible for early layers to learn. This severely limits the training of deep networks. Solutions include using ReLU activation functions, batch normalization, residual connections (ResNets), careful weight initialization (Xavier, He initialization), and LSTM/GRU architectures for sequential data.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is a loss function?",
+    "sentence2": "A loss function (also called cost function or objective function) is a mathematical function that measures how well a machine learning model's predictions match the actual target values. It quantifies the error between predicted and actual outputs, providing a single scalar value that the optimization algorithm tries to minimize during training. Common loss functions include Mean Squared Error (MSE) for regression tasks, Cross-Entropy Loss for classification, Hinge Loss for support vector machines, and Huber Loss for robust regression. The choice of loss function depends on the task type, desired properties, and how you want to penalize different types of errors. The gradient of the loss function guides parameter updates during training.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is dropout in neural networks?",
+    "sentence2": "Dropout is a regularization technique for neural networks that randomly deactivates (sets to zero) a fraction of neurons during each training iteration. For example, with a dropout rate of 0.5, each neuron has a 50% chance of being temporarily removed during that training step. This prevents neurons from co-adapting too much and forces the network to learn redundant representations, making it more robust. During inference, all neurons are active but their outputs are scaled by the dropout rate. Dropout effectively trains an ensemble of different sub-networks and has proven very effective in reducing overfitting, especially in fully connected layers. It was introduced by Hinton et al. and remains a standard technique in deep learning.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is hyperparameter tuning?",
+    "sentence2": "Hyperparameter tuning is the process of finding the optimal values for hyperparameters—configuration settings that are set before training and control the learning process. Unlike model parameters that are learned during training, hyperparameters must be specified beforehand. Examples include learning rate, batch size, number of layers, number of neurons per layer, regularization strength, and dropout rate. Common tuning methods include Grid Search (exhaustively tries all combinations), Random Search (randomly samples combinations), Bayesian Optimization (uses probabilistic models to guide search), and more advanced techniques like Hyperband and neural architecture search. Proper hyperparameter tuning can significantly improve model performance but requires computational resources and careful validation strategies.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is a generative adversarial network?",
+    "sentence2": "A Generative Adversarial Network (GAN) is a deep learning architecture consisting of two neural networks that compete against each other: a Generator and a Discriminator. The Generator creates fake data (like images) from random noise, trying to make them indistinguishable from real data. The Discriminator tries to distinguish between real and fake data. Through this adversarial process, both networks improve: the Generator becomes better at creating realistic data, and the Discriminator becomes better at detecting fakes. Once trained, the Generator can create highly realistic synthetic data. GANs have applications in image generation, style transfer, data augmentation, super-resolution, and deepfakes. Variants include DCGAN, StyleGAN, CycleGAN, and conditional GANs.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is the bias-variance tradeoff?",
+    "sentence2": "The bias-variance tradeoff is a fundamental concept in machine learning that describes the relationship between model complexity and generalization error. Bias refers to errors from overly simplistic assumptions in the learning algorithm, leading to underfitting—the model fails to capture important patterns in the data. Variance refers to errors from sensitivity to small fluctuations in training data, leading to overfitting—the model captures noise rather than underlying patterns. High-bias models are too simple (like linear regression for non-linear data), while high-variance models are too complex (like very deep networks on small datasets). The goal is to find the sweet spot that minimizes total error, which is the sum of bias squared, variance, and irreducible error. This often requires careful model selection and regularization.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is embedding in machine learning?",
+    "sentence2": "Embeddings are dense, low-dimensional vector representations of high-dimensional or discrete data that capture semantic relationships and meaningful patterns. In NLP, word embeddings like Word2Vec, GloVe, and modern contextual embeddings from BERT map words to continuous vectors where similar words have similar representations. The famous example is that vec('king') - vec('man') + vec('woman') ≈ vec('queen'). Embeddings can also represent sentences, documents, images, users, products, or any categorical data. They're learned either through dedicated algorithms or as part of end-to-end deep learning models. Embeddings enable neural networks to work with categorical data efficiently and capture complex relationships that one-hot encoding cannot.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is backpropagation?",
+    "sentence2": "Backpropagation (backward propagation of errors) is the fundamental algorithm for training neural networks by efficiently computing gradients of the loss function with respect to all network parameters. It works in two phases: forward pass, where inputs flow through the network to produce predictions, and backward pass, where errors propagate backward through the network using the chain rule of calculus. At each layer, backpropagation calculates how much each weight contributed to the total error and computes the gradient needed for gradient descent optimization. The algorithm's efficiency comes from reusing computed derivatives, making it practical to train deep networks with millions of parameters. Backpropagation, combined with gradient descent, is the cornerstone of modern deep learning.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is a learning rate?",
+    "sentence2": "The learning rate is one of the most important hyperparameters in training neural networks, controlling how much to adjust model parameters in response to the estimated error each time weights are updated. A learning rate that's too high can cause the model to converge too quickly to a suboptimal solution or even diverge completely. A learning rate that's too low makes training very slow and can get stuck in local minima. Common strategies include using learning rate schedules (decreasing over time), adaptive learning rates (Adam, RMSprop, AdaGrad that adjust per-parameter rates), learning rate warmup (starting small then increasing), and cyclical learning rates. Finding the right learning rate is often done through experimentation or techniques like learning rate range tests.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is object detection in computer vision?",
+    "sentence2": "Object detection is a computer vision task that involves identifying and locating objects within images or videos by drawing bounding boxes around them and classifying what they are. Unlike image classification which only identifies what's in an image, object detection answers both 'what' and 'where'. Popular architectures include YOLO (You Only Look Once) which treats detection as a regression problem for speed, R-CNN family (R-CNN, Fast R-CNN, Faster R-CNN) which uses region proposals, and SSD (Single Shot Detector). Applications span autonomous vehicles, surveillance, medical imaging, retail analytics, and augmented reality. Modern detectors can process images in real-time and detect multiple objects simultaneously with high accuracy.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is the difference between L1 and L2 regularization?",
+    "sentence2": "L1 and L2 regularization are both techniques to prevent overfitting, but they work differently. L1 regularization (Lasso) adds the sum of absolute values of coefficients to the loss function, with penalty term λ∑|w|. It tends to produce sparse models by driving some coefficients exactly to zero, effectively performing feature selection. L2 regularization (Ridge) adds the sum of squared coefficients, with penalty term λ∑w². It shrinks coefficients toward zero but rarely makes them exactly zero, distributing penalties more evenly. L1 is preferred when you believe only a few features are important, while L2 is better for preventing large coefficients and when all features might contribute. Elastic Net combines both L1 and L2 penalties.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is semantic segmentation?",
+    "sentence2": "Semantic segmentation is a computer vision task that assigns a class label to every pixel in an image, effectively partitioning the image into regions corresponding to different object classes. Unlike object detection which uses bounding boxes, semantic segmentation provides pixel-level understanding. For example, in a street scene, every pixel is labeled as road, car, pedestrian, building, sky, etc. Popular architectures include U-Net (widely used in medical imaging), FCN (Fully Convolutional Networks), SegNet, and DeepLab series. Applications include autonomous driving, medical image analysis, satellite image interpretation, and augmented reality. A related task is instance segmentation, which additionally distinguishes between individual instances of the same class.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is a confusion matrix?",
+    "sentence2": "A confusion matrix is a table used to evaluate the performance of classification models by showing the counts of true and predicted classifications. For binary classification, it has four components: True Positives (correctly predicted positive class), True Negatives (correctly predicted negative class), False Positives (incorrectly predicted as positive, Type I error), and False Negatives (incorrectly predicted as negative, Type II error). From the confusion matrix, you can calculate metrics like accuracy, precision (TP/(TP+FP)), recall/sensitivity (TP/(TP+FN)), specificity, and F1-score. For multi-class problems, the matrix expands to show predictions versus actual labels for all classes, helping identify which classes are often confused with each other.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is residual learning in neural networks?",
+    "sentence2": "Residual learning is a technique introduced in ResNet (Residual Networks) that uses skip connections or shortcuts to jump over layers, allowing gradients to flow directly through the network. Instead of learning a direct mapping H(x), residual blocks learn the residual function F(x) = H(x) - x, where x is the input. The output becomes F(x) + x via the skip connection. This architecture addresses the degradation problem where deeper networks become harder to train. Residual connections enable training of extremely deep networks (50, 101, 152 layers or more) by providing gradient highways and making it easier for layers to learn identity mappings. ResNets have achieved state-of-the-art performance in image recognition and influenced many subsequent architectures.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is precision and recall?",
+    "sentence2": "Precision and recall are two fundamental evaluation metrics for classification models, particularly important when dealing with imbalanced datasets. Precision measures the accuracy of positive predictions: what proportion of predicted positives are actually positive (TP/(TP+FP)). High precision means few false positives. Recall (also called sensitivity or true positive rate) measures the coverage of actual positives: what proportion of actual positives were correctly identified (TP/(TP+FN)). High recall means few false negatives. There's typically a tradeoff between them—improving one often decreases the other. The F1-score provides a harmonic mean of precision and recall. The choice between prioritizing precision or recall depends on the application: medical diagnosis might prioritize recall, while spam detection might prioritize precision.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is dimensionality reduction?",
+    "sentence2": "Dimensionality reduction is the process of reducing the number of features in a dataset while retaining as much important information as possible. It addresses the curse of dimensionality, reduces computational cost, helps visualization, and can improve model performance by removing noise. Techniques fall into two categories: linear methods like PCA (Principal Component Analysis) which finds orthogonal axes of maximum variance, and LDA (Linear Discriminant Analysis) which maximizes class separability; and non-linear methods like t-SNE (t-distributed Stochastic Neighbor Embedding) for visualization, UMAP (Uniform Manifold Approximation and Projection), and autoencoders which learn compressed representations through neural networks. Feature selection is related but focuses on choosing a subset of original features rather than creating new ones.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is fine-tuning in machine learning?",
+    "sentence2": "Fine-tuning is a transfer learning technique where a pre-trained model is further trained on a new, typically smaller dataset for a specific task. Instead of training from scratch, you start with weights learned from a large dataset (like ImageNet for vision or large text corpora for NLP) and continue training with a lower learning rate on your target dataset. Common approaches include freezing early layers and only training later layers, gradually unfreezing layers during training, or training all layers with different learning rates. Fine-tuning leverages learned representations, requires less data and computational resources, and often achieves better performance than training from scratch. It's the dominant approach in modern deep learning, especially with foundation models like BERT, GPT, and vision transformers.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is the softmax function?",
+    "sentence2": "The softmax function is an activation function commonly used in the output layer of neural networks for multi-class classification. It converts a vector of real numbers (logits) into a probability distribution where all values are between 0 and 1 and sum to 1. For input vector x, the softmax of element i is: exp(xi) / Σexp(xj). This exponential transformation emphasizes larger values while ensuring valid probabilities. Softmax is used with cross-entropy loss for training classifiers and allows the model to output confidence scores for each class. During inference, the class with the highest probability is typically selected. For binary classification, the simpler sigmoid function is often used instead. Temperature scaling can be applied to control the 'sharpness' of the probability distribution.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is early stopping?",
+    "sentence2": "Early stopping is a regularization technique and a form of implicit model selection where training is halted before the model fully converges on the training data. It works by monitoring the model's performance on a validation set during training. When validation performance stops improving for a specified number of epochs (patience parameter), training is terminated. This prevents overfitting by stopping before the model begins to memorize training data noise. The model weights from the epoch with the best validation performance are typically saved and used. Early stopping is computationally efficient, easy to implement, and widely used across all types of neural networks. It's particularly valuable when training large models where computational resources are a constraint and overfitting risk is high.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is a autoencoder?",
+    "sentence2": "An autoencoder is an unsupervised neural network architecture that learns efficient data representations (encodings) by compressing input data into a lower-dimensional latent space and then reconstructing it. It consists of two parts: an encoder that maps inputs to a compressed representation, and a decoder that reconstructs the original input from this representation. The network is trained to minimize reconstruction error. Autoencoders are used for dimensionality reduction, feature learning, denoising (denoising autoencoders), anomaly detection, and generative modeling. Variants include variational autoencoders (VAEs) which learn probabilistic latent representations and can generate new samples, and sparse autoencoders which enforce sparsity constraints on the hidden representations.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is the difference between bagging and boosting?",
+    "sentence2": "Bagging (Bootstrap Aggregating) and boosting are both ensemble learning methods but differ in how they combine models. Bagging trains multiple models independently in parallel on different random subsets of training data (with replacement) and averages their predictions, reducing variance and preventing overfitting. Random Forest is a popular bagging algorithm. Boosting trains models sequentially, where each new model focuses on correcting errors made by previous models, with misclassified examples receiving higher weights. This reduces both bias and variance. Popular boosting algorithms include AdaBoost, Gradient Boosting, and XGBoost. Bagging is less prone to overfitting and works well with high-variance models, while boosting can achieve higher accuracy but risks overfitting if not properly regularized.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is instance segmentation?",
+    "sentence2": "Instance segmentation is a computer vision task that combines object detection and semantic segmentation to identify, locate, and delineate every individual object instance in an image at the pixel level. Unlike semantic segmentation which labels all pixels of the same class identically, instance segmentation distinguishes between separate objects of the same class. For example, it would identify and separately outline each individual car in a parking lot rather than treating all car pixels as one group. Leading architectures include Mask R-CNN which extends Faster R-CNN by adding a mask prediction branch, YOLACT for real-time segmentation, and PANet. Applications include robotics, autonomous driving, medical imaging, and video analysis where understanding individual object boundaries is crucial.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is the Adam optimizer?",
+    "sentence2": "Adam (Adaptive Moment Estimation) is an optimization algorithm widely used for training deep learning models. It combines ideas from RMSprop and momentum by computing adaptive learning rates for each parameter based on estimates of first moment (mean) and second moment (unscaled variance) of gradients. Adam maintains exponentially decaying averages of past gradients (momentum) and past squared gradients, using them to adapt the learning rate for each parameter. It requires minimal hyperparameter tuning, with common default values being β1=0.9, β2=0.999, and learning rate=0.001. Adam is computationally efficient, works well with sparse gradients, and is well-suited for problems with noisy or sparse gradients and non-stationary objectives. Variants include AdamW which decouples weight decay.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is multi-task learning?",
+    "sentence2": "Multi-task learning is a machine learning approach where a model is trained simultaneously on multiple related tasks, sharing representations between them. The core idea is that learning multiple tasks together allows the model to learn more generalizable features and often improves performance on individual tasks compared to training separate models. Tasks can share some or all layers (hard parameter sharing) or have task-specific parameters with regularization encouraging similarity (soft parameter sharing). Benefits include implicit data augmentation, attention focusing on relevant features, and reduced overfitting through shared representations. Applications include computer vision models doing classification and segmentation simultaneously, NLP models handling multiple language tasks, and recommendation systems optimizing for multiple objectives.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is mean average precision?",
+    "sentence2": "Mean Average Precision (mAP) is a metric commonly used to evaluate object detection models. It measures the quality of predicted bounding boxes across different classes and confidence thresholds. For each class, Average Precision (AP) is calculated by computing precision at different recall levels and averaging them. This is typically done using the precision-recall curve, calculating the area under it. The mean AP is then computed by averaging AP across all classes. IoU (Intersection over Union) thresholds determine when a detection is considered correct (commonly 0.5, giving mAP@0.5, or averaged across multiple thresholds like COCO's mAP@[0.5:0.95]). Higher mAP indicates better detection performance in both localization and classification. It's the standard metric for evaluating models on datasets like COCO and Pascal VOC.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is knowledge distillation?",
+    "sentence2": "Knowledge distillation is a model compression technique where a smaller 'student' model is trained to mimic the behavior of a larger, more accurate 'teacher' model. Instead of just learning from hard labels, the student learns from the teacher's soft predictions (probability distributions over classes), which contain richer information about relationships between classes. The student is trained using a combination of the original labeled data and the teacher's soft targets, often using temperature scaling to soften the probability distributions. This allows creating compact models that retain much of the larger model's performance while being faster and requiring less memory. Applications include deploying models on mobile devices, edge computing, and real-time inference scenarios where computational resources are limited.",
+    "score": 1
+  },
+  {
+    "sentence1": "What is curriculum learning?",
+    "sentence2": "Curriculum learning is a training strategy inspired by how humans learn, where the model is trained on examples in a meaningful order—starting with easier examples and gradually increasing difficulty. This can lead to faster convergence, better generalization, and the ability to learn complex tasks that might be difficult to learn from random examples. The curriculum can be based on various criteria: data complexity, task difficulty, or model confidence. Implementation can be explicit (manually designed ordering) or implicit (self-paced learning where the model selects examples). Benefits include escaping poor local minima, improved final performance, and reduced training time. It's particularly effective for challenging tasks like machine translation, reinforcement learning, and learning from noisy data.",
+    "score": 0
+  },
+  {
+    "sentence1": "What is few-shot learning?",
+    "sentence2": "Few-shot learning is a machine learning paradigm where models learn to recognize new classes from only a few labeled examples, mimicking human-like learning abilities. Unlike traditional supervised learning requiring thousands of examples per class, few-shot learning works with limited data—typically 1-shot (one example), 5-shot (five examples), or 10-shot per class. Approaches include metric learning (learning similarity measures in embedding space), meta-learning (learning how to learn across tasks), and data augmentation. Models are typically trained on many related tasks with few examples each (episodic training) to learn generalization strategies. Applications include drug discovery, rare disease diagnosis, personalized medicine, and scenarios where data collection is expensive or impractical. Popular architectures include Siamese networks, Prototypical Networks, and MAML (Model-Agnostic Meta-Learning).",
+    "score": 1
+  },
+  {
+    "sentence1": "What is zero-shot learning?",
+    "sentence2": "Zero-shot learning is an extreme case of transfer learning where models can recognize classes they have never seen during training. This is achieved by leveraging auxiliary information like semantic attributes, text descriptions, or knowledge graphs that describe relationships between seen and unseen classes. For example, a model trained on horses and zebras but never tigers might recognize tigers using descriptions like 'striped cat-like animal'. Modern approaches include using pre-trained language-vision models like CLIP which learn joint embeddings of images and text, allowing classification based on text descriptions. Zero-shot learning is valuable for scenarios with long-tail distributions, rapidly emerging categories, or when labeling all possible classes is impractical. It's increasingly important with foundation models that can perform tasks without task-specific training.",
+    "score": 1
+  },
+  {
+    "sentence1": "Conceptually cream skimming has two basic dimensions - product and geography.",
+    "sentence2": "Product and geography are what make cream skimming work. ",
+    "score": 1
+  },
+  {
+    "sentence1": "you know during the season and i guess at at your level uh you lose them to the next level if if they decide to recall the the parent team the Braves decide to call to recall a guy from triple A then a double A guy goes up to replace him and a single A guy goes up to replace him",
+    "sentence2": "You lose the things to the following level if the people recall.",
+    "score": 0
+  },
+  {
+    "sentence1": "One of our number will carry out your instructions minutely.",
+    "sentence2": "A member of my team will execute your orders with immense precision.",
+    "score": 0
+  },
+  {
+    "sentence1": "How do you know? All this is their information again.",
+    "sentence2": "This information belongs to them.",
+    "score": 0
+  },
+  {
+    "sentence1": "yeah i tell you what though if you go price some of those tennis shoes i can see why now you know they're getting up in the hundred dollar range",
+    "sentence2": "The tennis shoes have a range of prices.",
+    "score": 1
+  },
+  {
+    "sentence1": "my walkman broke so i'm upset now i just have to turn the stereo up real loud",
+    "sentence2": "I'm upset that my walkman broke and now I have to turn the stereo up really loud.",
+    "score": 0
+  },
+  {
+    "sentence1": "But a few Christian mosaics survive above the apse is the Virgin with the infant Jesus, with the Archangel Gabriel to the right (his companion Michael, to the left, has vanished save for a few feathers from his wings).",
+    "sentence2": "Most of the Christian mosaics were destroyed by Muslims.  ",
+    "score": 1
+  },
+  {
+    "sentence1": "(Read  for Slate 's take on Jackson's findings.)",
+    "sentence2": "Slate had an opinion on Jackson's findings.",
+    "score": 0
+  },
+  {
+    "sentence1": "Gays and lesbians.",
+    "sentence2": "Heterosexuals.",
+    "score": 0
+  },
+  {
+    "sentence1": "At the end of Rue des Francs-Bourgeois is what many consider to be the city's most handsome residential square, the Place des Vosges, with its stone and red brick facades.",
+    "sentence2": "Place des Vosges is constructed entirely of gray marble.",
+    "score": 0
+  },
+  {
+    "sentence1": "I burst through a set of cabin doors, and fell to the ground-",
+    "sentence2": "I burst through the doors and fell down.",
+    "score": 0
+  },
+  {
+    "sentence1": "Fun for adults and children.",
+    "sentence2": "Fun for only children.",
+    "score": 0
+  },
+  {
+    "sentence1": "It's not that the questions they asked weren't interesting or legitimate (though most did fall under the category of already asked and answered).",
+    "sentence2": "All of the questions were interesting according to a focus group consulted on the subject.",
+    "score": 1
+  },
+  {
+    "sentence1": "Thebes held onto power until the 12th Dynasty, when its first king, Amenemhet Iwho reigned between 1980 1951 b.c. established a capital near Memphis.",
+    "sentence2": "The capital near Memphis lasted only half a century before its inhabitants abandoned it for the next capital. ",
+    "score": 1
+  },
+  {
+    "sentence1": "I don't mean to be glib about your concerns, but if I were you, I might be more concerned about the near-term rate implications of this $1.",
+    "sentence2": "I am concerned more about your issues than the near-term rate implications.",
+    "score": 0
+  },
+  {
+    "sentence1": "Issues in Data Synthesis.",
+    "sentence2": "Problems in data synthesis.",
+    "score": 0
+  },
+  {
+    "sentence1": "well you see that on television also",
+    "sentence2": "You can see that on television, as well.",
+    "score": 0
+  },
+  {
+    "sentence1": "Vrenna and I both fought him and he nearly took us.",
+    "sentence2": "Neither Vrenna nor myself have ever fought him.",
+    "score": 0
+  },
+  {
+    "sentence1": "This analysis pooled estimates from these two studies to develop a C-R function linking PM to chronic bronchitis.",
+    "sentence2": "The analysis proves that there is no link between PM and bronchitis.",
+    "score": 0
+  },
+  {
+    "sentence1": "He turned and smiled at Vrenna.",
+    "sentence2": "He smiled at Vrenna who was walking slowly behind him with her mother.",
+    "score": 1
+  },
+  {
+    "sentence1": "We sought to identify practices that were commonly implemented by the agencies within the past 5 years.",
+    "sentence2": "We want to identify practices commonly used by agencies in the last 5 years",
+    "score": 0
+  },
+  {
+    "sentence1": "The other men shuffled.",
+    "sentence2": "The other men were shuffled around.",
+    "score": 0
+  },
+  {
+    "sentence1": "States must show reasonable progress in their state implementation plans toward the congressionally mandated goal of returning to natural conditions in national parks and wilderness areas.",
+    "sentence2": "Itis not necessary for there to be any improvement.",
+    "score": 0
+  },
+  {
+    "sentence1": "well it's been very interesting",
+    "sentence2": "It has been very intriguing.",
+    "score": 0
+  },
+  {
+    "sentence1": "He started slowly back to the bunkhouse.",
+    "sentence2": "He returned slowly to the bunkhouse.",
+    "score": 0
+  },
+  {
+    "sentence1": "and it's it's quite a bit i think six something is the state and and uh the rest of the pie goes elsewhere but we're in a particular part of the state that's pretty well off so it's it's like we get a lot of that back as far as local taxation goes",
+    "sentence2": "I do not know exactly where the local taxes go.",
+    "score": 1
+  },
+  {
+    "sentence1": "They're made from a secret recipe handed down to the present-day villagers by their Mallorcan ancestors, who came here in the early 17th century as part of an official repopulation scheme.",
+    "sentence2": "The recipe passed down from Mallorcan ancestors is known to everyone.",
+    "score": 0
+  },
+  {
+    "sentence1": "yeah well you're a student right",
+    "sentence2": "Well you're a mechanics student right?",
+    "score": 1
+  },
+  {
+    "sentence1": "it really is i heard something that their supposed to be starting a huge campaign in New York about um child abuse and stopping child abuse and it's supposed to be like it's starting there supposed to be like a big nationwide campaign and you know so hopefully that will take off and really do something i don't know there's just",
+    "sentence2": "It's unfortunate that nobody is organizing a child abuse campaign.",
+    "score": 0
+  },
+  {
+    "sentence1": "Postal Service were to reduce delivery frequency.",
+    "sentence2": "The postal service could deliver less frequently.",
+    "score": 0
+  },
+  {
+    "sentence1": "And in another shift in the economy, it was found that lamb could be raised more cost-effectively on lowland farms in part because of the richer, more nutritious grazing land available there and as a result Lakeland farms became less profitable.",
+    "sentence2": "Another shift in the economy was found to be more nutritious.",
+    "score": 0
+  },
+  {
+    "sentence1": "The rule contains information collection requirements which will allow EPA to determine that detergent additives which are effective in controlling deposits are used and that emission control goals are realized.",
+    "sentence2": "The rule has data collection requirements which aid the EPA to realize their emission control goals.",
+    "score": 0
+  },
+  {
+    "sentence1": "Almost every hill has to the northeast there's a Moorish fort; no fewer than four ruined fortresses guard the harbour entrance; and two more, still in good repair the Atalaya and Galeras castles protect the sea-front arsenal, of vital importance to Spain's military.",
+    "sentence2": "There are no castles Atalaya and Galeras.",
+    "score": 0
+  },
+  {
+    "sentence1": "Were they in there?",
+    "sentence2": "Were they supposed to be in there?",
+    "score": 1
+  },
+  {
+    "sentence1": "Felicia's Journey takes place behind the eyes of its central  a young Irish girl, Felicia, who crosses the sea to England in a hopeful quest to find the father of her unborn child; and the fat, middle-aged catering manager, Hiditch, who takes a paternal interest in the lass when it becomes clear that her young man has caddishly given her the slip.",
+    "sentence2": "The woman did not care where the man was as long as it was far.",
+    "score": 0
+  },
+  {
+    "sentence1": "In the crypt are interred the remains of Voltaire and Rousseau, Hugo and Zola, assassinated Socialist leader Jean Jaurys, and Louis Braille, the inventor of the alphabet for the blind.",
+    "sentence2": "The remains of Voltaire and Rousseau, Hugo and Zola, assassinated Socialist leader Jean Jaurys, and Louis Braille are all interred in the crypt.",
+    "score": 0
+  },
+  {
+    "sentence1": "there's a uh a couple called um oh i'm going to forgot his name now uh Dirkson",
+    "sentence2": "I can't remember their name",
+    "score": 0
+  },
+  {
+    "sentence1": "Poirot, I exclaimed, with relief, and seizing him by both hands, I dragged him into the room. ",
+    "sentence2": "Poirot was now back and I was sorry that he would take over what I now considered my own investigation. ",
+    "score": 0
+  },
+  {
+    "sentence1": "The word aswan actually means trade or market in ancient Egyptian, signifying its most pre-eminent activity.",
+    "sentence2": "Aswan's meaning has not changed over time.",
+    "score": 0
+  },
+  {
+    "sentence1": "well what the market can bear and",
+    "sentence2": "THe market can't bear any of it.",
+    "score": 0
+  },
+  {
+    "sentence1": "And to show just how fast Japan's new rulers were catching on, two punitive expeditions were launched against Korea and China in the grand manner of 19th-century gunboat diplomacy.",
+    "sentence2": "Japan's new rulers were catching on quickly.",
+    "score": 0
+  },
+  {
+    "sentence1": "When the trust fund begins running cash deficits in 2016, the government as a whole must come up with the cash to finance Social Security's cash deficit by reducing any projected non-Social Security surpluses, borrowing from the public, raising other taxes, or reducing other government spending.",
+    "sentence2": "The public would generally prefer to see the government reduce its spending in other areas to finance Social Security.",
+    "score": 1
+  },
+  {
+    "sentence1": "These organizations invest the time and effort to understand their processes and how those processes contribute to or hamper mission accomplishment.",
+    "sentence2": "These organizations invest lots of time to understand how some processes can contribute to or haampe",
+    "score": 0
+  },
+  {
+    "sentence1": "and it is nice talking to you all righty",
+    "sentence2": "I talk to you every day.",
+    "score": 1
+  },
+  {
+    "sentence1": "You have access to the facts. ",
+    "sentence2": "The facts are accessible to you.",
+    "score": 0
+  },
+  {
+    "sentence1": "Build environment Engineering Manufacturing Production (all rate tooling) (1st set of production tooling)",
+    "sentence2": "It is the first set of production tooling for manufacturing.",
+    "score": 0
+  },
+  {
+    "sentence1": "As long you have your own household in order, fretting about your neighbor's spending habits is a lot like fretting about the color of his living-room rug.",
+    "sentence2": "You should worry about the color of your neighbor's rug. ",
+    "score": 0
+  },
+  {
+    "sentence1": "yeah so um also of course they they can they join the they can always join the military service they are considered citizens i believe",
+    "sentence2": "They can't join the military service",
+    "score": 0
+  },
+  {
+    "sentence1": "She smiled back.",
+    "sentence2": "She was so happy she couldn't stop smiling.",
+    "score": 1
+  },
+  {
+    "sentence1": "According to the Office of the Actuary at the Health Care Financing Administration, the estimated net present value of future additional resources needed to fund HI benefits alone over the 75 years is $4.",
+    "sentence2": "The net present value of future additional resources for funding HI benefits was $4.",
+    "score": 0
+  },
+  {
+    "sentence1": "Thus, with respect to the litigation services Congress has funded, there is no alternative channel for expression of the advocacy Congress seeks to restrict.",
+    "sentence2": "This is the only channel of expression of the advocacy that Congress seeks to restrict.",
+    "score": 0
+  },
+  {
+    "sentence1": "How do we fix this?'",
+    "sentence2": "Can we fix this?",
+    "score": 0
+  },
+  {
+    "sentence1": "but that takes too much planning",
+    "sentence2": "It doesn't take much planning.",
+    "score": 0
+  },
+  {
+    "sentence1": "I did not mention Monica in my lecture, but the first question I was asked was how President Clinton could do his job with all the distractions caused by the Monica Lewinsky affair.",
+    "sentence2": "They wanted to get through the lecture without any problems.",
+    "score": 1
+  },
+  {
+    "sentence1": "Analyzing Postal Service accounts for depreciation, fuel, and maintenance for city delivery carriers, we have estimated the average city delivery vehicle cost per route.",
+    "sentence2": "Driving cost estimates can be averaged will sufficient data.",
+    "score": 1
+  },
+  {
+    "sentence1": "Because it plays on my childhood imagination.",
+    "sentence2": "The art plays on my young imagination.",
+    "score": 1
+  },
+  {
+    "sentence1": "it's slow it's uh there are many better machines on the market right now for",
+    "sentence2": "This is the fastest machine, you won't find a better machine.",
+    "score": 0
+  },
+  {
+    "sentence1": "At the heart of the sanctuary, a small granite shrine once held the sacred barque of Horus himself.",
+    "sentence2": "Horus is a god.",
+    "score": 1
+  },
+  {
+    "sentence1": "Consider the United States Postal Service.",
+    "sentence2": "Forget the United States Postal Service.",
+    "score": 0
+  },
+  {
+    "sentence1": "In full costume.",
+    "sentence2": "He is wearing a mascot costume.",
+    "score": 1
+  },
+  {
+    "sentence1": "Although your journey is going to be difficult and at times you will doubt yourselves, the benefits to clients are well worth it and the satisfaction of hearing even the most recalcitrant of adversaries say that the new system is better than the one that went before is deeply rewarding.",
+    "sentence2": "The new system appears far more complex, but ultimately easier and more thorough.",
+    "score": 1
+  },
+  {
+    "sentence1": "Take a remarkable statistic that Shesol cites but lets pass relatively unexamined.",
+    "sentence2": "They had data that was very relevant but under used.",
+    "score": 0
+  },
+  {
+    "sentence1": "It might have seemed like manna from heaven - up to thousands of dollars dropping, often unexpectedly, into the hands of a half-million Kentucky and Indiana residents this month.",
+    "sentence2": "A recent law proposed by congress has resulted in the seizure of thousands of dollars from Kentucky residents.",
+    "score": 0
+  },
+  {
+    "sentence1": "Get individuals to invest their time and the funding will follow.",
+    "sentence2": "If individuals will invest their time, funding will come along, too.",
+    "score": 0
+  },
+  {
+    "sentence1": "i often think gee i wish i had a video camera because i could sure use ten thousand dollars so but i like things like Evening Shade with Burt Reynolds i really enjoy that and uh",
+    "sentence2": "Video cameras that I need are very expensive.",
+    "score": 1
+  },
+  {
+    "sentence1": "The man on the ground thinks for a moment and yells back, You must work in management.",
+    "sentence2": "There was no one on the ground, man or woman.",
+    "score": 0
+  },
+  {
+    "sentence1": "If, however, the evaluation question requires GAO to report on how satisfactory progress is or the reasons for problems in implementation, the more staff who can be on site over time, with the ricHe'st or thickest base for examining the situation as the many people involved see it, the sounder our causal conclusions and subsequent recommendations will be.",
+    "sentence2": "If the GAO has to report on the progress, the recommendations will be much poorer quality.",
+    "score": 0
+  },
+  {
+    "sentence1": "The economy could be still better.",
+    "sentence2": "The economy has never been better.",
+    "score": 0
+  },
+  {
+    "sentence1": "Hills and mountains are especially sanctified in the cult of Jainism.",
+    "sentence2": "The cult of Jainism hates nature.",
+    "score": 0
+  },
+  {
+    "sentence1": "The famous tenements (or lands ) began to be built.",
+    "sentence2": "The land remained deserted.",
+    "score": 0
+  },
+  {
+    "sentence1": "In the midst of this amazing amalgam of cultures is a passion for continuity.",
+    "sentence2": "A passion for continuity is not the most important of these cultures.",
+    "score": 1
+  },
+  {
+    "sentence1": "Putting aside stage as a horse-drawn conveyance, a popular delicatessen, a part of a rocket, and an opportunity to mock Gail Sheehy (who seems to get a free ride from News Quiz participants), this question all but demanded the invention of a violent theatrical event, and that's not easy.",
+    "sentence2": " Gail Sheehy is a popular target for mocking on other shows.",
+    "score": 1
+  },
+  {
+    "sentence1": "Entreaties to the apartment's owner have gone nowhere.",
+    "sentence2": "The apartment's owner is very responsive.",
+    "score": 0
+  },
+  {
+    "sentence1": "Mrs. Cavendish is in her mother-in-law's room. ",
+    "sentence2": "Mrs. Cavendish has left the building.",
+    "score": 0
+  },
+  {
+    "sentence1": "But I thought you'd sworn off coffee.",
+    "sentence2": "I thought that you vowed to drink more coffee.",
+    "score": 0
+  },
+  {
+    "sentence1": "We stink all the time.",
+    "sentence2": "We always stink.",
+    "score": 0
+  },
+  {
+    "sentence1": "In an increasingly interdependent world, many pressing problems that affect Americans can be addressed only through cooperation with other countries.",
+    "sentence2": "We should be independent and stay away from talking and working with other nations. ",
+    "score": 0
+  },
+  {
+    "sentence1": "Ca'daan continued.",
+    "sentence2": "Ca'daan refused to stop.",
+    "score": 1
+  },
+  {
+    "sentence1": "The rule requires broadcasters to maintain a file for public inspection containing a Children's Television Programming Report and to identify programs specifically designed to educate and inform children at the beginning of those programs and to furnish such information to the publishers of program guides.",
+    "sentence2": "The rule makes broadcasters keep a file about children's television programming.",
+    "score": 0
+  },
+  {
+    "sentence1": "well because how how hot i mean like like in the coldest that it gets in winter down there how much is it",
+    "sentence2": "It's hot all the time where I live, including winter.",
+    "score": 1
+  },
+  {
+    "sentence1": "Each of the men wore leather armor and dressed in the style of heavy riders.",
+    "sentence2": "The men were naked.",
+    "score": 0
+  },
+  {
+    "sentence1": "The man should have died instantly.",
+    "sentence2": "The man was perfectly fine. ",
+    "score": 0
+  },
+  {
+    "sentence1": "In summer the rice forms a green velvety blanket, then turns golden in autumn when it ripens and is harvested.",
+    "sentence2": "The rice is golden and harvestable in the summer, but turns green in autumn.",
+    "score": 0
+  },
+  {
+    "sentence1": "Just as the Daily Worker and New Masses , socialist papers from the 1930s, were peppered with citations of Marx and Engels, Educational Liberator is peppered with references to their libertarian equivalents--Friedrich Hayek and Ludwig von Mises.",
+    "sentence2": "Citations from Marx were used in socialist papers in the 30s. ",
+    "score": 0
+  },
+  {
+    "sentence1": "To be sure that any needlework item is the genuine article (as opposed to an inferior import or machine-made piece), look for a lead seal with an M, the emblem of IBTAM meaning it's been certified by the Instituto de Bordado, Tapecaras e Arte?\u00adsanato da Madeira (Institute of Madeiran Embroidery, Tapestry, and Handicrafts), an official island organization that has a showroom/museum on Rua Visconde de Anadia, 44.",
+    "sentence2": "There is a seal to show authenticity in needlework items made in Italy.",
+    "score": 1
+  },
+  {
+    "sentence1": "I'm not into this Multivista stuff, because what is some dumpy system when compared to a beautiful hyperextension of the sun somewhere over Kuchara, when compared to the golden hue of onion fried with the kse-fi waves, when compared to the number of dividers for credit membranes in a wallet of a rich man, when compared to the magnificent smell of a briessante roll dunked in wholesome milk synthetically enriched with substances boosting the secretion of happiness hormones, that one from two years ago, not three,' Gonzo said in a tone characteristic for a man who just discovered a solution to his life problem.",
+    "sentence2": "He's not into this multivista stuff because what is some dumpy system compared to the magnificent smell of a cinnamon roll dunked in wholesome milk.",
+    "score": 0
+  },
+  {
+    "sentence1": "No matter what I ended up doing, I think I would have found some way within that profession to do public work, because that's what I was taught, Zelon said. ",
+    "sentence2": "This is like using the postition as a banker to help make regulations better for the public.",
+    "score": 1
+  },
+  {
+    "sentence1": "Clark also expressed the hope that he and Redgrave could continue with their marriage.",
+    "sentence2": "Clark hoped that he could continue their marriage.",
+    "score": 0
+  },
+  {
+    "sentence1": "The poverty, for instance, does not create the sense of shame as it does for people who live in Western countries.",
+    "sentence2": "Poverty doesn't create a sense of shame in any country.",
+    "score": 0
+  },
+  {
+    "sentence1": "Back on the road to Jaisalmer, one last splash of color delights the senses before you plunge into the the fields are dotted with mounds of red hot chili peppers.",
+    "sentence2": "The road to Jaisalmer is bumpy and unpleasant to ride on. ",
+    "score": 1
+  },
+  {
+    "sentence1": "they supplied some uh you know they were some groups uh the Vicksburg if you ever get a chance to go over to Vicksburg the battleground at Vicksburg uh there's an area there where there was uh some Texas uh groups and they had an interesting time there",
+    "sentence2": "There were also North Carolina troops at Vicksburg.",
+    "score": 1
+  },
+  {
+    "sentence1": "which i mean i think it should be anyway",
+    "sentence2": "I don't think it should be that way",
+    "score": 0
+  },
+  {
+    "sentence1": "Also, compensation committees need to understand the implications of compensation to provide incentives for management to do the right thing for the company and its shareholders versus themselves.",
+    "sentence2": "The implications of compensation to provide incentives for management to do the right thing for the company and its shareholders versus themselves should always be ignored by compensation committees.",
+    "score": 0
+  },
+  {
+    "sentence1": "The fourth-century Roman emperor Gratianus was an early visitor, followed much later by such luminaries as the Romantic poet Alphonse de Lamartine, Queen Victoria, Saint-Sa?\u00abns, and Rachmaninov.",
+    "sentence2": "Gratianus was a Roman empoeror.",
+    "score": 0
+  },
+  {
+    "sentence1": "So, I went to court by myself and told them the truth, but it didn't do me any good.",
+    "sentence2": "I went and told the truth at court but it didn't do me any good.",
+    "score": 0
+  },
+  {
+    "sentence1": "Click More Links (on the right-hand side under Miscellaneous), and from",
+    "sentence2": "There are no links to click under Miscellaneous.",
+    "score": 0
+  },
+  {
+    "sentence1": "and so i started watching it and all of a sudden stay tuned next week and i went what",
+    "sentence2": "I wouldn't have started watching it if I'd known.",
+    "score": 1
+  },
+  {
+    "sentence1": "no oh no oh well take care",
+    "sentence2": "Bye for now.",
+    "score": 0
+  },
+  {
+    "sentence1": "'Hello, Ben.'",
+    "sentence2": "I ignored Ben",
+    "score": 0
+  },
+  {
+    "sentence1": "how can you prove it",
+    "sentence2": "Can you tell me how to prove it?",
+    "score": 0
+  },
+  {
+    "sentence1": "It displays all kinds of vehicles, from the coach that carried Napoleon to and from Moscow in 1812 to a splendid 4-horsepower Renault car from 1904 and other turn-of-the-century classics.",
+    "sentence2": "The exhibition only displays cars from the 2000s.",
+    "score": 0
+  },
+  {
+    "sentence1": "According to this executive, the town hall meetings helped improve his customer satisfaction levels because veterans identified the concerns that were most important to them, gained direct access to the VBA employees working on their benefit claims, and were better able to understand the claims process.",
+    "sentence2": "The own hall meetings helped improve his customer satisfaction levels, said the executive.",
+    "score": 0
+  },
+  {
+    "sentence1": "well see that isn't too bad  a couple hours",
+    "sentence2": "I don't like waiting, not even for 10 minutes.",
+    "score": 0
+  },
+  {
+    "sentence1": "In the east, Christian forces were in retreat as a new Moslem power began to rise.",
+    "sentence2": "Although the Christian forces were stronger, they were in retreat.",
+    "score": 1
+  },
+  {
+    "sentence1": "We have been told on reasonably high authority that true charity vaunteth not itself",
+    "sentence2": "True charity vaunts itself, we have been told.",
+    "score": 0
+  },
+  {
+    "sentence1": "yeah and what to do when they're faced with it",
+    "sentence2": "They'll face peer pressure and will need to say no.",
+    "score": 1
+  },
+  {
+    "sentence1": "The  With attorneys one year out of graduate school facing an average debt of just less than $90,000 and starting salaries at legal aid organizations averaging $31,000, they couldn't afford the job.",
+    "sentence2": "New attorneys have massive law school debt.",
+    "score": 0
+  },
+  {
+    "sentence1": "Here you'll see a shrunken head, a two-headed goat, and a statue of Marilyn Monroe made of shredded money, among other curiosities.",
+    "sentence2": "One of the curiosities is a two-headed goat.",
+    "score": 0
+  },
+  {
+    "sentence1": "Thursday's judge, the Honorable Charles Adams of the Coconino County Superior Court, agreed, but highly discouraged self-representation.",
+    "sentence2": "Self-representation was encouraged by the Honorable Charles Adams.",
+    "score": 0
+  },
+  {
+    "sentence1": "He mostly hangs out with a group of older, Southern black men, who call him Jumper and Black Cat.",
+    "sentence2": "The group of guys he tends to hang out with gave him the nickname Jumper.",
+    "score": 0
+  },
+  {
+    "sentence1": "This elegant spa town on the edge of the Lac du Bourget has offered cures for rheumatism and other ailments for centuries.",
+    "sentence2": "The town was only established in the past fifty years.",
+    "score": 0
+  },
+  {
+    "sentence1": "right right well it's it's a beautiful city and but the problem is like first example when i was young they they took me to Las Vegas and that was the most boring place on earth",
+    "sentence2": "I think Las Vegas is the most boring place I know.",
+    "score": 0
+  },
+  {
+    "sentence1": "'Less loud.",
+    "sentence2": "Please be quiet.",
+    "score": 0
+  },
+  {
+    "sentence1": "i'm going to be able to make my own clothes",
+    "sentence2": "I will be able to make my own clothing.",
+    "score": 0
+  },
+  {
+    "sentence1": "The river plays a central role in all visits to Paris.",
+    "sentence2": "The river is central to all vacations to Paris.",
+    "score": 0
+  },
+  {
+    "sentence1": "they're supposed to be bilingual",
+    "sentence2": "They're supposed to be bilingual ",
+    "score": 0
+  },
+  {
+    "sentence1": "Oh, Czarek, but will happen to us?",
+    "sentence2": "Czarek was not asked any questions on that day.",
+    "score": 0
+  },
+  {
+    "sentence1": "Turned out, I wasn't completely wrong.",
+    "sentence2": "I was 100 percent wrong. ",
+    "score": 0
+  },
+  {
+    "sentence1": "Native  'Me win, me passum heap big law ...",
+    "sentence2": "n/a",
+    "score": 0
+  },
+  {
+    "sentence1": "In any case--it's over.\"  ",
+    "sentence2": "It is over.",
+    "score": 0
+  },
+  {
+    "sentence1": "The herbal extract shows success in treating mild dementia and preventing Alzheimer's memory loss.",
+    "sentence2": "The herbal extract is not very good at treating dementia.  ",
+    "score": 0
+  },
+  {
+    "sentence1": "After a lightning victory over the ill-prepared French armies, the Germans marched on Paris and laid siege to the city, which finally capitulated in January 1871 in the face of dwindling food supplies.",
+    "sentence2": "Paris was unhappy to have to surrender to the Germans.",
+    "score": 1
+  },
+  {
+    "sentence1": "That is why icons have the power they have.",
+    "sentence2": "That is why God moves me.",
+    "score": 0
+  },
+  {
+    "sentence1": "Critical to the product development process were activities that enabled the capture of specific design and manufacturing knowledge and decision reviews to determine if the knowledge captured would support the increased investment necessary to move to the next development phase or into production.",
+    "sentence2": "The knowledge captured would determine if the next step was further development or production.",
+    "score": 0
+  },
+  {
+    "sentence1": "Said I was foolishly proud. ",
+    "sentence2": "My pride was foolish not well placed.",
+    "score": 0
+  },
+  {
+    "sentence1": "The word had filled his head as though the girl had whispered directly into both ears.",
+    "sentence2": "The girl spoke very quietly. ",
+    "score": 0
+  },
+  {
+    "sentence1": "and a lot of their rules and regulations aren't real clear so we have our manager of environmental who assist the TACB which is located in Austin in writing and hey look what we've done here at TI",
+    "sentence2": "There rules are not really clear so we ask our manager for help.",
+    "score": 0
+  },
+  {
+    "sentence1": "Among these are the red brick Royal Palace, which now houses the Patan Museum (Nepal's finest and most modern museum), and, facing the palace across the narrow brick plaza, eight temples of different styles and sizes.",
+    "sentence2": "The Patan Museum is down the street from the red brick Royal Palace.",
+    "score": 0
+  },
+  {
+    "sentence1": "yeah it's kind of like in Louisiana where that uh guy that's like a Ku Klux Klan member something got elected  kind of scary when you think about that",
+    "sentence2": "A Ku Klux Klan member has been elected in Louisiana.",
+    "score": 0
+  },
+  {
+    "sentence1": "or at least they try and do something about it first",
+    "sentence2": "They might at least try and do something about it first.",
+    "score": 0
+  },
+  {
+    "sentence1": "i i'm i'm not really impressed with i mean i lived in Germany for three years i i was i'm not impressed with skiing now i like i like other you know winter sports but i'm not real thrilled about them",
+    "sentence2": "I am not a big fan of winter sports.",
+    "score": 0
+  },
+  {
+    "sentence1": "It's a commitment to general education--a sequence of courses intended to develop critical thinking in a wide variety of disciplines--in opposition to early specialization.",
+    "sentence2": "General education's focus is to develop students' critical thinking skills.",
+    "score": 0
+  },
+  {
+    "sentence1": "Theoretically scale economies in delivery are not firm specific.",
+    "sentence2": "Scale economies are flexible.",
+    "score": 1
+  },
+  {
+    "sentence1": "National saving represents resources available for investment to replace old factories and equipment and to buy more and better capital goods.",
+    "sentence2": "Old factories and equipment were never replaces, even when there was national savings.",
+    "score": 0
+  },
+  {
+    "sentence1": "Others complain that the superstars are over the hill, and are trotting out mediocre work.",
+    "sentence2": "Nobody complains about the superstars.",
+    "score": 0
+  },
+  {
+    "sentence1": "Collaboration with rigorous methodologists is important, but those collaborations have to focus on what can be accomplished specifically in the ED setting.",
+    "sentence2": "Working with rigorous methodologists is important.",
+    "score": 0
+  },
+  {
+    "sentence1": "you know their demographic studies that they do that show you know that everybody's IQ has dropped dramatically  or something",
+    "sentence2": "The studies showed their IQ increased quite a lot.",
+    "score": 0
+  },
+  {
+    "sentence1": "Without the support of federal finance organizations, program managers may not be able to determine or defend the cost associated with or benefits derived from government activities.",
+    "sentence2": "Federal finance organizations are the best source of information for program managers.",
+    "score": 1
+  },
+  {
+    "sentence1": "The union has about 4000 members in Canada.",
+    "sentence2": "There are 100 members in the union that live in Canada.",
+    "score": 0
+  },
+  {
+    "sentence1": "but then we started watching it and and like the new ones are pretty cool because because they got like uh like special like especially things that like fuck with your mind",
+    "sentence2": "The new ones have things that can fuck with your mind.",
+    "score": 0
+  },
+  {
+    "sentence1": "In 2000, GNP was less than GDP because income receipts from the rest of the world were less than U.S. payments to the rest of the world.",
+    "sentence2": "The US paid more to the rest of the world than the rest of the world received in income.",
+    "score": 0
+  },
+  {
+    "sentence1": "Have you any tips to give us before we clear out?\"",
+    "sentence2": "Anything we should know?",
+    "score": 0
+  },
+  {
+    "sentence1": "and they keep taking more money from us yeah people and get and they don't have any incentive to work if we're just gonna take fifty percent of it",
+    "sentence2": "People have a lot of incentive to work because they take home every penny earned.",
+    "score": 0
+  },
+  {
+    "sentence1": "They depended too heavily on the second great principle of contagion, and that seemed to be wrapped up with some kind of association through the signs and houses and the courses of the planets.",
+    "sentence2": "The signs, houses and the courses of the planets have a great impact on daily life.",
+    "score": 1
+  },
+  {
+    "sentence1": "i guess the financial planners the training now we've had it for about four years here got our businesses and and and our life in line how to manage credit cards how to put away say for you know money markets and this kind of thing",
+    "sentence2": "The financial planners do not assist people with issues related to credit cards.",
+    "score": 0
+  },
+  {
+    "sentence1": "Richardson's need to make Picasso into a serious artist and an honorable man (instead of the inspired poetic rascal he actually was) deforms, above all, his account of Picasso's relations with women, he writes.",
+    "sentence2": "Picasso was a gentleman and not an inspired poetic rascal.",
+    "score": 0
+  },
+  {
+    "sentence1": "'Uh, hi guys,' Daniel said meekly.",
+    "sentence2": "Daniel greeted everyone even though he was shy.",
+    "score": 1
+  },
+  {
+    "sentence1": "oh um i talked to someone about San Antonio",
+    "sentence2": "I spoke with someone about Dallas.",
+    "score": 0
+  },
+  {
+    "sentence1": "A misty morning makes the scene even more evocative of the past.",
+    "sentence2": "A misty morning in Paris brings to mind old evocative imagery of times gone by.",
+    "score": 1
+  },
+  {
+    "sentence1": "Due to this rationalization of delivery cost in the U.S., the postal densities of the most sparsely populated areas are higher than the densities of the most sparsely populated areas of France.",
+    "sentence2": "Postal density refers to the amount of junk mail delivered in a given area.",
+    "score": 0
+  },
+  {
+    "sentence1": "Races are held between April and December at the Veliefendi Hippodrome near Bakerky, 15 km (9 miles) west of Istanbul.",
+    "sentence2": "There are races from April to December at Veliefendi Hippodrome.",
+    "score": 0
+  },
+  {
+    "sentence1": "The production of anhydrous ammonia in the U.S. in 2000 was approximately 17,400,000 tons (equivalent anhydrous) with apparent consumption of 22,000,000 tons and about 4,600,000 met through net imports, as shown in a 2001 edition of U.S.",
+    "sentence2": "The US does not produce any anhydrous ammonia each year.",
+    "score": 0
+  },
+  {
+    "sentence1": "oh yeah they do that i mean in in in north Texas they do that quite a bit where you know if you want to go to this particular movie or concert or a discounted thing the big thing down here is rodeos uh if you",
+    "sentence2": "I try to get discounted prices when I can. ",
+    "score": 1
+  },
+  {
+    "sentence1": "Over the past eight years, the school acquired over $88 million of real estate in the Allston section of Boston without revealing its identity to prospective sellers.",
+    "sentence2": "Over the past eight years, the school acquired more than 88 million in real estate in the Allston section of Boston while remaining completely anonymous even to its own students.",
+    "score": 1
+  },
+  {
+    "sentence1": "uh it's but then there's so many people you get so many different opinions like well you shouldn't have well i shouldn't have to have to do this or i shouldn't have to do that and all this other stuff i don't want to get involved and",
+    "sentence2": "Opinions tend to vary.",
+    "score": 0
+  },
+  {
+    "sentence1": "um-hum so you figure one of these days you're going to go back to being an engineer is that what you think",
+    "sentence2": "One of these days, you will go back to studying.",
+    "score": 1
+  },
+  {
+    "sentence1": "Right on the waterfront; offers a more formal atmosphere and a great place to catch a sunset.",
+    "sentence2": "It has a terrible view of the sunset.",
+    "score": 0
+  },
+  {
+    "sentence1": "To be sure that any needlework item is the genuine article (as opposed to an inferior import or machine-made piece), look for a lead seal with an M, the emblem of IBTAM meaning it's been certified by the Instituto de Bordado, Tapecaras e Arte?\u00adsanato da Madeira (Institute of Madeiran Embroidery, Tapestry, and Handicrafts), an official island organization that has a showroom/museum on Rua Visconde de Anadia, 44.",
+    "sentence2": "There is a seal to show authenticity. ",
+    "score": 0
+  },
+  {
+    "sentence1": "However, my confidence in him, which at one time had rather waned, was fully restored since his belief in Alfred Inglethorp's innocence had been so triumphantly vindicated. ",
+    "sentence2": "I felt the real murderer should now be easier to determine.",
+    "score": 1
+  },
+  {
+    "sentence1": "(Kohler's Dictionary for Accountants) CONTRACT AUTHORITY - Contract authority is a subset of budget authority.",
+    "sentence2": "Contract authority must be granted by the financial authority.",
+    "score": 1
+  },
+  {
+    "sentence1": "The company once assembled, Poirot rose from his seat with the air of a popular lecturer, and bowed politely to his audience. ",
+    "sentence2": "Poirot rose from his seat, bowed and started addressing the audience.",
+    "score": 1
+  },
+  {
+    "sentence1": "It will be a pleasure dressing Jane.",
+    "sentence2": "Dressing Jane will be enjoyable.",
+    "score": 0
+  },
+  {
+    "sentence1": "Engakuji is Kamakura's largest temple complex; often wracked by fire and earthquake, 17 of the original 46 buildings have survived.",
+    "sentence2": "None of the original buildings in Engakuji are still remaining.",
+    "score": 0
+  },
+  {
+    "sentence1": "In applying this requirement, the following factors may influence the auditors' assessment of control ",
+    "sentence2": "The influence of the following factors is possible.",
+    "score": 0
+  },
+  {
+    "sentence1": "do they live close by",
+    "sentence2": "Is their house near here?",
+    "score": 0
+  },
+  {
+    "sentence1": "History defies laws.",
+    "sentence2": "Laws are weak when talking about the past and the future.",
+    "score": 1
+  },
+  {
+    "sentence1": "Now conservatives are fighting back.",
+    "sentence2": "Conservatives are battling now.",
+    "score": 0
+  },
+  {
+    "sentence1": " the uncompromising Vel?\u00a1zquez portrait of ugly Queen Marianna of Austria; El Greco's powerfully mystic Christ on the Crose Ribera's gruesomely good-humored The Club Foot.",
+    "sentence2": "El Greco was a extremely famous Spanish painter whose work was often religious.",
+    "score": 1
+  },
+  {
+    "sentence1": "There are good road connections between Sant Antoni and both CaleT?\u00a1rida and CaleBadella, with the result that both bays have now been developed.",
+    "sentence2": "With the good road connections, both bays have been developed.",
+    "score": 0
+  },
+  {
+    "sentence1": "and if you yeah if you want to so at least you you know you wouldn't have any surprises you can order any type of you know service you want but you stand a good chance you know having to pick up at least part of the bill yourself",
+    "sentence2": "You may have to foot the bill if you order any service you want.",
+    "score": 0
+  },
+  {
+    "sentence1": "The individual artisans' shops are no longer here, but you can visit a silk-weaving factory, a ceramics plant, and the Foshan Folk Art Studio, where you can observe workers making Chinese lanterns, carving sculptures, painting scrolls, and cutting intricate designs in paper.",
+    "sentence2": "Workers carve sculptures and paint scrolls with great enthusiasm.",
+    "score": 1
+  },
+  {
+    "sentence1": "Really, Sir Ernest, protested the judge, \"these questions are not relevant.\" Sir Ernest bowed, and having shot his arrow proceeded. ",
+    "sentence2": "Sir Ernest bent his head slightly, and continued.",
+    "score": 0
+  },
+  {
+    "sentence1": "The house is surprisingly small and simple, with one bedroom, a tiny kitchen, and a couple of social rooms.",
+    "sentence2": "The house is very large and boasts over ten bedrooms, a huge kitchen, and a full sized olympic pool.",
+    "score": 0
+  },
+  {
+    "sentence1": "Fiction has its glories, but concealment is merely squalid.",
+    "sentence2": "Hiding things is just dirty, whereas there is glory in fiction",
+    "score": 0
+  },
+  {
+    "sentence1": "um but i think in time come you're going to see that happening you're going to see um where the high risk people pay a premium but they have to find a way to prove it",
+    "sentence2": "It would take some time before high-risk people start paying a premium.",
+    "score": 1
+  },
+  {
+    "sentence1": "Are there children who need to be entertained?",
+    "sentence2": "No children ever want to be entertained.",
+    "score": 0
+  },
+  {
+    "sentence1": "Hopefully, Wall Street will take voluntary steps to address these issues before it is forced to act.",
+    "sentence2": "Wall Street is facing issues, that need to be addressed. ",
+    "score": 0
+  },
+  {
+    "sentence1": "okay pro football i like two teams one the New York Giants and the second is the Raiders",
+    "sentence2": "The New York Giants and Raiders are my favorite teams in football.",
+    "score": 0
+  },
+  {
+    "sentence1": "He'd stopped wondering and now accepted; he meant to get away from here at the first chance and he was somehow sure he could.",
+    "sentence2": "The doctors office was a terrible place and he wanted out.",
+    "score": 1
+  },
+  {
+    "sentence1": "yeah it's strange because well it it's not strange because i use to be the same way and i'm even to this day  you know some vegetables really turn me off but when you read so much information that says this is a healthier way to go you know and this is what your body wants this is what your body really needs and when you think about what is what's the real reason your eating i know i know it's for taste because i'm boy am i a taste person but",
+    "sentence2": "i'm a taste person and all vegetables taste very nice unlike other types of food",
+    "score": 0
+  },
+  {
+    "sentence1": "in public places there is one state that does that by the way",
+    "sentence2": "in public places there are absolutely no place that does that",
+    "score": 0
+  },
+  {
+    "sentence1": "Once, Las Vegas showrooms were filled with top entertainment headliners, comedians, production shows, and dancing girls that could be enjoyed at a very low price.",
+    "sentence2": "Due to inflation and the production value, Las Vegas shows now cost more to see.",
+    "score": 1
+  },
+  {
+    "sentence1": "uh stick on those things and they can just all that's all they have to do i mean that wouldn't cost a great deal of money and uh",
+    "sentence2": "It wouldn't cost them much money to just stick on those things.",
+    "score": 0
+  },
+  {
+    "sentence1": "we have gone on trips we've bathed in streams",
+    "sentence2": "In addition to bathing in streams, we've also gone to spas and saunas.",
+    "score": 1
+  },
+  {
+    "sentence1": "On the mainland, an invasion of even greater significance followed in 1580, when Philip II of Spain proclaimed himself king of Portugal and marched his armies across the border.",
+    "sentence2": "Philip II of Spain invaded Portugal.",
+    "score": 0
+  },
+  {
+    "sentence1": "This involves a morning or afternoon of theory and shallow-water work, giving you an opportunity to try out the basic techniques before committing yourself a full open-water course.",
+    "sentence2": "You won't get a chance to try out basic techniques with theory or anything.",
+    "score": 0
+  },
+  {
+    "sentence1": "Initiatives completed under Phase I of the Plan include the ",
+    "sentence2": "There is no Phase 1 of the plan as it will all be conducted in one step.",
+    "score": 0
+  },
+  {
+    "sentence1": "yeah well i'm well i'm definitely for it",
+    "sentence2": "I am certainly in agreement with it.",
+    "score": 0
+  },
+  {
+    "sentence1": "yeah yeah glad to see y'all taken care of well the i think what changed everything and uh is uh y'all were y'all the only ones that make any money for TI here in the last two years",
+    "sentence2": "In the past few years, no one has made any money for TI.",
+    "score": 0
+  },
+  {
+    "sentence1": "But what he means by what he shows is anybody's guess.",
+    "sentence2": "His presentation was extremely clear.",
+    "score": 0
+  },
+  {
+    "sentence1": "you know and held over for trial",
+    "sentence2": "Released and no trial.",
+    "score": 0
+  },
+  {
+    "sentence1": "I tipped it upside down.",
+    "sentence2": "I turned it over.",
+    "score": 0
+  },
+  {
+    "sentence1": "Continue along this road to reach the pretty coastal town of Molyvos (also known by its ancient name, Mithymna), a popular spot for tourists.",
+    "sentence2": "Molyvos is a run down town in the center of the region, not popular at all with tourists.",
+    "score": 0
+  },
+  {
+    "sentence1": "For a screening test, high sensitivity is the most desirable parameter.",
+    "sentence2": "They wanted to have low sensitivity. ",
+    "score": 0
+  },
+  {
+    "sentence1": "What involvement did other key players have in connection with these accountability failures?",
+    "sentence2": "Nobody was concerned about the failures.",
+    "score": 0
+  },
+  {
+    "sentence1": "In the violet shade of morning, Ca'daan saw Adrin standing on the dunes in sword practice.",
+    "sentence2": "Adrin was lost in the night as a swordsman chased after him that many knew as \"Ca'daan\".",
+    "score": 0
+  },
+  {
+    "sentence1": "i bet even my cats could do that",
+    "sentence2": "My cats could probably do that because they are brilliant.",
+    "score": 1
+  },
+  {
+    "sentence1": "Southeast of Saint-Jean-de-Luz is Ascain, with a village square surrounded by enchanting 17th-century houses and a typical wooden-galleried church.",
+    "sentence2": "The church was built in the 20th century.",
+    "score": 0
+  },
+  {
+    "sentence1": "He distinctly said you were to repair the sky.",
+    "sentence2": "He only muttered something about splitting the sky.",
+    "score": 0
+  },
+  {
+    "sentence1": "Lorenzo the Magnificent and brother Giuliano lie in simple tombs beneath the sculptor's Madonna and Child, flanked by lesser artists' statues of the family patron saints Cosmas and Damian.",
+    "sentence2": "Lorenzo and Giuliano were related to one another.",
+    "score": 0
+  },
+  {
+    "sentence1": "They watched me constantly for weeks.",
+    "sentence2": "They left me on my own for weeks.",
+    "score": 0
+  },
+  {
+    "sentence1": "It has a staff of about 100 employees, including attorneys and support staff, in 10 branch offices.",
+    "sentence2": "The 10 branches had close to 100 employees.",
+    "score": 0
+  },
+  {
+    "sentence1": "First we applied three alternative concentrationresponse (C-R) functions to estimate premature mortality incidence.",
+    "sentence2": "No CR functions were applied to the incidence. ",
+    "score": 0
+  },
+  {
+    "sentence1": "All we've done is checked that the first two creditors divided their collective share of $125 appropriately",
+    "sentence2": "The first two creditors divided their shares correctly.",
+    "score": 0
+  },
+  {
+    "sentence1": "However, little evidence remains of that era some ceramics in the museum, a few fortifications, a network of irrigation ditches.",
+    "sentence2": "There is little evidence left of that era.",
+    "score": 0
+  },
+  {
+    "sentence1": ", chief knowledge officers or chief technical officers) that diffuse responsibility across several senior-level managers.",
+    "sentence2": "Chief officers often spread their responsibility among senior-level managers. ",
+    "score": 0
+  },
+  {
+    "sentence1": "oh no well i don't find a lot of time to watch TV and a lot of the time i find it during the day when i'm rocking my little girl to sleep  so i watch a lot of reruns old shows",
+    "sentence2": "I enjoy watching the old reruns because I find them calming.",
+    "score": 1
+  },
+  {
+    "sentence1": "so that will definitely help in taxes and what you will get back",
+    "sentence2": "You'll probably get a lot bigger refund.",
+    "score": 1
+  },
+  {
+    "sentence1": "The smart Annie was not in evidence.",
+    "sentence2": "The clever Annie was not in proof.",
+    "score": 0
+  },
+  {
+    "sentence1": "Yes, Mistuh Reese, suh? ",
+    "sentence2": "THe slave spoke to Mr Reece.",
+    "score": 1
+  },
+  {
+    "sentence1": "At the heart of the sanctuary, a small granite shrine once held the sacred barque of Horus himself.",
+    "sentence2": "Horus has a shrine.",
+    "score": 0
+  },
+  {
+    "sentence1": "Postal Service's domestic rates for First-Class and Priority Mail to the inbound mail distribution described above.",
+    "sentence2": "Usps domestic rates for priority and first class mail ate described above. ",
+    "score": 0
+  },
+  {
+    "sentence1": "do you like um any rock and roll at all",
+    "sentence2": "So you don't like rock and roll?",
+    "score": 0
+  },
+  {
+    "sentence1": "Dining room, grill, pub.",
+    "sentence2": "It has a dining room but no grill.",
+    "score": 0
+  },
+  {
+    "sentence1": "What have you, my friend, he cried, \"that you remain there like, how do you say it?, ah, yes, the stuck pig?\" I explained that I was afraid of obliterating any foot-marks. ",
+    "sentence2": "I didn't say anything when he asked me that question.",
+    "score": 0
+  },
+  {
+    "sentence1": "But such a show would have meant the museum taking a hard look at its own, often controversial part in the art world.",
+    "sentence2": "The museum didn't want to look too closely into its part in the art world.",
+    "score": 1
+  },
+  {
+    "sentence1": "But you will find fishermen, many of whom are direct descendants of some 600 Genoese mercenaries King Charles III rescued from captivity on Tunisia's Tabarka Island, hence the name.",
+    "sentence2": "Tabarka Island is part of Turkey.",
+    "score": 0
+  },
+  {
+    "sentence1": "And while we allow people to give a kidney to their child, we do not allow them to donate their heart.",
+    "sentence2": "You can't always donate organs to your child. ",
+    "score": 1
+  },
+  {
+    "sentence1": "Unbar, Francisco! he called in Spanish.",
+    "sentence2": "He call Francisco in Spanish.",
+    "score": 0
+  },
+  {
+    "sentence1": "The Commission is unwilling to recommend an interpretation of the statute that produces such consequences, absent an express congressional intent that such burdens be imposed.",
+    "sentence2": "Unless congress expresses an intent that such burdens be imposed, the Commission is unwilling to recommend an interpretation of the statute that produces such consequences.",
+    "score": 0
+  },
+  {
+    "sentence1": "Who could there be?\"",
+    "sentence2": "The speaker doesn't know who it is.",
+    "score": 1
+  },
+  {
+    "sentence1": "My wife and daughter are the ones doing Riley.",
+    "sentence2": "My grandmother and grandmother's lesbian lover are doing Riley.",
+    "score": 0
+  },
+  {
+    "sentence1": "Take a backwaters trip through the lagoons and around the island villages.",
+    "sentence2": "Backwater rides are popular in this area. ",
+    "score": 1
+  },
+  {
+    "sentence1": "Alcohol use and trauma.",
+    "sentence2": "Trauma is the leading cause of alcohol abuse.",
+    "score": 1
+  },
+  {
+    "sentence1": "In a culture where Xena and Hercules have hit TV shows, it's a lot more fun imagining that you are a valiant warrior doing business-as-battle than it is to admit that you're a pudgy functionary whose most daring deed is to draft a boldly worded memo.",
+    "sentence2": "Xena and Hercules both have hit shows on CBS.",
+    "score": 1
+  },
+  {
+    "sentence1": "Laibson's imperfect altruists face a far subtler problem--they're not just weighing costs and benefits, they're engaged in games of strategy against their future selves.",
+    "sentence2": "Laibson has selfish people that follow him.",
+    "score": 0
+  },
+  {
+    "sentence1": "'But if they catch me...'",
+    "sentence2": "But if they kill me",
+    "score": 0
+  },
+  {
+    "sentence1": "The win brought tears to her eyes, of course, and prompted a phone call to Mom in India.",
+    "sentence2": "She called her father after she lost, smiling as she did it.",
+    "score": 0
+  },
+  {
+    "sentence1": "The New York Times ' Janet Maslin says the film works precisely because it is derivative--its stars, Matt Dillon and Gary Sinise, emulate the characters in The Usual Suspects , which gives them extraordinary opportunities to preen.",
+    "sentence2": "The movie stars Matt Dillon and Gary Sinise.",
+    "score": 0
+  },
+  {
+    "sentence1": "The Muslim campaign for Partition was led by London-trained Bombay lawyer, Muhammad Ali Jinnah.",
+    "sentence2": "Muhammad Ali Jinnah went to London to campaign for Partition. ",
+    "score": 0
+  },
+  {
+    "sentence1": "it's um it's it's amazingly less expensive than it is",
+    "sentence2": "It's much more expensive that way.",
+    "score": 0
+  },
+  {
+    "sentence1": "Automobile includes small trucks.",
+    "sentence2": "Small trucks are not great automobiles.",
+    "score": 1
+  },
+  {
+    "sentence1": "You're quite safe.\" Her breath came more normally, and the colour was returning to her cheeks.",
+    "sentence2": "She started recovering from the mild shock she had gone through.",
+    "score": 1
+  },
+  {
+    "sentence1": "probably so probably so um-hum",
+    "sentence2": "probably yes so uh-huh",
+    "score": 0
+  },
+  {
+    "sentence1": "After its early failure, Hubble now provides vital clues to the universe.",
+    "sentence2": "Hubble failed earlier becuase they weren't making enough discoveries.",
+    "score": 1
+  },
+  {
+    "sentence1": "well they all come back from from the bottom",
+    "sentence2": "They bounce back from the bottom.",
+    "score": 0
+  },
+  {
+    "sentence1": "A library with the maximum allowable e-rate subsidy of 90 percent would still find itself paying a monthly Internet bill of $186.",
+    "sentence2": "A library has a maximum subsidy of 90% for utilities.",
+    "score": 1
+  },
+  {
+    "sentence1": "and i was never in a minor league city until i came Dallas we were a minor league city when i came here in fifty nine and i immediately bought season tickets uh to the class triple A uh uh Dallas Rangers",
+    "sentence2": "Dallas was always in the majors.",
+    "score": 0
+  },
+  {
+    "sentence1": "Just a hunch.",
+    "sentence2": "It is just a guess",
+    "score": 0
+  },
+  {
+    "sentence1": "The SPAN  A Guide to Legal Services Planning.",
+    "sentence2": "The SPAN A guide is a guide used for legal service planning.",
+    "score": 0
+  },
+  {
+    "sentence1": "yeah i think they did a pretty good job but  they didn't follow it exactly but they did give it you know do it justice",
+    "sentence2": "They made a good rendition.",
+    "score": 0
+  },
+  {
+    "sentence1": "The Citizens of the United States of America have a right to applaud themselves for having given to mankind examples of an enlarged and liberal  a policy worthy of imitation.",
+    "sentence2": "The citizens of the U.S. are supposed to be proud of themselves.",
+    "score": 0
+  },
+  {
+    "sentence1": "She always says the right thing, does the right thing, wears the right clothes.",
+    "sentence2": "She does, says, and wears everything perfectly, consistently. ",
+    "score": 0
+  },
+  {
+    "sentence1": "Leave the river briefly to loop east around Talcy, with its Romanesque church and the 13th-century chateau of Thizy, before ending your trip at Montr??al.",
+    "sentence2": "It is recommended that you leave river briefly before ending your trip at Montr\u00e9al.",
+    "score": 0
+  },
+  {
+    "sentence1": "yeah and i you know i think defense really is what wins wins uh in the long run you can have the best half back there is or the best quarterback but if they don't have any blocking maybe they can't do anything",
+    "sentence2": "I think a good defense is the most important thing you need to win games.",
+    "score": 0
+  },
+  {
+    "sentence1": "'You killed Derry.'",
+    "sentence2": "Derry is still alive. ",
+    "score": 0
+  },
+  {
+    "sentence1": "Twelve days later, I made my second.",
+    "sentence2": "It took twelve days to make another.",
+    "score": 0
+  },
+  {
+    "sentence1": "The number of Arawak had already fallen dramatically, so the Spanish began to import slaves from Africa to work the land; the first Africans arrived in 1517.",
+    "sentence2": "The Spanish had plenty of Arawak to use as slaves.",
+    "score": 0
+  },
+  {
+    "sentence1": "and enjoy nature and uh kind of wipe out the stress of everyday life i'd always",
+    "sentence2": "I like to get out in nature and de-stress.",
+    "score": 0
+  },
+  {
+    "sentence1": "but i i don't ever feel the need to dress that warmly i i don't have to travel that far to work uh what what what what about uh your clothes in the winter time up there",
+    "sentence2": "I have to catch a plane to go to work.",
+    "score": 0
+  },
+  {
+    "sentence1": "Mrs. Vandemeyer, she read, \"20 South Audley Mansions.",
+    "sentence2": "\"20 South Audley Mansions\" is a book that Mrs. Vandemeyer read.",
+    "score": 0
+  },
+  {
+    "sentence1": "I'd call it a bad date.",
+    "sentence2": "I'd consider it a bad date because the girl was rude to the waiter.",
+    "score": 1
+  },
+  {
+    "sentence1": "Traditionally a poor island, the native population has happily embraced the new seasonal lifestyle that has brought them proserity, and the old ways have almost completely disappeared.",
+    "sentence2": "The old ways of the native population has almost completely faded away.",
+    "score": 0
+  },
+  {
+    "sentence1": "For adventurous travelers looking for an introduction to the South, the rewards are rich.",
+    "sentence2": "For those who prefer more safety, other options are available.",
+    "score": 1
+  },
+  {
+    "sentence1": "It covers most but not all close Senate and gubernatorial races.)",
+    "sentence2": "The radio station covers most close gubernatorial races",
+    "score": 1
+  },
+  {
+    "sentence1": "The component may also be a contractor.",
+    "sentence2": "They were prohibited from being a contractor.",
+    "score": 0
+  },
+  {
+    "sentence1": "The point is not that investing in foreign companies is necessarily a mistake.",
+    "sentence2": "Putting money into foreign companies poses a great risk.",
+    "score": 1
+  },
+  {
+    "sentence1": "Currently OASI and DI make payments to that Account, and HI receives payment.",
+    "sentence2": "The Account is the easiest way to keep track of payments made by OASI and DI on an annual basis.",
+    "score": 1
+  },
+  {
+    "sentence1": "In addition to the effects on household saving choices, individual accounts may also affect the relationship and interactions between Social Security and private pensions.",
+    "sentence2": "Individual accounts would reduce demand for private pensions.",
+    "score": 1
+  },
+  {
+    "sentence1": "Washington Post reports two attempts by private companies to grow embryos--a practice banned among federally funded researchers but allowed in the private sector.",
+    "sentence2": "The Washington Post was the first company to report on attempts of private companies growing embryos.",
+    "score": 1
+  },
+  {
+    "sentence1": "a plausible increase in the penetration of computer ownership by households over the course of a single year.",
+    "sentence2": "Computer ownership by households usually increases in a year.",
+    "score": 0
+  },
+  {
+    "sentence1": "But the explanation is institutional, not ideological.",
+    "sentence2": "Many experts have argued that it's impossible to separate the institutional from the ideological in the circumstances.",
+    "score": 1
+  },
+  {
+    "sentence1": "You and Tuppence have been sticking together like Siamese twins.",
+    "sentence2": "You and Tuppence have been hand in glove.",
+    "score": 0
+  },
+  {
+    "sentence1": "Below the Rond-Point, the mood changes and a pleasant park leads you past two the Petit Palais, all steel and glass, and the Grand Palais.",
+    "sentence2": "The mood changes below the Rond-Point, and a pleasant park leads you past two the Petit Palais, all steel and glass, and the Grand Palais.",
+    "score": 0
+  },
+  {
+    "sentence1": "Participants generally agreed that improvements in corporate governance will bring about improvements in auditing.",
+    "sentence2": "The participants only agreed on a few subjects.",
+    "score": 1
+  },
+  {
+    "sentence1": "AUTHORIZING AND APPROVING ",
+    "sentence2": "Granting permission.",
+    "score": 0
+  },
+  {
+    "sentence1": "Ever see a contemplative Power Ranger?",
+    "sentence2": "Ever see a Power Ranger consider the consequences of their actions?",
+    "score": 1
+  },
+  {
+    "sentence1": "However, I believe that additional actions by the board and AICPA management will be needed to restore trust and confidence in the Institute over the longer-term.",
+    "sentence2": "Trust and confidence in the Institute have been lost forever.",
+    "score": 0
+  },
+  {
+    "sentence1": "Every tube contained a body, and every body was a famous figure from history.",
+    "sentence2": "The tubes held everyday people.",
+    "score": 0
+  },
+  {
+    "sentence1": "Four sikhara domes rise above the entrance-porch in addition the mandapa hall for worshippers; a larger hall for dancing-girls; and the inner sanctuary, surrounded by an ambulatory for walking around the image of the deity.",
+    "sentence2": "Visitors are not permitted to walk around the image of the deity, but must sit quietly in front of it.",
+    "score": 0
+  },
+  {
+    "sentence1": "The great Kanto earthquake of 1923 destroyed some 60,000 homes in Yokohama and took over 20,000 lives.",
+    "sentence2": "Yokohama took a long time to recover from the earthquake.",
+    "score": 1
+  },
+  {
+    "sentence1": "oh was that good i heard oh okay",
+    "sentence2": "Yes, I heard that was really good.",
+    "score": 0
+  },
+  {
+    "sentence1": "The only adult males allowed in the Harem were the Black Eunuchs, who were in charge of security and administration.",
+    "sentence2": "The Black Eunuchs were responsible for the security and administration of the Harem.",
+    "score": 0
+  },
+  {
+    "sentence1": "Due to the amount of information now available, power has shifted from the physician to the patient.",
+    "sentence2": "Doctors have more power than ever thanks to better data availability.",
+    "score": 0
+  },
+  {
+    "sentence1": "i know i am um i don't know anybody in their right mind that says that that i'm doing it because i want to i",
+    "sentence2": "I know there are people who think I'm doing it because I desire to.",
+    "score": 0
+  },
+  {
+    "sentence1": "Isn't that America's last bastion of mobsters, racists, and hacks?",
+    "sentence2": "It's America's first wave of racists. ",
+    "score": 0
+  },
+  {
+    "sentence1": "Let me try it.\" She began snapping her fingers and saying the word eagerly, but nothing happened.",
+    "sentence2": "She became frustrated when the spell didn't work. ",
+    "score": 1
+  },
+  {
+    "sentence1": "There is also an archaeological museum that displays older relics, including examples of Mycenaean pottery.",
+    "sentence2": "The museum is completely empty and doesn't have anything in it.",
+    "score": 0
+  },
+  {
+    "sentence1": "There are nonetheless a number of practices and alternative strategies that senior executives in leading organizations use to help define and institute their CIO positions to effectively meet business needs.",
+    "sentence2": "There are no practices and strategies that can help CIO positions to meet business needs at the moment.",
+    "score": 0
+  },
+  {
+    "sentence1": "By one estimate, Russia's economic output would more than double if the Russians simply sold off their natural resources instead of trying to make something out of them.",
+    "sentence2": "It is possible that Putin wants to develop the financial independence and work skills of Russians and the loss of money in less profit to merely selling off materials is worth the manufacturing expertise gained by his people as they create goods within their own country. ",
+    "score": 1
+  },
+  {
+    "sentence1": "Research over the last 20 years has changed the scientific view of life.",
+    "sentence2": "The last 5 years of research have a higher proportion influence.",
+    "score": 1
+  },
+  {
+    "sentence1": "Perhaps he should clear out even farther and head for California.",
+    "sentence2": "Maybe he should head for California to clear out even farther?",
+    "score": 0
+  },
+  {
+    "sentence1": "yeah well uh we're not uh really sailors but i want some summer soon to um hire a sailboat with a captain since we're not you know versed in that and uh go to the Caribbean",
+    "sentence2": "He has sailed a little.",
+    "score": 1
+  },
+  {
+    "sentence1": "For the moment, he sought refuge in retreat, and left the room precipitately. ",
+    "sentence2": "He stayed put and sat on the floor.",
+    "score": 0
+  },
+  {
+    "sentence1": "In June you can watch dealers haggling over heaps of white silkworm cocoons.",
+    "sentence2": "During the summer months dealers barter for piles of silkworm cocoons.",
+    "score": 0
+  },
+  {
+    "sentence1": "The results looked like Versace melded with Blade Runner , says Newsweek 's Steven Levy.",
+    "sentence2": "Steven Levy has never seen Blade Runner.",
+    "score": 0
+  },
+  {
+    "sentence1": "uh you know if you have a large acid spill you know well gee maybe you better check this person who's handling all these acids you know i work with a wafer fab so we do a lot with chemicals and acids and",
+    "sentence2": "Acid is handled by workers. ",
+    "score": 0
+  },
+  {
+    "sentence1": "The bourgeoisie showed off its new prosperity with extravagant furnishings, silks, satins, and baubles, and in 1852 Paris opened its first department store, Au Bon Marche.",
+    "sentence2": "Paris opened the first department store.",
+    "score": 0
+  },
+  {
+    "sentence1": "He waited for the group on the nearby 18 th green to finish.",
+    "sentence2": "He was patient while hte group on the 18th hole finished.",
+    "score": 0
+  },
+  {
+    "sentence1": "i think so i don't know i just uh i'm unhappy with it but and well i'm i'm sort of semi fortunate right now i'm a graduate student so i don't make that much what i make isn't taxed very highly because i'm still in school",
+    "sentence2": "I have never been a college student.",
+    "score": 0
+  },
+  {
+    "sentence1": "He thought about ways to achieve this life goal for a long time, which means until he learned the basics of text editing, which happened at his first job at a firm trading in plastic bags landfill disposal permits.",
+    "sentence2": "He thought about ways to achieve his life goals for a long time.",
+    "score": 0
+  },
+  {
+    "sentence1": "Kofukuji's many surviving artworks and artifacts are housed in its newest building, the Museum of National Treasures, a fireproof repository built in 1958 to honor Kofukuji's immense cultural and historic importance.",
+    "sentence2": "The fireproof repository built in 1958 is considered to be enough to protect the artifacts.",
+    "score": 0
+  },
+  {
+    "sentence1": "no not near as much as i'd like to i mean i've i tend to stay pretty busy at my job and uh",
+    "sentence2": "If my job wasn't so busy, I do that a lot more.",
+    "score": 1
+  },
+  {
+    "sentence1": "We have a problem concerning gift etiquette.",
+    "sentence2": "The problem we have with gift etiquette is people not knowing how to choose appropriate gifts.",
+    "score": 1
+  },
+  {
+    "sentence1": "The Inglethorps did not appear. ",
+    "sentence2": "The Inglethorps were the first ones to turn up.",
+    "score": 0
+  },
+  {
+    "sentence1": "equivalent to increasing national saving to 19.",
+    "sentence2": "National savings are 18 now.",
+    "score": 1
+  },
+  {
+    "sentence1": "There's a sort of bidding war going on, with law schools offering ever-increasing financial packages -- most of it loans, said Dean Glen. ",
+    "sentence2": "No one really cares about the new students coming to their institutions. ",
+    "score": 0
+  },
+  {
+    "sentence1": "Today, as always, the time-honored occupations of fishing and farming support Martinique's fragile existence the delicious rum also helps.",
+    "sentence2": "Martinique makes more money from fishing than from farming.",
+    "score": 1
+  },
+  {
+    "sentence1": "Comments regarding enforcement issues and questions raised by the regulated industry were addressed by EPA in four Detergent Rule Question and Answer Documents.",
+    "sentence2": "All the issues and questions raised by the regulated industry were addressed by the EPA.",
+    "score": 1
+  },
+  {
+    "sentence1": "The Ottoman Empire surrendered when World War I ended the following year, and, following a declaration by the League of Nations (the forerunner to the United Nations), Britain became rulers of Palestine by mandate.",
+    "sentence2": "If the Ottoman Empire never surrendered, Palestine wouldn't have been ruled by the British.",
+    "score": 1
+  },
+  {
+    "sentence1": "You're mad.",
+    "sentence2": "You are still sane.",
+    "score": 0
+  },
+  {
+    "sentence1": "Inside, a huge mountain of a man, even bigger than Thorn, fought with a huge two-handed axe.",
+    "sentence2": "The man was extremely large. ",
+    "score": 0
+  },
+  {
+    "sentence1": "Jon had only seen two people move that fast in his life",
+    "sentence2": "Jon knew at least 500 people with the same speed.",
+    "score": 0
+  },
+  {
+    "sentence1": "We developed technical assistance funds for creative planning projects and obtained a $15.",
+    "sentence2": "No technical assistance funds for creative projects were developed.",
+    "score": 0
+  },
+  {
+    "sentence1": "I have done my best to target unpopulated areas at unpopulated times, but the guilt still weights heavy on my soul.'",
+    "sentence2": "Many people have died even though the areas were supposed to be unpopulated.",
+    "score": 1
+  },
+  {
+    "sentence1": "5 billion, but households' wealth declined by nearly $842 billion (2 percent) largely as a result of the drop in the market value of households' stock holdings.",
+    "sentence2": "The value of households' stock holdings dropped and this contributed to a decline in household wealth.",
+    "score": 0
+  },
+  {
+    "sentence1": "Thurmond announced a few weeks ago that he won't run again.",
+    "sentence2": "Thurmond was defeated in six previous elections.",
+    "score": 1
+  },
+  {
+    "sentence1": "Auditors will need to exercise professional judgment in assessing the significance of audit results or findings.",
+    "sentence2": "Auditors are not responsible for the assessment of audit results.",
+    "score": 0
+  },
+  {
+    "sentence1": "Although a great deal of attention has been paid to the wealth effect from the stock market boom of the 1990s, half of American households did not own stocks as of 1998, according to the 1998 Survey of Consumer Finance.",
+    "sentence2": "There was no stock market boom in the 1990s. ",
+    "score": 0
+  },
+  {
+    "sentence1": "Where's Tommy? ",
+    "sentence2": "Do you know where Tommy is?",
+    "score": 0
+  },
+  {
+    "sentence1": "Moreover, the realignment will help us to enhance our longterm capacity by improving recruitment and retention; building a succession plan; focusing on emerging issues; and leveraging technology opportunities for improvements to clients, processes, and employees.",
+    "sentence2": "Long term capacity will be improved by the realignment.",
+    "score": 0
+  },
+  {
+    "sentence1": "The lot upon which it is being built had been vacant.",
+    "sentence2": "The lot had been vacant.",
+    "score": 0
+  },
+  {
+    "sentence1": "that if i were living in Mexico and trying to raise several children and i could see across the border where the good life would be for my children",
+    "sentence2": "I believe Mexico is the best place to raise children.",
+    "score": 0
+  },
+  {
+    "sentence1": "Or he hasn't really thought it through, which itself would cast doubt on the depth of his faith.",
+    "sentence2": "His faith may be lacking.",
+    "score": 0
+  },
+  {
+    "sentence1": "Network externalities are in.",
+    "sentence2": "The public is not informed how the network works.",
+    "score": 1
+  },
+  {
+    "sentence1": "We could use their assistance should it be needed.",
+    "sentence2": "We might need help every day.",
+    "score": 1
+  },
+  {
+    "sentence1": "Not a pleasant prospect and not one easily avoided---not even by any reform package or proposal that I've seen.",
+    "sentence2": "The prospect can be avoided by simply following the very valid proposals received.",
+    "score": 0
+  },
+  {
+    "sentence1": "um-hum yeah i end up well yeah i mean i do a lot of like even weekender kind of things i go out for just one or two nights uh it's not my favorite thing but i can do it a lot more often so like over at the uh particularly in the uh the fall and spring when the insects haven't come out yet uh where they're already gone uh you know i spend almost every weekend up in the mountains and i guess i live about five hours away from some place to go hiking where i am now",
+    "sentence2": "I don't mind camping for a couple nights in the fall and spring.",
+    "score": 0
+  },
+  {
+    "sentence1": "The result was the four Raphael Rooms (Stanze di Raffaello).",
+    "sentence2": "The result was 3 Raphael Rooms.",
+    "score": 0
+  },
+  {
+    "sentence1": "Nonetheless, based on discussions with several states, the application review process is estimated to take approximately 38 weeks (9-10 months).",
+    "sentence2": "The application review process was discussed only with corporations. ",
+    "score": 0
+  },
+  {
+    "sentence1": "that can be a mess we camped at the beach one time and that was sort of miserable you just couldn't everywhere you went there was sand you couldn't even when you're eating it it was in your bed",
+    "sentence2": "It is a bad idea to camp and eat on a beach.",
+    "score": 1
+  },
+  {
+    "sentence1": "Grand row! ",
+    "sentence2": "It was a good row, but it could've been better.",
+    "score": 1
+  },
+  {
+    "sentence1": "Acidic deposition or acid rain occurs when SO2 and NOx in the atmosphere react with water, oxygen, and oxidants to form acidic compounds.",
+    "sentence2": "Water and nitrogen in the atmosphere cause the acid rain.",
+    "score": 0
+  },
+  {
+    "sentence1": "Pointe Pitre's cathedral, the Basilique Saint-Pierre et Saint-Paul, features unusual metal columns and balconies.",
+    "sentence2": "The unusual polystyrene columns and balconies of the Basilique Saint-Pierre et Saint-Paul can be found in Pointe Pitre.",
+    "score": 0
+  },
+  {
+    "sentence1": "Had that piquant gipsy face been at the bottom of the crime, or was it 73 the baser mainspring of money? ",
+    "sentence2": "Was that gipsy face responsible for the crime against the old woman?",
+    "score": 1
+  },
+  {
+    "sentence1": "i would sort of like to uh think about something in the way of uh uh sort of a sporty car but not any not you know a luxury type sporty one but um",
+    "sentence2": "I'm thinking about a very functional, ordinary type of car but I wouldn't mind a luxury car either",
+    "score": 0
+  },
+  {
+    "sentence1": "uh no i didn't",
+    "sentence2": "I decided to do it and so I did.",
+    "score": 0
+  },
+  {
+    "sentence1": "we drive sixty five oh yes well",
+    "sentence2": "The vehicle was a hybrid in which we drove 65.",
+    "score": 1
+  },
+  {
+    "sentence1": "Major tourist shops have forms and details.",
+    "sentence2": "The major tourist shops don't have forms.",
+    "score": 0
+  },
+  {
+    "sentence1": "Randy's Tough Love Wrap-Up",
+    "sentence2": "The first version of the Wrap-up of Randy's Tough Love.",
+    "score": 1
+  },
+  {
+    "sentence1": "yeah i'm in North Carolina",
+    "sentence2": "I'm in South Carolina.",
+    "score": 0
+  },
+  {
+    "sentence1": "He has so much experience and, as shown by the last interview, there are a lot of us out there who could benefit from it.",
+    "sentence2": "It was obvious from the interview that he was not very experienced and people should not look up to him. ",
+    "score": 0
+  },
+  {
+    "sentence1": "Serious auto racing arrived in Las Vegas in 1996 with the opening of the Las Vegas Motor Speedway, 17 miles (27 km) north of Downtown on Interstate 15.",
+    "sentence2": "The Las Vegas Motor Speedway continues to be the city's top tourist attraction.",
+    "score": 1
+  },
+  {
+    "sentence1": "He was watching Muller as if the sergeant, rather than his men, was the focal point of any future attack.",
+    "sentence2": "Muller had something fascinating about him, so he attracted all the attention.",
+    "score": 1
+  },
+  {
+    "sentence1": "I could feel gazes on my back; people peering out from between curtains, stealing glimpses through letterboxes.",
+    "sentence2": "It was very strange to feel like people were watching us.",
+    "score": 1
+  },
+  {
+    "sentence1": "Good.' Natalia glared.",
+    "sentence2": "Natalia smiled.",
+    "score": 0
+  },
+  {
+    "sentence1": "Sophisticated research is required to tease apart the complex interactions between These variables.",
+    "sentence2": "The variables are actually quite simple and easy to understand.",
+    "score": 0
+  },
+  {
+    "sentence1": "What about me?",
+    "sentence2": "Me too?",
+    "score": 0
+  },
+  {
+    "sentence1": "they use the the injection thing or whatever it is",
+    "sentence2": "They use lethal injection.",
+    "score": 0
+  },
+  {
+    "sentence1": " He was here less than two days and already he thought of this town as home, something he wished to protect.",
+    "sentence2": "The man left the town after 24 hours.",
+    "score": 0
+  },
+  {
+    "sentence1": " \"All whose true names they could find, that is,\" Garm amended.",
+    "sentence2": "Everyone's true name they could find was added to the book.",
+    "score": 1
+  },
+  {
+    "sentence1": "Since 1917, Grand Central Market (at 317 South Broadway) has provided the city with a daily cornucopia of enticing fresh produce, fish, poultry, meat, and exotic foodstuffs.",
+    "sentence2": "Up until 1917 was when the Central Market gave away free food.",
+    "score": 0
+  },
+  {
+    "sentence1": "According to HUD staff, after the Economic Analysis was submitted to OMB, HUD made changes in the Analysis to maintain its consistency with the rule, to which minor changes had been made as described below.",
+    "sentence2": "It took staff one month to make the changes to the  Economic Analysis.",
+    "score": 1
+  }
+]

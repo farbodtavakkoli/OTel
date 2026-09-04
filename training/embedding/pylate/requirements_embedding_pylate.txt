@@ -1,0 +1,70 @@
+# Environment for train_embedding_pylate.py (PyLate ColBERT late-interaction fine-tuning).
+# These are NOT preinstalled in the base training venv; install into a dedicated venv.
+#
+# NOTE: this venv lives OUTSIDE the repo because / is disk-constrained on the MI355X host:
+#   python3 -m venv /mnt/data_450g/envs/.env_train_embedding_pylate
+#   source /mnt/data_450g/envs/.env_train_embedding_pylate/bin/activate
+#
+# AMD/ROCm: install the ROCm torch wheel FIRST, then this file:
+#   export PIP_CACHE_DIR=/mnt/data_1.5t/pip_cache
+#   pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
+#   pip install -r requirements_embedding_pylate.txt
+#   python -c "import torch; print(torch.__version__, torch.version.hip, torch.version.cuda)"
+#   # expected: 2.11.0+rocm7.2 7.2.26015 None
+# Verified on MI355X (gfx950) / ROCm 7.2.4: installing pylate did NOT pull a CUDA torch —
+# none of its dependencies pin torch. If it ever does, recover with:
+#   pip install --force-reinstall --no-deps torch==2.11.0 \
+#     --index-url https://download.pytorch.org/whl/rocm7.2
+# Do NOT install flash-attn on ROCm (CUDA-only build) — the script auto-selects "sdpa".
+#
+# NVIDIA (CUDA): drop the --index-url line above; the default PyPI torch wheels ship CUDA.
+#   pip install -r requirements_embedding_pylate.txt
+# Optional CUDA-only extras: flash-attn (--attn_implementation flash_attention_2) and the
+# fused MaxSim kernels, pylate[flash-maxsim] / pylate[lik] (--scores_backend flash|lik).
+#
+# VERIFIED on NVIDIA H100 80GB / CUDA 13.0 / driver 580.173.02 (2026-08-22):
+#   export PIP_CACHE_DIR=/dev/shm/h100/pipcache
+#   pip install "torch==2.11.0" numpy          # the torch==2.11.0 pin below IS honorable on CUDA:
+#                                              #   a torch==2.11.0+cu130 wheel exists on default PyPI
+#                                              #   (NO --index-url). A bare `pip install torch` would
+#                                              #   instead give 2.13.0+cu130; either runs on driver 580.
+#   pip install -r requirements_embedding_pylate.txt
+#   python -c "import torch; print(torch.__version__, torch.version.cuda, torch.version.hip)"
+#   # expected: 2.11.0+cu130 13.0 None
+# As on MI355X, installing pylate did NOT pull/clobber torch (no dep pins it) — re-verify anyway;
+# recover if it ever does with:
+#   pip install --force-reinstall --no-deps "torch==2.11.0"   # default PyPI cu130 wheel
+# Single-GPU ColBERT smoke passed (48 steps, loss 0.84->0.57->0.40 per epoch, MaxSim rank-1 correct,
+# PLAID retrieval OK, ~1.7 GiB VRAM). flash-attn NOT installed (BERT backbone; sdpa suffices).
+# See readme_embedding_pylate.md, "Tested on NVIDIA H100 80GB".
+
+# Core late-interaction stack
+pylate==1.6.0
+
+# Pulled in and HARD-PINNED by pylate 1.6.0 (sentence-transformers==5.3.0,
+# transformers<=5.3.0). Listed explicitly so the versions are visible: installing pylate
+# into an existing sentence-transformers 5.7.0 / transformers 5.5.0 venv WILL downgrade
+# both. Use a dedicated venv — see readme_embedding_pylate.md, "Notes & quirks".
+sentence-transformers==5.3.0
+transformers==5.3.0
+tokenizers==0.22.2
+
+# Training stack
+torch==2.11.0
+accelerate==1.14.0
+datasets==5.0.1
+safetensors==0.8.0
+
+# PyLate index/retrieval backends (pulled in by pylate; pinned for reproducibility)
+fast-plaid==1.4.6.2110        # Rust PLAID index — ships a manylinux cp312 wheel, no CUDA toolchain
+fastkmeans==0.5.0             # centroid training for the PLAID index
+usearch==2.26.0               # vector store used by the index backends
+ninja==1.11.1.4
+ujson==5.12.0
+
+# Utilities
+python-dotenv==1.2.2
+numpy==2.5.2
+pandas==3.0.5
+scikit-learn==1.9.0
+scipy==1.18.0

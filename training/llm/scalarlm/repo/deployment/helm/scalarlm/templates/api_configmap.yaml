@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-api-configmap
+  labels:
+    {{- include "scalarlm.labels" . | nindent 4 }}
+data:
+  cray-config.yaml: |
+{{ include "scalarlm.crayConfig" (dict "root" . "serverList" "api" "extra" dict) | indent 4 }}

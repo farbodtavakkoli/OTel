@@ -1,0 +1,21 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: scalarlm-prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+
+  - name: Loki
+    type: loki
+    uid: scalarlm-loki
+    access: proxy
+    url: http://loki:3100
+
+  - name: Tempo
+    type: tempo
+    uid: scalarlm-tempo
+    access: proxy
+    url: http://tempo:3200

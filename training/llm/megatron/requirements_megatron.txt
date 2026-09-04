@@ -1,0 +1,168 @@
+# Environment for train_llm_megatron.py (Megatron-LM continued pre-training).
+#
+# ===========================================================================
+# STRONGLY RECOMMENDED: use the NGC PyTorch container instead of a venv.
+# ===========================================================================
+# Megatron-LM depends on NVIDIA TransformerEngine, Apex, cuDNN fused attention
+# and (optionally) FlashAttention. Building that stack against a pip-installed
+# torch is the single most common way to lose a day. The NGC PyTorch image ships
+# all of it pre-built and version-matched:
+#
+#   docker run --gpus all --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 \
+#     -v $PWD:/workspace -v /data:/data -it \
+#     nvcr.io/nvidia/pytorch:<YY.MM>-py3 bash
+#
+# Pick the <YY.MM> tag from https://catalog.ngc.nvidia.com/orgs/nvidia/containers/pytorch
+# Megatron Core's own docs recommend tracking the latest NGC PyTorch image.
+# Inside the container you still need to clone Megatron-LM and install the small
+# pure-Python extras at the bottom of this file.
+#
+# AMD / ROCm variant: AMD publishes ROCm-enabled Megatron-LM images on Docker Hub
+# (https://hub.docker.com/r/rocm/megatron-lm/tags — e.g. rocm/megatron-lm:v26.1,
+# plus arch-specific v25.9_gfx942 / v25.9_gfx950 tags). DOCUMENTED, NOT VERIFIED
+# from this folder — the image is ~100GB+ on disk and was not pulled during the
+# MI355X test below:
+#
+#   docker run --device=/dev/kfd --device=/dev/dri --ipc=host \
+#     --group-add video --group-add render --cap-add=SYS_PTRACE \
+#     --security-opt seccomp=unconfined \
+#     -v $PWD:/workspace -v /data:/data -it \
+#     rocm/megatron-lm:v26.1 bash
+#
+# AMD's recommended entry point on Instinct GPUs is Primus (Megatron-LM backend,
+# rocm/primus images): https://github.com/AMD-AGI/Primus and the ROCm docs recipe
+# "Training with Primus and Megatron". Do NOT pip-install transformer-engine or
+# apex inside the ROCm container; the ROCm equivalents are pre-built.
+#
+# ---------------------------------------------------------------------------
+# TESTED NVIDIA/CUDA ROUTE — NGC PyTorch container (the recommended path above).
+# 1x NVIDIA H100 80GB (Hopper, cc 9.0), driver 580.173.02, Docker 29.1.3 + CDI,
+# August 2026. Verdict: WORKS — TransformerEngine + Apex + flash-attn are PRE-BUILT
+# in the container, so the four fused-kernel flags the ROCm route disables stay ON
+# (Megatron defaults). Full detail + real logs in readme_megatron.md,
+# "NVIDIA H100 (NGC PyTorch container) — tested".
+#
+#   # nvcr.io is proxy-blocked (403); unset the proxy to pull (pypi.org stays reachable).
+#   unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+#   sudo docker pull nvcr.io/nvidia/pytorch:25.06-py3   # tested tag; any recent YY.MM-py3
+#
+#   # Pin to ONE GPU by UUID on a shared node (see README); then INSIDE the container:
+#   cd /opt && git clone --depth 1 https://github.com/NVIDIA/Megatron-LM.git
+#   pip install --no-build-isolation -e Megatron-LM   # reuses the container's torch/TE/Apex
+#   pip install "nvidia-resiliency-ext>=0.6.0"        # see note below; container ships 0.4.0
+#   pip install -r requirements_megatron.txt          # transformers/dotenv/nltk not in image
+#
+# Container-verified versions (do NOT pip-install torch here — it comes with the image):
+#   torch 2.8.0a0+...nv25.06 (CUDA 12.9) | transformer-engine 2.4.0 | apex (prebuilt,
+#   fused_weight_gradient_mlp_cuda + amp_C) | flash-attn 2.7.4.post1 | cuDNN 9.10.2 |
+#   megatron-core 0.20.0+f481e63 | transformers 5.15.1.
+#
+# nvrx gotcha: with Megatron f481e63, `import megatron.core` in the 25.06 image throws
+#   AttributeError: module 'nvidia_resiliency_ext' has no attribute '__version__'
+# because the image ships nvidia-resiliency-ext 0.4.0 (below Megatron's 0.6.0 minimum and
+# missing __version__). Fix: pip install "nvidia-resiliency-ext>=0.6.0". A newer NGC tag
+# may already bundle a compatible version.
+# ---------------------------------------------------------------------------
+# TESTED ROCm ROUTE — venv + source clone, no container.
+# 2x AMD Instinct MI355X (gfx950), ROCm 7.2.4, Python 3.12.3, August 2026.
+# Verdict: WORKS WITH CHANGES (4 config flags; no source patch). Full detail and
+# the exact train command are in readme_megatron.md, "MI355X (ROCm 7.2) — tested".
+#
+#   cd training/llm/megatron
+#   python3 -m venv .env_train_llm_megatron
+#   source .env_train_llm_megatron/bin/activate     # torchrun must be on PATH
+#
+#   # 1. ROCm torch. Installs torch 2.11.0+rocm7.2 (torch.version.hip 7.2.26015)
+#   #    + triton-rocm 3.6.0. The index also carries 2.12.1 / 2.13.0 for cp312.
+#   pip install --index-url https://download.pytorch.org/whl/rocm7.2 torch==2.11.0
+#
+#   # 2. Build deps for megatron.core.datasets.helpers_cpp (pybind11 C++, no CUDA
+#   #    in it — it compiles fine on a ROCm host). Install these BEFORE the
+#   #    editable install or --no-build-isolation fails at metadata generation.
+#   pip install pybind11 "packaging>=24.2" numpy
+#
+#   # 3. Megatron-LM source clone. Keeping it inside the git-ignored venv dir
+#   #    leaves `git status` clean. Tested at commit f481e63 (megatron-core
+#   #    0.20.0+f481e63). NO transformer-engine, NO apex, NO flash-attn.
+#   git clone --depth 1 https://github.com/NVIDIA/Megatron-LM.git \
+#     .env_train_llm_megatron/Megatron-LM
+#   pip install --no-build-isolation -e .env_train_llm_megatron/Megatron-LM
+#
+#   # 4. The pure-Python extras at the bottom of this file.
+#   pip install -r requirements_megatron.txt
+#
+# Config flags that MUST change on ROCm (TE/Apex fused kernels are CUDA-only and
+# default to ON). Pass them as launcher overrides, no TOML edit needed:
+#   --set transformer_impl='"local"'          # TOML ships "transformer_engine"
+#   --set no_rope_fusion=true                 # else: apply_rope_fusion needs TE >= 1.4
+#   --set no_persist_layer_norm=true          # else: persist_layer_norm not supported by torch LayerNorm
+#   --set no_gradient_accumulation_fusion=true# else: fused_weight_gradient_mlp_cuda not found (Apex)
+# And sequence_parallel must stay false: torch LayerNorm cannot do SP without TE.
+#
+# NOT installed on ROCm, on purpose:
+#   transformer-engine, apex, flash-attn — all CUDA-only. megatron.core detects
+#   their absence and falls back to torch optimizers / norms / multi_tensor
+#   helpers with UserWarnings; that fallback is what makes the ROCm run work.
+# ---------------------------------------------------------------------------
+# ===========================================================================
+#
+# ---------------------------------------------------------------------------
+# 1. Megatron-LM is a SOURCE install for this use case.
+#    `uv pip install megatron-core` gives you the library, but pretrain_gpt.py,
+#    tools/preprocess_data.py and the examples only exist in the git tree, and
+#    this folder shells out to them. Clone it:
+#
+#      git clone https://github.com/NVIDIA/Megatron-LM.git
+#      cd Megatron-LM
+#      pip install -e .
+#
+#    Building from source can OOM the compiler; cap parallel jobs if it does:
+#      MAX_JOBS=4 pip install -e .
+# ---------------------------------------------------------------------------
+# 2. TransformerEngine is required by transformer_impl = "transformer_engine"
+#    (the setting in megatron_cpt_config.toml). If you are NOT in the NGC
+#    container, it must be built against your installed torch, which means
+#    --no-build-isolation - otherwise pip resolves a second, different torch
+#    inside the isolated build env and the extension links against the wrong one:
+#
+#      pip install --no-build-isolation transformer-engine[pytorch]
+#
+#    Same rule for apex and flash-attn if you choose to build them.
+# ---------------------------------------------------------------------------
+# 3. Pure-Python extras used by this folder and by preprocessing. Safe from PyPI.
+
+# Hugging Face tokenizer stack (--tokenizer-type HuggingFaceTokenizer) and the
+# gated-model download path.
+transformers>=4.51.0
+tokenizers>=0.21.0
+huggingface_hub>=0.34.0
+sentencepiece>=0.2.0
+
+# Numerics / preprocessing.
+numpy>=1.26.0
+nltk>=3.9                     # only needed for --split-sentences preprocessing
+
+# Metrics logging.
+tensorboard>=2.18.0
+# wandb>=0.18.0               # for [logging].wandb_project / wandb_exp_name
+
+# Used by this launcher (dev.env loading). tomllib is stdlib on Python 3.11+.
+python-dotenv>=1.0.1
+
+# ---------------------------------------------------------------------------
+# 4. Checkpoint conversion lives in a SEPARATE repo: Megatron-Bridge.
+#    Upstream's docs/llama_mistral.md now points all HF <-> Megatron conversion
+#    at it. Install it in its own environment if you prefer:
+#
+#      git clone https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
+#      pip install -e Megatron-Bridge
+# ---------------------------------------------------------------------------
+# NOT listed here on purpose:
+#   torch          - comes from the NGC container, or install the CUDA build that
+#                    matches your TransformerEngine/Apex build. Do not let a
+#                    transitive dep pick it for you. On ROCm, install it first
+#                    from the rocm7.2 index (see the tested route above) so the
+#                    editable Megatron install does not pull a CUDA wheel.
+#   transformer-engine / apex / flash-attn - see note 2; container or
+#                    --no-build-isolation, never a plain `pip install`.
+# ---------------------------------------------------------------------------

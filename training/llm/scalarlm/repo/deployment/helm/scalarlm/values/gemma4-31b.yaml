@@ -1,0 +1,33 @@
+# Gemma-4 31B Instruct — tool-calling + reasoning parser wired for the
+# gemma4 jinja chat template. Uses a hostPath cache (fast, pins pods to
+# the host that has the cache already populated).
+
+image:
+  tag: v1.107
+
+model: google/gemma-4-31B-it
+gpu_memory_utilization: 0.85
+
+replicaCounts:
+  inference: 1
+  training: 1
+
+storage:
+  jobs:
+    size: 10Gi
+  cache:
+    kind: hostPath
+    hostPath: /root/.cache
+
+vllm:
+  extraArgs:
+    - "--max-cudagraph-capture-size=8"
+    - "--kv-cache-dtype=fp8"
+    - "--tool-call-parser=gemma4"
+    - "--reasoning-parser=gemma4"
+    - "--chat-template=/app/cray/vllm/examples/tool_chat_template_gemma4.jinja"
+
+# cloudflared.tunnelToken is intentionally blank here — supply via
+# `helm upgrade --set cloudflared.tunnelToken=...` or an existingSecret.
+cloudflared:
+  enabled: true

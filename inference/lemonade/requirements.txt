@@ -1,0 +1,21 @@
+# Shared client environment for inference/lemonade (all three leaves).
+# The Lemonade SERVER is the C++ Lemonade Server 11.7.0 embeddable build documented in
+# README.md. This venv is ONLY for the folder's client scripts (HTTP calls). The actual
+# runtime is the C++ server plus its own managed backend venv inside the Lemonade cache.
+#   python3 -m venv .env_lemonade && source .env_lemonade/bin/activate
+#   pip install -r requirements.txt
+#
+# --- SERVER backend, per hardware (installed via `lemonade backends install <recipe>`) ---
+# AMD MI355X (gfx950, ROCm 7.2.4): `llamacpp:rocm`  -> pulls an arch-matched
+#   rocm_sdk_device_gfx950 wheel + prebuilt ROCm llama.cpp (build b10470). The pip
+#   `lemonade-sdk` 9.x route CANNOT install a gfx950 backend; use the C++ server. VERIFIED.
+# NVIDIA H100 (Hopper, sm_90, cc 9.0, driver 580.173.02, CUDA 13.0 host): `llamacpp:cuda`
+#   -> pulls prebuilt CUDA llama.cpp `llama-b10397-ubuntu-cuda-sm_90-x64.tar.xz` (build
+#   b10397, bundles its own CUDA 12.9 runtime: libcublas/libcudart .so.12). ~41 s, no
+#   compiler. Lemonade auto-detects "NVIDIA H100 80GB HBM3 (compute 9.0, sm_90)" and
+#   honours CUDA_VISIBLE_DEVICES. VERIFIED 2026-08-22, GPU 6, single-GPU smoke.
+#   NOTE: `vllm` has NO cuda backend in Lemonade 11.7.0 (rocm-only); on NVIDIA the only
+#   GPU path is llama.cpp/GGUF via llamacpp:cuda. See README.md.
+# The client requirements below are hardware-neutral (identical on both).
+requests==2.34.2
+python-dotenv==1.2.3

@@ -1,0 +1,144 @@
+# Shared client/pip environment for inference/sglang (all three leaves).
+# NVIDIA/H100 users: SKIP the ROCm caveats below -- the PIP ROUTE SERVES on H100 (verified
+# 2026-08-22). Jump to the "NVIDIA / CUDA variant" block further down for the working recipe.
+# IMPORTANT (ROCm ONLY): the pip route CANNOT SERVE on ROCm/gfx950 -- sglang's HIP path imports
+# sgl_kernel (CUDA-only wheels). On ROCm, serving happens in the vendor container documented in
+# README.md; that venv exists for the client scripts and for reproducing the pip-route
+# analysis. Verified on MI355X (ROCm 7.2.4), 2026-08.
+#   python3 -m venv .env_sglang && source .env_sglang/bin/activate
+#   pip install -r requirements.txt
+# Verified 2026-08-20 on 2x AMD Instinct MI355X (gfx950), ROCm 7.2.4, Python 3.12.3.
+#
+# READ THIS FIRST (ROCm): `pip install sglang` DOES NOT give you a working ROCm server.
+# sglang 0.5.17 declares CUDA-only packages as HARD (non-extra) dependencies, and the two
+# native kernel packages it imports on HIP -- `sgl_kernel` and `aiter` -- have NO ROCm wheel
+# on PyPI. The pip route below reproduces exactly how far you get (server imports, weights
+# load, KV cache allocates, then the first kernel call fails). See readme_sglang_llm.md
+# for the exact failure frame and the supported ROCm route (lmsysorg/sglang-rocm image).
+#
+# ---------------------------------------------------------------------------------------
+# AMD / ROCm -- the route that was actually run here (step 1 FIRST, it must not be reordered)
+# ---------------------------------------------------------------------------------------
+#   python3 -m venv .env_inference_llm_sglang
+#   source .env_inference_llm_sglang/bin/activate
+#   pip install -U pip
+#   # 1) ROCm torch BEFORE anything else, from the ROCm index (never PyPI):
+#   pip install torch==2.11.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm7.2
+#   # 2) sglang WITHOUT its dependency wall (plain `pip install sglang` drags in
+#   #    flashinfer/cuda-python/sglang-kernel and replaces ROCm torch with a CUDA wheel):
+#   pip install --no-deps sglang==0.5.17
+#   # 3) the CPU/pure-python dependency set below:
+#   pip install -r requirements_sglang_llm.txt
+#   # 4) ALWAYS re-verify torch is still ROCm after any pip step:
+#   python -c "import torch; print(torch.__version__, torch.version.hip)"   # 2.11.0+rocm7.2 7.2.26015
+#   # If a CUDA torch got pulled in, restore it with:
+#   #   pip install --force-reinstall --no-deps torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
+#
+# Do NOT pip-install flash-attn on this box (CUDA-only build). SGLang's ROCm attention
+# paths are aiter / triton, selected automatically ("Use aiter backend by default").
+# Do NOT `pip install aiter`: the PyPI project named `aiter` is an unrelated async-iterator
+# library (richardkiss/aiter), NOT AMD's AITER. Installing it will shadow the real one.
+#
+# ---------------------------------------------------------------------------------------
+# NVIDIA / CUDA variant -- VERIFIED WORKING on H100 (cc9.0, CUDA 13.0, driver 580.173.02),
+# 2026-08-22, Python 3.12.3. THE PIP ROUTE SERVES ALL THREE WORKLOADS -- no container.
+# This flips the ROCm finding above: sgl_kernel is CUDA-only, which BLOCKS ROCm but is
+# exactly the right artifact on NVIDIA (`import sgl_kernel` succeeds; rotary_embedding present).
+# ---------------------------------------------------------------------------------------
+#   python3 -m venv .env_sglang && source .env_sglang/bin/activate
+#   pip install -U pip
+#   pip install torch numpy                 # -> torch 2.13.0+cu130 (proxy ON: pypi.org allowlisted)
+#   python -c "import torch;print(torch.__version__,torch.version.cuda)"   # 2.13.0+cu130 13.0
+#   unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy  # sgl_kernel/flashinfer: pypi 403s them via proxy
+#   pip install "sglang[all]"               # -> sglang 0.5.18, sglang-kernel 0.4.6.post1, flashinfer 0.6.17, flash-attn-4 4.0.0b19
+#   python -c "import sgl_kernel;print('sgl_kernel OK')"                    # OK -- impossible on ROCm
+#   python -c "import torch;print(torch.__version__,torch.version.cuda)"   # STILL 2.13.0+cu130 (no clobber; no force-reinstall)
+#   # serve with PLAIN CUDA_VISIBLE_DEVICES (no HIP_VISIBLE_DEVICES); Hopper auto-selects fa3 attention + flashinfer sampling.
+#   # 27B FP8 (Qwen3.8-27B-FP8) is a Qwen3_5ForConditionalGeneration hybrid-GDN VL arch -- pass --trust-remote-code; it loads
+#   #   natively FP8 (E4M3, 28.47 GB) and generates correct text. TRT-LLM 1.2.1 could not load this arch; SGLang 0.5.18 does.
+#
+# H100 pip-route versions (verified 2026-08-22):
+# torch==2.13.0+cu130            (pip install torch, no --index-url; native CUDA 13)
+# torchvision==0.28.0+cu130      (pulled by sglang[all])
+# torchaudio==2.11.0+cu130       (pulled by sglang[all])
+# numpy==2.3.5
+# sglang==0.5.18                 (pip install "sglang[all]")
+# sglang-kernel==0.4.6.post1     (CUDA wheel -- the import that is impossible on ROCm)
+# flashinfer_python==0.6.17
+# flash-attn-4==4.0.0b19
+# transformers==5.12.1           (SGLang's in-tree Qwen3_5ForConditionalGeneration loads the 27B; the config's 5.8.0.dev0 pin is NOT required)
+# xgrammar==0.2.1
+#
+# ---------------------------------------------------------------------------------------
+# Torch stack -- installed separately in step 1 above; pins recorded for reproducibility.
+# ---------------------------------------------------------------------------------------
+# torch==2.11.0+rocm7.2          (download.pytorch.org/whl/rocm7.2)
+# torchvision==0.26.0+rocm7.2
+# torchaudio==2.11.0+rocm7.2
+# sglang==0.5.17                 (installed with --no-deps in step 2)
+
+# Serving / runtime
+fastapi==0.141.1
+uvicorn==0.52.4
+uvloop==0.22.1
+watchfiles==1.2.0
+python-multipart==0.0.32
+orjson==3.12.0
+msgspec==0.21.1
+pyzmq==27.1.0
+aiohttp==3.14.3
+requests==2.34.2
+psutil==7.2.2
+setproctitle==1.3.7
+prometheus-client==0.24.1
+py-spy==0.4.2
+
+# Model / tokenizer stack
+transformers==5.12.1
+datasets==5.0.1
+compressed-tensors==0.18.0
+sentencepiece==0.2.2
+tiktoken==0.14.0
+gguf==0.19.0
+timm==1.0.16
+pillow==12.3.0
+einops==0.8.2
+numpy==2.3.5
+scipy==1.18.0
+numba==0.65.1
+torchao==0.17.0
+torch_memory_saver==0.0.9.post1
+
+# Constrained decoding / parsers
+xgrammar==0.2.1
+outlines==0.1.11
+llguidance==1.8.0
+interegular==0.3.3
+partial-json-parser==0.2.1.1.post7
+
+# Misc imports sglang touches at import time
+apache-tvm-ffi==0.1.13.post3
+blobfile==3.2.0
+modelscope==1.39.1
+openai==3.3.1
+openai-harmony==0.0.8
+anthropic==0.125.0
+mistral_common==1.11.5
+kernels==0.14.1
+easydict==1.13
+distro==1.9.0
+soundfile==0.14.0
+zstandard==0.25.0
+xxhash==4.0.1
+pybase64==1.5.0
+ipython==9.16.1
+ninja==1.13.0
+build==1.5.0
+packaging==26.3
+pydantic==2.13.4
+tqdm==4.70.0
+smg-grpc-servicer==0.8.0
+helion==1.4.0
+
+# Client script
+python-dotenv==1.2.3

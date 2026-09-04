@@ -1,0 +1,55 @@
+# H100 (CUDA 13.0) smoke variant of config_sft_lora.yaml — single GPU, tiny model.
+# Verified 2026-08-22 on 1x NVIDIA H100 80GB HBM3 (cc 9.0), torch 2.13.0+cu130,
+# LLaMA-Factory 0.9.6.dev0, transformers 5.8.0. See readme_llamafactory.md section 2.
+# Launch: CUDA_VISIBLE_DEVICES=7 MASTER_PORT=29663 \
+#   python3 train_llm_llamafactory.py --config config_sft_lora_smoke_h100.yaml --num-gpus 1
+
+### model
+model_name_or_path: Qwen/Qwen3-0.6B   # tiny stand-in for Qwen/Qwen3-8B; same qwen3_nothink template
+trust_remote_code: true
+flash_attn: sdpa                # H100: prebuilt flash-attn 2.8.3 wheel ABI-mismatches torch 2.13+cu130
+                                # (undefined symbol in libc10); sdpa is the working fallback here.
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 64
+lora_alpha: 128
+lora_dropout: 0.0
+lora_target: all
+
+### dataset
+dataset: otel_chat_sft
+dataset_dir: ./data
+template: qwen3_nothink
+cutoff_len: 512
+overwrite_cache: true
+preprocessing_num_workers: 2
+dataloader_num_workers: 0
+packing: false
+
+### output
+output_dir: /dev/shm/h100/out/llamafactory/sft_lora_smoke
+logging_steps: 1
+save_steps: 100
+save_total_limit: 1
+plot_loss: false
+overwrite_output_dir: true
+save_only_model: false
+report_to: none
+
+### train — 3 epochs over 9 rows = 27 optimizer steps; visible decreasing loss, not a training run
+num_train_epochs: 3.0
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 1
+learning_rate: 1.0e-4
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+bf16: true
+ddp_timeout: 180000000
+seed: 42
+
+### eval — disabled for the smoke run ("no" must stay quoted or YAML reads it as False)
+val_size: 0.0
+eval_strategy: "no"
