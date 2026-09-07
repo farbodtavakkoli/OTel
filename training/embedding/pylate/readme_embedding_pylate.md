@@ -91,16 +91,23 @@ Design notes:
 
 ## Install
 
-Python 3.12, in its own venv. **The venv is deliberately outside the repo**: `/` on this
-host is at 94% and existing venvs already total 404 GB, so it lives on the large data
-volume:
+Python 3.12, in its own venv (PyLate hard-pins sentence-transformers — see
+*Notes & quirks* — so do not share a venv with the other embedding folders). If the root
+filesystem is tight, put the venv outside the repo on a larger volume:
 
 ```
-/mnt/data_450g/envs/.env_train_embedding_pylate
+$DATA_DIR/envs/.env_pylate
 ```
 
-> This venv survived the 2026-08 repo reorg (it lives outside the repo); the in-repo
-> campaign venvs were removed in that reorg.
+The commands below refer to a few machine-specific locations through environment
+variables — set them to suit your machine:
+
+```bash
+# Set these to suit your machine
+export DATA_DIR=/path/to/data          # venv + pip cache location
+export OUTPUT_DIR=/path/to/outputs     # training artifacts
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+```
 
 ### AMD (ROCm) — the verified route
 
@@ -108,9 +115,9 @@ Install torch from the ROCm wheel index **first**, then PyLate, then re-check th
 not swap in a CUDA torch:
 
 ```bash
-export PIP_CACHE_DIR=/mnt/data_1.5t/pip_cache
-python3 -m venv /mnt/data_450g/envs/.env_train_embedding_pylate
-source /mnt/data_450g/envs/.env_train_embedding_pylate/bin/activate
+export PIP_CACHE_DIR=$DATA_DIR/pip_cache
+python3 -m venv $DATA_DIR/envs/.env_pylate
+source $DATA_DIR/envs/.env_pylate/bin/activate
 pip install --upgrade pip
 pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
 pip install -r requirements_embedding_pylate.txt
@@ -125,7 +132,7 @@ pip install --force-reinstall --no-deps torch==2.11.0 \
   --index-url https://download.pytorch.org/whl/rocm7.2
 ```
 
-**On this host it was not needed** — `pip install pylate==1.6.0` left
+**In practice it was not needed** — `pip install pylate==1.6.0` left
 `torch 2.11.0+rocm7.2` untouched, because none of PyLate's dependencies pin torch.
 
 **Never `pip install flash-attn`** — it is a CUDA-only build. The script selects `sdpa`
@@ -158,10 +165,10 @@ HF_TOKEN=hf_xxxxxxxxxxxxxxxx
 ```
 
 None of the default models are gated, so the token is optional here. Point the Hub cache
-at the large volume:
+at a volume with room for the model downloads:
 
 ```bash
-export HF_HOME=/mnt/data_1.5t/hf_cache
+export HF_HOME=/path/to/hf_cache
 ```
 
 ## Data
@@ -203,20 +210,20 @@ folder** and is the default `--train_file`, so the smoke test runs with no argum
 ### Smoke test (single GPU)
 
 ```bash
-source /mnt/data_450g/envs/.env_train_embedding_pylate/bin/activate
-export HIP_VISIBLE_DEVICES=4 CUDA_VISIBLE_DEVICES=4 HF_HOME=/mnt/data_1.5t/hf_cache
+source $DATA_DIR/envs/.env_pylate/bin/activate
+export HIP_VISIBLE_DEVICES=4 CUDA_VISIBLE_DEVICES=4
 python train_embedding_pylate.py \
-  --output_dir /mnt/data_450g/outputs/train_embedding_pylate/smoke1gpu \
+  --output_dir $OUTPUT_DIR/train_embedding_pylate/smoke1gpu \
   --epochs 1 --batch_size 8 --index_backend plaid
 ```
 
 ### Multi-GPU (2 GPUs, master port 29830)
 
 ```bash
-source /mnt/data_450g/envs/.env_train_embedding_pylate/bin/activate
-export HIP_VISIBLE_DEVICES=4,5 CUDA_VISIBLE_DEVICES=4,5 HF_HOME=/mnt/data_1.5t/hf_cache
+source $DATA_DIR/envs/.env_pylate/bin/activate
+export HIP_VISIBLE_DEVICES=4,5 CUDA_VISIBLE_DEVICES=4,5
 torchrun --nproc_per_node=2 --master_port=29830 train_embedding_pylate.py \
-  --output_dir /mnt/data_450g/outputs/train_embedding_pylate/smoke2gpu \
+  --output_dir $OUTPUT_DIR/train_embedding_pylate/smoke2gpu \
   --epochs 3 --batch_size 4 --gather_across_devices --index_backend plaid
 ```
 
@@ -309,9 +316,10 @@ Full captured evidence for the runs below: **`smoke_mi355x.log`** in this folder
   claimed; Apple Silicon (Metal/MPS) is claimed only by the separate `pylate-rs`
   inference engine, not for training. No other accelerator is claimed upstream.
 
-### Tested on AMD Instinct MI355X — ROCm 7.2 (verified 2026-08-20)
+### Platform notes — AMD Instinct MI355X (ROCm 7.2)
 
-**Verdict: works, no code changes to PyLate.** Both smoke tests passed end to end.
+This path works as documented on MI355X, with no code changes to PyLate. Both smoke tests
+pass end to end.
 
 Install that worked (Python 3.12.3, ROCm 7.2.4) — see *Install* for the full block. Notably
 **`pip install pylate==1.6.0` did not swap in a CUDA torch**; `torch 2.11.0+rocm7.2`
@@ -320,14 +328,14 @@ survived untouched, so the documented `--force-reinstall` recovery was never nee
 #### 1. Single GPU
 
 ```bash
-export HIP_VISIBLE_DEVICES=4 CUDA_VISIBLE_DEVICES=4 HF_HOME=/mnt/data_1.5t/hf_cache
+export HIP_VISIBLE_DEVICES=4 CUDA_VISIBLE_DEVICES=4
 python train_embedding_pylate.py \
-  --output_dir /mnt/data_450g/outputs/train_embedding_pylate/smoke1gpu \
+  --output_dir $OUTPUT_DIR/train_embedding_pylate/smoke1gpu \
   --epochs 1 --batch_size 8 --index_backend plaid
 ```
 
 12 optimizer steps on the shipped 100-row sample (90 train / 10 eval), finite loss,
-checkpoint + `final_model` written:
+checkpoint + `final_model` written. **Expected output:**
 
 ```
 [rank=0] INFO: torch 2.11.0+rocm7.2 (hip=7.2.26015 cuda=None) devices=1 attn=sdpa scores_backend=torch
@@ -344,9 +352,9 @@ held-out split. Per-step loss on a 90-row sample is noisy — the aggregate is t
 #### 2. Two GPUs (physical 4 and 5, master port 29830)
 
 ```bash
-export HIP_VISIBLE_DEVICES=4,5 CUDA_VISIBLE_DEVICES=4,5 HF_HOME=/mnt/data_1.5t/hf_cache
+export HIP_VISIBLE_DEVICES=4,5 CUDA_VISIBLE_DEVICES=4,5
 torchrun --nproc_per_node=2 --master_port=29830 train_embedding_pylate.py \
-  --output_dir /mnt/data_450g/outputs/train_embedding_pylate/smoke2gpu \
+  --output_dir $OUTPUT_DIR/train_embedding_pylate/smoke2gpu \
   --epochs 3 --batch_size 4 --gather_across_devices --index_backend plaid
 ```
 
@@ -365,11 +373,11 @@ late-interaction check passed on rank 0. A longer run (120× replicated sample, 
 GPUs busy simultaneously**:
 
 ```
-07:33:18 card4 use=91% vram=2% card5 use=92% vram=2%  used=7.9GiB 7.9GiB
-07:33:22 card4 use=92% vram=2% card5 use=93% vram=2%  used=7.9GiB 7.9GiB
-07:33:27 card4 use=95% vram=2% card5 use=92% vram=2%  used=7.9GiB 7.9GiB
-07:33:31 card4 use=93% vram=2% card5 use=97% vram=2%  used=7.9GiB 7.9GiB
-07:33:35 card4 use=91% vram=2% card5 use=94% vram=2%  used=7.9GiB 7.9GiB
+card4 use=91% vram=2% card5 use=92% vram=2%  used=7.9GiB 7.9GiB
+card4 use=92% vram=2% card5 use=93% vram=2%  used=7.9GiB 7.9GiB
+card4 use=95% vram=2% card5 use=92% vram=2%  used=7.9GiB 7.9GiB
+card4 use=93% vram=2% card5 use=97% vram=2%  used=7.9GiB 7.9GiB
+card4 use=91% vram=2% card5 use=94% vram=2%  used=7.9GiB 7.9GiB
 ```
 
 89–97% on both cards, 7.9 GiB each (~2.7% of 288GB) at `--batch_size 32` with a
@@ -431,11 +439,11 @@ indexed documents despite `k=3`; its centroid pruning drops candidates that shar
 centroid with the query, which on a 3-document toy index is expected — see
 *Notes & quirks*.)
 
-### Tested on NVIDIA H100 80GB — CUDA 13.0 (verified 2026-08-22)
+### Platform notes — NVIDIA H100 80GB (CUDA 13.0)
 
-**Verdict: works, no code changes to PyLate.** Single-GPU ColBERT smoke passed end to
-end on one H100 (physical GPU 4 of a shared 8×H100 node; driver 580.173.02, Hopper
-cc(9,0), Python 3.12.3). This mirrors the MI355X result — the only differences are the
+This path works as documented on H100, with no code changes to PyLate. The single-GPU
+ColBERT smoke passes end to end on one H100 (one GPU of a shared 8×H100 node; driver
+580.173.02, Hopper cc(9,0), Python 3.12.3). This mirrors the MI355X result — the only differences are the
 three ROCm accommodations *unwinding* on CUDA (flash-attn becomes available, `tf32`
 engages instead of being gated off, and PyLate's MaxSim backend is no longer force-pinned).
 
@@ -449,13 +457,13 @@ Install that worked (venv on tmpfs, deliberately outside the repo as on MI355X):
 
 ```bash
 export PIP_CACHE_DIR=/dev/shm/h100/pipcache
-python3 -m venv /dev/shm/h100/venv_pylate
-source /dev/shm/h100/venv_pylate/bin/activate
+python3 -m venv /dev/shm/h100/.env_pylate
+source /dev/shm/h100/.env_pylate/bin/activate
 pip install --upgrade pip
 pip install "torch==2.11.0" numpy            # -> torch 2.11.0+cu130 (default PyPI, NO --index-url)
 pip install -r requirements_embedding_pylate.txt
 python -c "import torch; print(torch.__version__, torch.version.cuda, torch.version.hip)"
-# observed: 2.11.0+cu130 13.0 None   <-- pylate did not swap torch
+# expected: 2.11.0+cu130 13.0 None   <-- pylate did not swap torch
 python -c "import pylate; from pylate import models, losses, indexes, retrieve, scores, rank; print('imports OK', pylate.__version__)"
 ```
 
@@ -467,7 +475,7 @@ Exact smoke command (native ColBERT checkpoint, cleanest smoke — no random pro
 
 ```bash
 export CUDA_VISIBLE_DEVICES=4                      # plain CUDA; NO HIP_VISIBLE_DEVICES
-export HF_HOME=/mnt/gsma/gsma/gsma/models
+export HF_HOME=/path/to/hf_cache                   # HF model cache
 export HF_DATASETS_CACHE=/dev/shm/h100/dscache_pylate
 python train_embedding_pylate.py \
   --model_name answerdotai/answerai-colbert-small-v1 \
@@ -479,8 +487,8 @@ python train_embedding_pylate.py \
 
 **48 optimizer steps** on the shipped 100-row sample (90 train / 10 eval, `drop_last`
 off → `ceil(90/8)=12` steps/epoch × 4 epochs). `epochs`/`batch_size` were bumped from the
-1-epoch registry default specifically to clear the "non-trivial step count" bar. Real log
-(banner, per-epoch end loss decreasing, evaluator, final):
+1-epoch registry default specifically to clear the "non-trivial step count" bar.
+**Expected output** (banner, per-epoch end loss decreasing, evaluator, final):
 
 ```
 [rank=0] INFO: torch 2.11.0+cu130 (hip=None cuda=13.0) devices=1 attn=sdpa scores_backend=torch
@@ -498,14 +506,14 @@ noisy) drops monotonically **0.8416 → 0.5673 → 0.3965** across epochs 2/3/4,
 loss on 90 rows is noisy — the aggregate and the epoch-boundary trend are the signal, same
 caveat as MI355X.
 
-GPU-4 residency, sampled by **VRAM-by-PID from inside the run** (`nvidia-smi -i 4
---query-compute-apps=pid,used_memory`; GPU 4 was otherwise idle, so the single listed PID
-is this job):
+GPU residency, sampled by **VRAM-by-PID from inside the run** (`nvidia-smi -i <gpu>
+--query-compute-apps=pid,used_memory`; when the card is otherwise idle the single listed
+PID is the training job):
 
 ```
-SMIPOLL 04:23:53 | gpu4_util,memused=[2 %, 799 MiB]  | compute-apps(pid,mem)=[1593977, 690 MiB]
-SMIPOLL 04:23:58 | gpu4_util,memused=[0 %, 1741 MiB] | compute-apps(pid,mem)=[1593977, 1732 MiB]
-SMIPOLL 04:24:00 | gpu4_util,memused=[5 %, 1741 MiB] | compute-apps(pid,mem)=[1593977, 1732 MiB]
+SMIPOLL | gpu_util,memused=[2 %, 799 MiB]  | compute-apps(pid,mem)=[<pid>, 690 MiB]
+SMIPOLL | gpu_util,memused=[0 %, 1741 MiB] | compute-apps(pid,mem)=[<pid>, 1732 MiB]
+SMIPOLL | gpu_util,memused=[5 %, 1741 MiB] | compute-apps(pid,mem)=[<pid>, 1732 MiB]
 ```
 
 Peak ~1.7 GiB VRAM for a `bge`-class BERT backbone at `batch_size 8` — **~2% of the H100's
@@ -558,8 +566,8 @@ by-PID sampler).
   are available if wanted — the MI355X-only reason to avoid them (CUDA-only builds) is gone.
 - **`--tf32` engages here** (`resolve_tf32` returns True when `torch.version.cuda is not
   None`) — it is a no-op/gated on ROCm. No crash; ran clean.
-- **Multi-GPU is deferred** (GPUs 0–3 = co-tenant production job). A 2- or 8-GPU pass
-  would reuse the MI355X recipe unchanged — `torchrun --nproc_per_node=N --master_port=PORT
+- **Multi-GPU was not exercised on H100** (the node's other GPUs were held by a co-tenant
+  job). A 2- or 8-GPU pass would reuse the MI355X recipe unchanged — `torchrun --nproc_per_node=N --master_port=PORT
   … --gather_across_devices` — over NCCL instead of RCCL (the `nccl` backend string is the
   same), with `dataloader_drop_last` force-enabled under DDP (budget batch so
   `floor(train_rows/(batch×ranks)) > 0`). Nothing in the code is ROCm/CUDA-specific there.
@@ -571,7 +579,7 @@ by-PID sampler).
   into a venv that has the repo-proven ST 5.7.0 / transformers 5.5.0 **will downgrade
   both**. This is the main reason this folder gets its own venv. Both downgraded versions
   work fine on gfx950.
-- **`pip install pylate` did not clobber the ROCm torch** on this host — none of its
+- **`pip install pylate` did not clobber the ROCm torch** — none of its
   dependencies pin torch. Re-check anyway; the recovery command is in *Install*.
 - **`fast-plaid` needs no CUDA toolchain.** It ships a prebuilt `manylinux_2_28
   cp312` wheel and drives torch, so the PLAID index builds and queries on ROCm with no
@@ -590,7 +598,8 @@ by-PID sampler).
   `sdpa` on ROCm.
 - **`tf32=True` raises on ROCm.** `--tf32` is gated behind `torch.version.cuda is not None`
   and is silently a no-op on HIP.
-- **Master port 29500 is taken on this host.** Use `--master_port 29830`.
+- **Master port 29500 is often already in use on a shared box.** Use `--master_port 29830`
+  (or any other free port).
 - **MaxSim scores are unnormalized sums over query tokens**, so raw scores grow with query
   length and mildly favour longer documents. In one probe on an over-fit
   120×-replicated run, an 11-token positive lost to a 22-token hard negative. This is
@@ -611,7 +620,7 @@ by-PID sampler).
   model. The 120×-replicated file used for the utilization run was written outside the
   repo and deliberately not committed; it is a pipeline proof, not a learning result.
 
-## VERDICT
+## Summary
 
 ### 1. Does it work on MI355X? **Yes — works, no code changes.**
 

@@ -1,12 +1,12 @@
-# MI355X training campaign — notes and evidence (August 2026)
+# MI355X training notes and evidence
 
-Field notes from executing every training folder on 8× AMD Instinct MI355X (gfx950,
-288 GB HBM), ROCm 7.2.4, Ubuntu, Python 3.12.3. The per-folder verdict table lives in the
+Notes from executing every training folder on 8× AMD Instinct MI355X (gfx950,
+288 GB HBM), ROCm 7.2.4, Ubuntu, Python 3.12.3. The per-folder support table lives in the
 top-level [README](../README.md); this file holds the cross-cutting lessons, the 8-GPU
 scaling evidence, and the upstream-claims audit. Folder names refer to the current layout
 (`training/<modality>/<framework>`).
 
-## What the MI355X runs taught us (applies to most folders)
+## Lessons from the MI355X runs (apply to most folders)
 
 - **torch**: `2.11.0+rocm7.2` from `https://download.pytorch.org/whl/rocm7.2` satisfies a
   plain `torch==2.11.0` pin and installs clean. Always install it **before** the framework,
@@ -25,8 +25,8 @@ scaling evidence, and the upstream-claims audit. Folder names refer to the curre
 ## Scaling to all 8 GPUs
 
 Single-GPU smoke runs prove a stack imports and steps; they do not prove *sharding*,
-collectives, or that the batch geometry survives. So every trainable folder was re-run on
-**all 8 MI355X**, each holding a machine-wide `flock` so it owned the whole node, with
+collectives, or that the batch geometry survives. Every trainable folder is therefore also
+run on **all 8 MI355X** under a machine-wide `flock` so the job owns the whole node, with
 `rocm-smi` sampled *inside* the locked job and attributed by PID.
 
 **All 23 trainable folders work at world size 8**, with one qualification:
@@ -80,8 +80,8 @@ is exactly what makes them dangerous:
 - **Leftover GPU pins in venvs.** A single-GPU session that appends
   `export HIP_VISIBLE_DEVICES=<n>` to a venv's `bin/activate` silently caps a later
   nominal "8-GPU" run to one card. Override both variables **after** sourcing and assert
-  `torch.cuda.device_count() == 8`. (The campaign venvs that carried these pins were
-  removed in the repo reorg; rebuild from each folder's requirements file.)
+  `torch.cuda.device_count() == 8`. If a venv may carry such a pin, rebuild it from the
+  folder's requirements file.
 - **`HIP_VISIBLE_DEVICES` outranks `CUDA_VISIBLE_DEVICES` on ROCm.** Measured directly:
   `HIP=0,1` plus `CUDA=3` yields 2 visible devices — the CUDA variable is ignored. Any
   framework that pins *its own* workers via `CUDA_VISIBLE_DEVICES` is therefore collapsed

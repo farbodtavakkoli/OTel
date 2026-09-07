@@ -26,16 +26,23 @@ Prefer **vLLM** or **SGLang** for production/high-QPS reranking, and prefer raw
 `llama.cpp` when you need server flags Lemonade does not expose per model.
 
 > **Tested topology:** 2x AMD Instinct MI355X (gfx950, 288 GB each), physical GPUs
-> **4 and 5**, ROCm 7.2.4 host, Ubuntu 24.04, Python 3.12.3. Verified **2026-08-20**.
+> **4 and 5**, ROCm 7.2.4 host, Ubuntu 24.04, Python 3.12.3.
 
-## Install — the exact route that worked
+## Install — the route that works
+
+```bash
+# Set these to suit your machine
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache (weights land here)
+export DATA_DIR=/path/to/data          # Lemonade tarball, binaries and backend cache
+export OUTPUT_DIR=/path/to/outputs     # inference artifacts
+```
 
 ### The package-name trap: two different Lemonades
 
-| What | Command it gives you | Has `backends install`? | Verdict here |
+| What | Command it gives you | Has `backends install`? | Notes |
 |---|---|---|---|
 | pip `lemonade-sdk==9.1.4` | `lemonade`, `lemonade-server-dev` | **No** | Deprecated python server — **its ROCm backend rejects gfx950** (tested, see below) |
-| C++ Lemonade Server **11.7.0** (GitHub releases) | `lemonade`, `lemond` | **Yes** | **This is the documented server — used here** |
+| C++ Lemonade Server **11.7.0** (GitHub releases) | `lemonade`, `lemond` | **Yes** | **This is the documented server — use this one** |
 
 > **The pip server cannot serve on this GPU.** Tested: `lemonade-server-dev serve
 > --llamacpp rocm` starts and answers `/api/v1/health` with 200, and `/api/v1/pull`
@@ -43,16 +50,15 @@ Prefer **vLLM** or **SGLang** for production/high-QPS reranking, and prefer raw
 > `lemonade/tools/llamacpp/utils.py:375` with
 > `ValueError: ROCm backend selected but no compatible ROCm target architecture found.`
 > The pip server's ROCm support does not cover gfx950. Only the C++ server 11.7.0 does.
-> Transcript: `/mnt/data_450g/outputs/pip_lemonade_server_rocm_gfx950_unsupported.txt`.
 
 ```bash
 # (a) python venv — shared across the three inference_*_lemonade folders
-python3 -m venv .env_inference_llm_lemonade
-export PIP_CACHE_DIR=/mnt/data_1.5t/pip_cache
-.env_inference_llm_lemonade/bin/pip install lemonade-sdk        # 9.1.4, 8.8 s
+python3 -m venv .env_lemonade
+export PIP_CACHE_DIR=$DATA_DIR/pip_cache
+.env_lemonade/bin/pip install lemonade-sdk        # 9.1.4, 8.8 s
 
 # (b) the C++ server that actually implements `backends install`
-cd /mnt/data_450g/lemonade
+cd $DATA_DIR/lemonade
 curl -sL -O https://github.com/lemonade-sdk/lemonade/releases/download/v11.7.0/lemonade-embeddable-11.7.0-ubuntu-x64.tar.gz
 mkdir -p emb && tar xzf lemonade-embeddable-11.7.0-ubuntu-x64.tar.gz -C emb
 ```
@@ -67,7 +73,7 @@ mkdir -p emb && tar xzf lemonade-embeddable-11.7.0-ubuntu-x64.tar.gz -C emb
 One venv serves all three `inference_*_lemonade` folders; the other two are symlinks:
 
 ```bash
-ln -sfn ../../../inference/lemonade/llm/.env_inference_llm_lemonade .env_inference_reranker_lemonade
+ln -sfn ../../../inference/lemonade/llm/.env_lemonade .env_lemonade
 ```
 
 Deliberate — the python side is only the HTTP client. The runtime is the C++ server plus
@@ -77,7 +83,7 @@ its own managed ROCm venv inside the Lemonade cache.
 
 ```bash
 export HIP_VISIBLE_DEVICES=4,5 CUDA_VISIBLE_DEVICES=4,5
-LEM=/mnt/data_450g/lemonade/emb/lemonade-embeddable-11.7.0-ubuntu-x64
+LEM=$DATA_DIR/lemonade/emb/lemonade-embeddable-11.7.0-ubuntu-x64
 $LEM/lemonade --port 8350 --no-discovery backends install llamacpp:rocm
 ```
 
@@ -100,17 +106,17 @@ ln -sf ../../../dev.env dev.env                       # already done in this fol
 export $(grep -v '^#' ../dev.env | xargs)       # only when a gated checkpoint needs HF_TOKEN
 ```
 
-Not needed — `ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF` is ungated and was pulled with no
+Not needed — `ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF` is ungated and pulls with no
 `HF_TOKEN` exported. Never echo or commit the token.
 
 ```bash
 export HIP_VISIBLE_DEVICES=4 CUDA_VISIBLE_DEVICES=4       # single-GPU runs
-export HF_HOME=/mnt/data_1.5t/hf_cache                    # where model weights land
+# HF_HOME (exported above) is where model weights land
 ```
 
 - **`HF_HOME` controls the weights** (`$HF_HOME/hub/`, 610 MB for this model).
-- **The `cache_dir` positional controls the binaries** — `/mnt/data_450g/lemonade/cache`,
-  4.8 GB. Neither may land on `/` (99 GB free).
+- **The `cache_dir` positional controls the binaries** — `$DATA_DIR/lemonade/cache`,
+  4.8 GB. Neither should land on the root filesystem.
 - Set these on the **`lemond`** process, not on the CLI client: `lemond` forks
   `llama-server`, so it is what propagates `HIP_VISIBLE_DEVICES`.
 
@@ -122,11 +128,10 @@ export HF_HOME=/mnt/data_1.5t/hf_cache                    # where model weights 
 ### 1. Start the server on port 8350
 
 ```bash
-LEM=/mnt/data_450g/lemonade/emb/lemonade-embeddable-11.7.0-ubuntu-x64
+LEM=$DATA_DIR/lemonade/emb/lemonade-embeddable-11.7.0-ubuntu-x64
 export HIP_VISIBLE_DEVICES=4 CUDA_VISIBLE_DEVICES=4
-export HF_HOME=/mnt/data_1.5t/hf_cache
 
-$LEM/lemond /mnt/data_450g/lemonade/cache --port 8350 --host 127.0.0.1 --no-broadcast
+$LEM/lemond $DATA_DIR/lemonade/cache --port 8350 --host 127.0.0.1 --no-broadcast
 ```
 
 ### 2. Register the reranker
@@ -146,9 +151,9 @@ to the wrapped `llama-server` and route `/v1/reranking` to it.
 ```bash
 $LEM/lemonade --port 8350 --no-discovery load user.Qwen3-Reranker-0.6B
 
-.env_inference_reranker_lemonade/bin/python inference_reranker_lemonade.py \
+.env_lemonade/bin/python inference_reranker_lemonade.py \
   --port 8350 \
-  --out /mnt/data_450g/outputs/inference_reranker_lemonade/rerank_single_gpu.json
+  --out $OUTPUT_DIR/inference_reranker_lemonade/rerank_single_gpu.json
 ```
 
 Equivalent raw curl:
@@ -184,7 +189,7 @@ All four of these returned byte-identical bodies:
 
 ## Results — single GPU (physical GPU 4)
 
-Real client output:
+**Expected client output**
 
 ```text
 endpoint  : http://127.0.0.1:8350/v1/reranking
@@ -212,8 +217,8 @@ A CPU fallback would return the same scores, so residency has to be proven. Lemo
 launches `llama-server` **without an explicit `-ngl`**:
 
 ```text
-/mnt/data_450g/lemonade/cache/bin/llamacpp/rocm-stable/llama-b10469/llama-server \
-  -m /mnt/data_1.5t/hf_cache/hub/models--ggml-org--Qwen3-Reranker-0.6B-Q8_0-GGUF/snapshots/a02f48bb.../qwen3-reranker-0.6b-q8_0.gguf \
+$DATA_DIR/lemonade/cache/bin/llamacpp/rocm-stable/llama-b10469/llama-server \
+  -m $HF_HOME/hub/models--ggml-org--Qwen3-Reranker-0.6B-Q8_0-GGUF/snapshots/a02f48bb.../qwen3-reranker-0.6b-q8_0.gguf \
   --ctx-size 40960 --port 8002 --jinja --metrics --reasoning-format auto --no-ui --reranking
 ```
 
@@ -221,10 +226,10 @@ launches `llama-server` **without an explicit `-ngl`**:
 
 ```text
 PID      PROCESS NAME    GPU(s)  VRAM USED     SDMA USED       CU OCCUPANCY
-1966617  llama-server    1       7818108928    2681185302118   0
+<pid>    llama-server    1       7818108928    2681185302118   0
 ```
 
-Per-GPU breakdown from `/sys/class/kfd/kfd/proc/1966617/`:
+Per-GPU breakdown from `/sys/class/kfd/kfd/proc/<pid>/`:
 
 ```text
 vram_51023 = 7818108928 bytes   -> gpu_id 51023 = unique_id 0xf743d583ac01fcfd = card4
@@ -255,7 +260,7 @@ top_hit_is_relevant : True
 
 ```text
 PID      PROCESS NAME    GPU(s)  VRAM USED     CU OCCUPANCY
-1901569  llama-server    2       10147651584   0
+<pid>    llama-server    2       10147651584   0
 ```
 
 **A 0.6B model does not shard, and this README will not pretend otherwise.** The split is
@@ -275,7 +280,7 @@ is not available even if you wanted one.
 
 | Argument | Used | Meaning |
 |---|---|---|
-| `lemond <cache_dir>` | `/mnt/data_450g/lemonade/cache` | Binaries + backend venv. Keep off `/` |
+| `lemond <cache_dir>` | `$DATA_DIR/lemonade/cache` | Binaries + backend venv. Keep off the root filesystem |
 | `--port` / `--host` | `8350` / `127.0.0.1` | Bind address (suggested port) |
 | `--no-broadcast` | on | Disable the UDP discovery beacon |
 | `--no-discovery` (client) | on | **Required on a shared host** — without it the CLI hangs |
@@ -303,7 +308,7 @@ is not available even if you wanted one.
 
 ## Output
 
-Artifacts go to `/mnt/data_450g/outputs/inference_reranker_lemonade/`, never to `/`:
+Artifacts go to `$OUTPUT_DIR/inference_reranker_lemonade/`, never to the root filesystem:
 
 ```text
 rerank_single_gpu.json         raw /v1/reranking response, GPU 4
@@ -315,8 +320,8 @@ rocm_smi_pids_single_gpu.txt   KFD process attribution
 kfd_vram_single_gpu.txt        per-GPU VRAM for our PID
 ```
 
-Weights (610 MB) live in `/mnt/data_1.5t/hf_cache/hub/`; Lemonade binaries + ROCm wheels
-(4.8 GB) in `/mnt/data_450g/lemonade/cache/`.
+Weights (610 MB) live in `$HF_HOME/hub/`; Lemonade binaries + ROCm wheels
+(4.8 GB) in `$DATA_DIR/lemonade/cache/`.
 
 ## Hardware support & evidence
 
@@ -327,7 +332,7 @@ Weights (610 MB) live in `/mnt/data_1.5t/hf_cache/hub/`; Lemonade binaries + ROC
 | Backend really carries gfx950 code | Install pulled `rocm_sdk_device_gfx950-7.14.0…whl` (1240 MB); `libggml-hip.so` (1.26 GB fat binary) contains a `gfx950` code object alongside gfx900/906/908/942/10xx/11xx/12xx |
 | No `hipErrorNoBinaryForGpu` | Model loaded and ran; zero HSA/ISA errors in the server log |
 | ROCm backend is the live device | Server log names `device 'ROCm0'` at sampler-setup time |
-| Model really on GPU | `rocm-smi --showpids`: PID 1966617, **1 GPU, 7.82 GB**, 7 live KFD queues |
+| Model really on GPU | `rocm-smi --showpids`: **1 GPU, 7.82 GB**, 7 live KFD queues |
 | Reranking endpoint exists | `POST /v1/reranking` -> HTTP 200 with `results[].relevance_score` |
 | Scores are *correct* | relevant 0.9997 / 0.9964 vs irrelevant 3.6e-05 / 2.2e-05 |
 | Two-GPU run agrees | Same ordering, scores identical to ~1e-05 |
@@ -356,7 +361,7 @@ Weights (610 MB) live in `/mnt/data_1.5t/hf_cache/hub/`; Lemonade binaries + ROC
     architecture_defaults.json`, `Web app directory not found`. Only the web UI is
     affected; the API is complete.
 
-## H100 (NVIDIA, Hopper sm_90) — verified 2026-08-22
+## H100 (NVIDIA, Hopper sm_90)
 
 Single-GPU smoke on **physical GPU 6** (`CUDA_VISIBLE_DEVICES=6`), driver 580.173.02,
 host CUDA 13.0, Python 3.12.3. **Exact same GGUF** as MI355X
@@ -371,18 +376,18 @@ bundling its own CUDA 12.9 runtime. `Using LlamaCpp Backend: cuda` /
 to the wrapped `llama-server` (confirmed in the cmdline below) and route `/v1/reranking`:
 
 ```bash
-LEM=/dev/shm/h100/lemonade/emb/lemonade-embeddable-11.7.0-ubuntu-x64
-export CUDA_VISIBLE_DEVICES=6 HF_HOME=/mnt/gsma/gsma/gsma/models
+LEM=/dev/shm/lemonade/emb/lemonade-embeddable-11.7.0-ubuntu-x64
+export CUDA_VISIBLE_DEVICES=6   # HF_HOME as exported above
 $LEM/lemonade --port 8350 --no-discovery pull user.Qwen3-Reranker-0.6B \
   --checkpoint main ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF:Q8_0 --recipe llamacpp --label reranking
 $LEM/lemonade --port 8350 --no-discovery load user.Qwen3-Reranker-0.6B
 ```
 
-**Exact smoke command + real output** (ranking order, not absolute scores, is what matters):
+**Smoke command and expected output** (ranking order, not absolute scores, is what matters):
 
 ```bash
 .env_lemonade/bin/python inference_reranker_lemonade.py --port 8350 \
-  --model Qwen3-Reranker-0.6B --out /dev/shm/h100/out/lemonade/rerank_single_gpu.json
+  --model Qwen3-Reranker-0.6B --out $OUTPUT_DIR/lemonade/rerank_single_gpu.json
 ```
 
 ```text
@@ -407,45 +412,45 @@ returned HTTP 200: `/v1/reranking`, `/api/v1/reranking`, `/v1/rerank`, `/api/v1/
 **Wrapped cmdline (`--reranking` auto-appended):**
 
 ```text
-/dev/shm/h100/lemonade/cache/bin/llamacpp/cuda/llama-server \
+/dev/shm/lemonade/cache/bin/llamacpp/cuda/llama-server \
   -m …/models--ggml-org--Qwen3-Reranker-0.6B-Q8_0-GGUF/…/qwen3-reranker-0.6b-q8_0.gguf \
   --ctx-size 4096 --port 8003 --jinja --metrics --reasoning-format auto --no-ui --reranking
 ```
 
-**GPU-residency proof** (`nvidia-smi` VRAM-by-PID, GPU-6 UUID `GPU-e4fe48bc` = index 6):
+**GPU-residency proof** (`nvidia-smi` VRAM-by-PID, filtered to the GPU-6 UUID):
 
 ```text
-1725397, /dev/shm/h100/lemonade/cache/bin/llamacpp/cuda/llama-server, 1952 MiB, GPU-e4fe48bc-…
+<pid>, /dev/shm/lemonade/cache/bin/llamacpp/cuda/llama-server, 1952 MiB, GPU-<uuid>
 ```
 
-**1.95 GB on GPU 6 for our PID.** A CPU-only reranker returns the same scores, so this VRAM
-attribution is the proof — and it passes.
+**1.95 GB on GPU 6 for the server PID.** A CPU-only reranker returns the same scores, so
+this VRAM attribution is the proof — and it passes.
 
 **One-server-three-workloads, proven on H100.** All three llama-servers (llm 8001, embed
-8002, rerank 8003) were forked by the **single** `lemond` (port 8350) and were resident on
-GPU 6 simultaneously — total 1674 + 982 + 1952 = **4628 MiB on GPU-e4fe48bc**. This is the
+8002, rerank 8003) are forked by the **single** `lemond` (port 8350) and are resident on
+GPU 6 simultaneously — total 1674 + 982 + 1952 = **4628 MiB on one GPU**. This is the
 claim that justifies Lemonade getting three folders: chat, embeddings and reranking behind
 one process on one port, and reranking is a first-class local API with no Ollama equivalent.
 
 **Deviations from MI355X:** (1) backend `llamacpp:cuda` (b10397) vs `llamacpp:rocm`
 (b10470); (2) **`--ctx-size 4096`** here vs `40960` on MI355X — Lemonade chose a smaller
 default context for this model on this build (still fixed / not per-model overridable);
-(3) client venv in tmpfs (NFS `venv` on `/mnt/gsma` didn't create pip reliably). Model,
+(3) client venv in tmpfs (a `venv` on an NFS mount does not create pip reliably). Model,
 quant, `--label reranking`, endpoints and ranking are otherwise identical.
 
-**Multi-GPU (deferred):** a 0.6B reranker does not shard — run one server per GPU behind a
-load balancer, same conclusion as MI355X. Not launched (production on GPUs 0–3).
+**Multi-GPU:** a 0.6B reranker does not shard — run one server per GPU behind a load
+balancer, same conclusion as MI355X.
 
-**H100 VERDICT: PASS — and, as on MI355X, the strongest of the three folders.** Zero-build
+**On H100 this path works — and, as on MI355X, it is the strongest of the three folders.** Zero-build
 sm_90 CUDA backend in ~41 s; `/v1/reranking` returns correct, decisively-separated scores
 (~21,000× apart) in ~149 ms; 1.95 GB resident on GPU 6. **No `vllm:cuda` backend exists in
 Lemonade** (`vllm` is rocm-only and reports `Unsupported GPU` here), so the llama.cpp CUDA
 path is the only Lemonade path on NVIDIA — symmetric to gfx950, where `vllm:rocm` was
 refused. For production/high-QPS reranking, prefer `inference/vllm` or `inference/sglang`.
 
-## VERDICT (MI355X)
+## Summary (MI355X)
 
-**PASS — fully working on MI355X (gfx950), and the strongest of the three folders.**
+**Fully working on MI355X (gfx950), and the strongest of the three folders.**
 
 `lemonade backends install llamacpp:rocm` auto-detected `gfx950`, fetched an arch-matched
 `rocm_sdk_device_gfx950` wheel plus a prebuilt ROCm `llama.cpp`, and was ready in **27

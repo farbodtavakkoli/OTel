@@ -12,22 +12,23 @@ Use this folder on **NVIDIA**, where SGLang has an exact validated Qwen3.8-27B c
 On **AMD gfx950 the split is: a pip install does NOT serve, the vendor container DOES** —
 both were tested here. The `lmsysorg/sglang-rocm` container generates from the FP8 27B
 checkpoint at **TP=1 and TP=2** (`/v1/chat/completions` 200 OK, correct answer); see
-"Container route — `lmsysorg/sglang-rocm` (TESTED)". The pip analysis below is retained
+"Container route — `lmsysorg/sglang-rocm`". The pip analysis below is retained
 because it explains *why* the wheel route cannot work on ROCm.
 
 > **Tested topology:** 2×AMD Instinct MI355X (gfx950, 288GB), ROCm 7.2.4, Ubuntu,
-> Python 3.12.3, physical GPUs 2 and 3, single node. No NVIDIA GPU exists on this host,
-> so every NVIDIA statement below is upstream documentation, not a local measurement.
+> Python 3.12.3, two GPUs on a single node. The NVIDIA statements in this ROCm section are
+> upstream documentation rather than measurements on that host; the H100 section below is
+> measured.
 
-## VERDICT
+## Platform summary — AMD MI355X (gfx950)
 
-**🟢 WORKS on ROCm/gfx950 via the vendor container — pip route stays blocked.**
+**This path works on ROCm/gfx950 via the vendor container; the pip route stays blocked.**
 `Qwen/Qwen3.8-27B-FP8` loads **natively as FP8 (E4M3)** and generates real text on MI355X
 inside `lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819`, at both TP=1 and TP=2.
 The blocker documented below is entirely a **pip packaging** gap — not a model, FP8, or
-hardware gap. See "Container route — `lmsysorg/sglang-rocm` (TESTED)".
+hardware gap. See "Container route — `lmsysorg/sglang-rocm`".
 
-| Question | Answer (measured here) |
+| Question | Answer |
 |---|---|
 | Does the container route serve on gfx950? | **Yes** — FP8 27B generates at TP=1 **and** TP=2 |
 | Does `pip install sglang` work on ROCm? | **No.** CUDA-only packages are *hard* dependencies and would replace ROCm torch |
@@ -40,31 +41,31 @@ hardware gap. See "Container route — `lmsysorg/sglang-rocm` (TESTED)".
 | Is the FP8 format itself a problem on gfx950? | **No** — confirmed twice: SGLang resolves the checkpoint to `torch.float8_e4m3fn` (OCP E4M3FN, not FNUZ), and the container reports `Detected fp8 checkpoint … quant=fp8, fmt=e4m3` and runs it |
 
 The supported ROCm route is the container `lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819`
-(an exact ROCm 7.2 / MI35x tag exists and is current). **That container has now been pulled and
-tested — 89.9 GB on disk — and it works.** The pip analysis below is kept because it is the
+(an exact ROCm 7.2 / MI35x tag exists and is current). That container is ~89.9 GB on disk and
+serves the workload. The pip analysis below is kept because it is the
 reason the container is mandatory rather than optional.
 
 ---
 
-# H100 (NVIDIA) — the PIP ROUTE SERVES, and the 27B FP8 loads (verified 2026-08-22)
+# H100 (NVIDIA) — the pip route serves, and the 27B FP8 loads
 
-**Headline: on H100 the pip route works, which flips the MI355X limitation above.** The exact
+**On H100 the pip route works, which flips the MI355X limitation above.** The exact
 import that kills the ROCm pip route — `from sgl_kernel import rotary_embedding` — succeeds on
 NVIDIA (`sglang-kernel` ships native CUDA wheels). No container needed. **And the documented
 `Qwen/Qwen3.8-27B-FP8` — a `Qwen3_5ForConditionalGeneration` hybrid-GDN vision-language arch
 that TRT-LLM 1.2.1 could not load — loads and generates real, correct text under SGLang 0.5.18.**
 
-> **Tested topology:** 1×NVIDIA H100 80GB HBM3, **physical GPU 6 only** (single-GPU smoke test),
-> Hopper cc(9,0), CUDA 13.0, driver 580.173.02, Python 3.12.3. GPUs 0–3 were a co-tenant
-> production job and were never touched. Multi-GPU (TP) deferred until those GPUs free.
+> **Tested topology:** 1×NVIDIA H100 80GB HBM3, a single GPU (single-GPU smoke test),
+> Hopper cc(9,0), CUDA 13.0, driver 580.173.02, Python 3.12.3. Multi-GPU (TP) is not
+> covered here.
 
-## H100 VERDICT
+## H100 platform summary
 
-**🟢 WORKS on H100 via the pip route.** `Qwen/Qwen3.8-27B-FP8` loads natively as FP8 (E4M3,
+**This path works on H100 via the pip route.** `Qwen/Qwen3.8-27B-FP8` loads natively as FP8 (E4M3,
 `quant=fp8, fmt=e4m3`, 28.47 GB weights — matching the MI355X footprint), SGLang handles its
 hybrid mamba/GDN linear-attention structure, captures CUDA graphs, and answers correctly.
 
-| Question | Answer (measured on H100 GPU 6) |
+| Question | Answer (H100) |
 |---|---|
 | Does `pip install "sglang[all]"` serve on H100? | **Yes** — no container. `sgl_kernel 0.4.6.post1` + `flashinfer 0.6.17` install and import |
 | Does `import sgl_kernel` succeed? | **Yes** — the exact import impossible on ROCm; `rotary_embedding` symbol present |
@@ -72,12 +73,18 @@ hybrid mamba/GDN linear-attention structure, captures CUDA graphs, and answers c
 | Does the 27B `Qwen3_5` VL arch load? | **Yes** — `type=Qwen3_5ForConditionalGeneration, quant=fp8, fmt=e4m3`, 28.47 GB; TRT-LLM 1.2.1 could not |
 | Does the hybrid mamba/GDN path work? | **Yes** — "Using hybrid linear attention backend for hybrid GDN models"; Mamba Cache + KV Cache both allocate |
 | Does it generate correct text? | **Yes** — capital-of-France=**Paris**; "ROCm belongs to AMD, and CUDA belongs to NVIDIA" |
-| GPU-6 residency proof? | **Yes** — `sglang::scheduler` PID held **72088 MiB** on GPU-6 (UUID `GPU-e4fe48bc-…`) |
+| Single-GPU residency? | **Yes** — the `sglang::scheduler` process holds ~72 GB on the one selected GPU |
 
-## H100 install (pip route — VERIFIED)
+## H100 install (pip route)
 
 ```bash
-python3 -m venv .env_sglang && source .env_sglang/bin/activate   # (built on tmpfs here; a folder venv works the same)
+# Set these to suit your machine
+export HF_HOME=/path/to/hf_cache        # Hugging Face model cache
+export OUTPUT_DIR=/path/to/outputs      # server logs and run artifacts
+```
+
+```bash
+python3 -m venv .env_sglang && source .env_sglang/bin/activate
 pip install -U pip
 pip install torch numpy                 # -> torch 2.13.0+cu130 (proxy ON: pypi.org is allowlisted)
 python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"   # 2.13.0+cu130 13.0 True
@@ -96,11 +103,11 @@ driver 580.173.02. **`transformers` stays at 5.12.1** — the checkpoint's `conf
 model class (it is registered in `sglang.srt.models.registry`), so the loader does not need the
 dev transformers. `--trust-remote-code` is still passed.
 
-## H100 serve — single GPU (physical GPU 6), FP8
+## H100 serve — single GPU, FP8
 
 ```bash
 source .env_sglang/bin/activate
-export CUDA_VISIBLE_DEVICES=6 HF_HOME=/mnt/gsma/gsma/gsma/models HF_HUB_OFFLINE=1   # plain CUDA — no HIP_VISIBLE_DEVICES
+export CUDA_VISIBLE_DEVICES=<free-gpu> HF_HUB_OFFLINE=1   # plain CUDA — no HIP_VISIBLE_DEVICES; HF_HOME set above
 python -m sglang.launch_server \
   --model-path Qwen/Qwen3.8-27B-FP8 \
   --trust-remote-code \
@@ -113,7 +120,7 @@ No `--attention-backend` flag: on Hopper SGLang auto-selects `fa3` (FlashAttenti
 `flashinfer` sampling — the NVIDIA analogue of the ROCm `aiter` auto-selection. The 29 GB
 checkpoint was already cached in `$HF_HOME`, so nothing downloaded.
 
-Server-side evidence (`/dev/shm/h100/out/sglang/llm_27b_fp8.log`), verbatim:
+**Expected output** (server log):
 
 ```
 Load weight end. elapsed=429.52 s, type=Qwen3_5ForConditionalGeneration, quant=fp8, fmt=e4m3, avail mem=50.01 GB, mem usage=28.47 GB.
@@ -131,7 +138,7 @@ python inference_llm_sglang.py --port 8600 --model Qwen/Qwen3.8-27B-FP8 \
   --prompt "What is the capital of France? Answer in one word." --max_tokens 64
 ```
 
-**Real output (coherence check — correct):**
+**Expected output** (coherence check):
 
 ```
 [health] server ready after 1.0s
@@ -139,8 +146,8 @@ python inference_llm_sglang.py --port 8600 --model Qwen/Qwen3.8-27B-FP8 \
 [response] Thinking: ... Retrieve knowledge: Capital of France = Paris. ...
 ```
 
-The README's canonical prompt (`Name the two GPU vendors ROCm and CUDA belong to, in one line.`)
-returns, verbatim:
+The canonical prompt (`Name the two GPU vendors ROCm and CUDA belong to, in one line.`)
+returns:
 
 ```
 [latency] 0.73s | prompt_tokens=75 completion_tokens=56
@@ -148,20 +155,18 @@ returns, verbatim:
 ROCm belongs to AMD, and CUDA belongs to NVIDIA.
 ```
 
-Both correct — genuine generation, not garbage. The `</think>` block is Qwen3.8's reasoning
+Both answers are correct — genuine generation. The `</think>` block is Qwen3.8's reasoning
 trace (on by default; pass `--reasoning-parser qwen3` to split it into `reasoning_content`).
 
-## H100 GPU-6 residency proof (sampled from inside serving)
+## H100 GPU residency check (sampled while serving)
 
-```
-$ nvidia-smi --query-compute-apps=pid,process_name,used_memory,gpu_uuid --format=csv,noheader | grep e4fe48bc
-1666647, python,             634 MiB,   GPU-e4fe48bc-0c29-f21e-6523-759f964bf823
-1667095, sglang::scheduler, 72088 MiB,  GPU-e4fe48bc-0c29-f21e-6523-759f964bf823
+```bash
+nvidia-smi --query-compute-apps=pid,process_name,used_memory,gpu_uuid --format=csv,noheader
 ```
 
-GPU 6 (UUID `GPU-e4fe48bc-…`) is the only card touched; the `sglang::scheduler` child holds the
-model (72 GB = 28.47 GB FP8 weights + 17.58 GB mamba SSM state + 20 GB KV + graphs). GPUs 0–3
-(production) were never read as "mine".
+Only the card named by `CUDA_VISIBLE_DEVICES` is touched. The `sglang::scheduler` child holds
+the model — about 72 GB = 28.47 GB FP8 weights + 17.58 GB mamba SSM state + 20 GB KV + captured
+graphs — while the parent `python` process holds a few hundred MB.
 
 ## H100 27B-FP8 arch finding (the key model result)
 
@@ -190,17 +195,17 @@ either `--mamba-ssm-dtype bfloat16` (halves state size) or lower `--mem-fraction
   if you need multimodal video input.
 - **`Ignore import error when loading sglang.srt.models.sarashina2_vision …`** and similar
   (`inkling`, `mimo_v2`) — benign; unrelated model classes failing to register.
-- **Weight load is slow (~430 s / 66 shards)** off the shared `/mnt/gsma` NFS cache. This is I/O,
+- **Weight load is slow (~430 s / 66 shards)** off a shared NFS model cache. This is I/O,
   not compute; a local NVMe cache would cut it dramatically. Graph capture adds ~220 s (prefill).
-- **Multi-GPU (TP) deferred** — GPUs 0–3 held a production job. A TP=2 pass would add `--tp 2`
-  with `CUDA_VISIBLE_DEVICES=6,7` (two free cards); the 27B fits on one H100 already, so TP mainly
+- **Multi-GPU (TP) is not covered here.** A TP=2 pass would add `--tp 2`
+  with `CUDA_VISIBLE_DEVICES` listing two free cards; the 27B fits on one H100 already, so TP mainly
   buys KV/mamba-cache headroom and concurrency, not single-stream latency.
 
-## Container route — `lmsysorg/sglang-rocm` (TESTED)
+## Container route — `lmsysorg/sglang-rocm`
 
-**This is the route that works on gfx950.** Everything under this heading was executed on
-2×MI355X (physical GPUs 2 and 3); output is copied verbatim. The pip analysis further down is
-retained and still accurate — it explains *why* the container is required.
+**This is the route that works on gfx950.** Everything under this heading was validated on
+2×MI355X. The pip analysis further down is retained and still accurate — it explains *why* the
+container is required.
 
 Image: `lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819` — **89.9 GB on disk** (`docker images`).
 Inside it: `sglang 0.5.17.dev20260819+g574274660f`, `torch 2.9.1+rocm7.2.0.git7e1940d4`,
@@ -214,17 +219,17 @@ docker run -d --name sglang_bringup \
   --device /dev/kfd --device /dev/dri/renderD144 --device /dev/dri/renderD152 \
   --group-add video --ipc=host --shm-size 16g \
   --security-opt seccomp=unconfined --cap-add SYS_PTRACE \
-  -e HF_HOME=/mnt/data_1.5t/hf_cache -e HF_HUB_OFFLINE=1 \
-  -v /mnt/data_1.5t/hf_cache:/mnt/data_1.5t/hf_cache \
-  -v /mnt/data_450g:/mnt/data_450g \
-  -v /home/planolab/software_test/training_junk:/work \
+  -e HF_HOME="$HF_HOME" -e HF_HUB_OFFLINE=1 \
+  -v "$HF_HOME":"$HF_HOME" \
+  -v "$OUTPUT_DIR":"$OUTPUT_DIR" \
+  -v /path/to/OTel:/work \
   lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819 sleep infinity
 ```
 
-`renderD144`/`renderD152` are **physical GPUs 2 and 3**; only those two render nodes are passed
-in, so inside the container they are `cuda:0` and `cuda:1`. `HIP_VISIBLE_DEVICES=0` in the
-container therefore means physical GPU 2. Weights and logs live on mounted volumes — **nothing
-large lands on `/`**, which had only ~109 GB free.
+`renderD144`/`renderD152` are the render nodes of the two target GPUs (match them to your own
+cards); only those two are passed in, so inside the container they are `cuda:0` and `cuda:1`.
+`HIP_VISIBLE_DEVICES=0` in the container therefore means the first passed-in GPU. Weights and
+logs live on mounted volumes — **nothing large lands on `/`**.
 
 ```bash
 docker exec sglang_bringup python3 -c \
@@ -233,24 +238,24 @@ docker exec sglang_bringup python3 -c \
 # 0.5.17.dev20260819+g574274660f 2.9.1+rocm7.2.0.git7e1940d4 7.2.26015-fc0010cf6a 2
 ```
 
-### Serve — single GPU (physical GPU 2), FP8
+### Serve — single GPU, FP8
 
 ```bash
 docker exec -d sglang_bringup bash -lc \
   "HIP_VISIBLE_DEVICES=0 CUDA_VISIBLE_DEVICES=0 python -m sglang.launch_server \
      --model-path Qwen/Qwen3.8-27B-FP8 --mem-fraction-static 0.85 --max-running-requests 32 \
      --host 0.0.0.0 --port 8100 \
-     > /mnt/data_450g/outputs/inference_llm_sglang/llm_fp8_single.log 2>&1"
+     > $OUTPUT_DIR/inference_llm_sglang/llm_fp8_single.log 2>&1"
 ```
 
-Server-side evidence (`llm_fp8_single.log`):
+**Expected output** (`llm_fp8_single.log`):
 
 ```
-[2026-08-20 03:06:46] Detected fp8 checkpoint.
-[2026-08-20 03:06:54] Load weight end. elapsed=7.79 s, type=Qwen3_5ForConditionalGeneration, quant=fp8, fmt=e4m3, avail mem=258.78 GB, mem usage=28.49 GB.
-[2026-08-20 03:07:01] max_total_num_tokens=1543256, chunked_prefill_size=16384, max_prefill_tokens=16384, max_running_requests=32, context_len=262144, available_gpu_mem=77.76 GB
-[2026-08-20 03:07:01] INFO:     Uvicorn running on http://0.0.0.0:8100 (Press CTRL+C to quit)
-[2026-08-20 03:07:04] The server is fired up and ready to roll!
+Detected fp8 checkpoint.
+Load weight end. elapsed=7.79 s, type=Qwen3_5ForConditionalGeneration, quant=fp8, fmt=e4m3, avail mem=258.78 GB, mem usage=28.49 GB.
+max_total_num_tokens=1543256, chunked_prefill_size=16384, max_prefill_tokens=16384, max_running_requests=32, context_len=262144, available_gpu_mem=77.76 GB
+INFO:     Uvicorn running on http://0.0.0.0:8100 (Press CTRL+C to quit)
+The server is fired up and ready to roll!
 ```
 
 ### Client / smoke command
@@ -260,7 +265,7 @@ docker exec -w /work/inference/sglang/llm sglang_bringup \
   python inference_llm_sglang.py --port 8100 --model Qwen/Qwen3.8-27B-FP8
 ```
 
-**Real output (single GPU):**
+**Expected output (single GPU):**
 
 ```
 [health] server ready after 1.0s
@@ -274,7 +279,7 @@ ROCm: AMD; CUDA: NVIDIA.
 Real end-to-end generation with a factually correct answer. The `</think>` block is Qwen3.8's
 reasoning trace, emitted by default — see quirks.
 
-### Multi-GPU — `--tp 2` across physical GPUs 2 and 3
+### Multi-GPU — `--tp 2` across both GPUs
 
 Unlike the 300M/0.6B models in the sibling folders, **TP=2 is genuinely useful here**: a 27B FP8
 checkpoint is 28.49 GB and sharding halves the per-GPU weight footprint, freeing memory for KV.
@@ -284,19 +289,19 @@ docker exec -d sglang_bringup bash -lc \
   "HIP_VISIBLE_DEVICES=0,1 CUDA_VISIBLE_DEVICES=0,1 python -m sglang.launch_server \
      --model-path Qwen/Qwen3.8-27B-FP8 --tp 2 --mem-fraction-static 0.85 --max-running-requests 32 \
      --host 0.0.0.0 --port 8100 \
-     > /mnt/data_450g/outputs/inference_llm_sglang/llm_fp8_tp2.log 2>&1"
+     > $OUTPUT_DIR/inference_llm_sglang/llm_fp8_tp2.log 2>&1"
 ```
 
 **Weights sharded across both ranks — 28.49 GB → 14.49 GB per GPU:**
 
 ```
-[2026-08-20 03:10:54 TP0] Load weight end. elapsed=4.76 s, type=Qwen3_5ForConditionalGeneration, quant=fp8, fmt=e4m3, avail mem=264.75 GB, mem usage=14.49 GB.
-[2026-08-20 03:10:55 TP1] Load weight end. elapsed=5.00 s, type=Qwen3_5ForConditionalGeneration, quant=fp8, fmt=e4m3, avail mem=264.75 GB, mem usage=14.49 GB.
-[2026-08-20 03:11:02 TP0] max_total_num_tokens=3228418, chunked_prefill_size=16384, max_prefill_tokens=16384, max_running_requests=32, context_len=262144, available_gpu_mem=75.82 GB
-[2026-08-20 03:11:05] The server is fired up and ready to roll!
+[TP0] Load weight end. elapsed=4.76 s, type=Qwen3_5ForConditionalGeneration, quant=fp8, fmt=e4m3, avail mem=264.75 GB, mem usage=14.49 GB.
+[TP1] Load weight end. elapsed=5.00 s, type=Qwen3_5ForConditionalGeneration, quant=fp8, fmt=e4m3, avail mem=264.75 GB, mem usage=14.49 GB.
+[TP0] max_total_num_tokens=3228418, chunked_prefill_size=16384, max_prefill_tokens=16384, max_running_requests=32, context_len=262144, available_gpu_mem=75.82 GB
+The server is fired up and ready to roll!
 ```
 
-**Real output (TP=2):**
+**Expected output (TP=2):**
 
 ```
 [health] server ready after 1.0s
@@ -336,9 +341,7 @@ width for a 27B model (bf16 would be ~54 GB). `fmt=e4m3` is **OCP E4M3FN**, the 
 supports in hardware, not the older FNUZ variant. This independently corroborates the sibling
 finding that Transformers loads the same checkpoint natively on gfx950.
 
-No download was needed: the checkpoint was already cached (29 GB) in
-`/mnt/data_1.5t/hf_cache`. Had it not been, the pull must be directed at
-`HF_HOME=/mnt/data_450g/hf_cache` (394 GB free) — **never `/`**, which has ~109 GB free.
+The checkpoint is ~29 GB. Point `HF_HOME` at a volume with room for it — **never `/`**.
 
 ### Container-route quirks
 
@@ -362,8 +365,8 @@ No download was needed: the checkpoint was already cached (29 GB) in
   before the answer, so `completion_tokens` (57-60) is much larger than the visible one-line
   answer. Pass `--reasoning-parser qwen3` to have SGLang split it into a separate
   `reasoning_content` field, or instruct the model to skip thinking.
-- **`HF_HUB_OFFLINE=1`** is baked into the image env; every model used here was already cached,
-  so nothing downloaded. Unset it for a fresh pull and repoint `HF_HOME` to `/mnt/data_450g`.
+- **`HF_HUB_OFFLINE=1`** is baked into the image env, so nothing is downloaded when the models
+  are already cached. Unset it for a fresh pull and point `HF_HOME` at a volume with space.
 - **AITER JIT** compiles kernels on first use into `/root/.aiter/build/`, so the first launch in
   a fresh container is ~2 min and later ones are much faster. Keep one long-lived container
   (`sleep infinity` + `docker exec -d`) rather than one `docker run` per server.
@@ -375,11 +378,11 @@ No download was needed: the checkpoint was already cached (29 GB) in
 
 Python 3.12. `requirements_sglang_llm.txt` is the tested set.
 
-### AMD / ROCm — exactly what was run
+### AMD / ROCm
 
 ```bash
-python3 -m venv .env_inference_llm_sglang
-source .env_inference_llm_sglang/bin/activate
+python3 -m venv .env_sglang
+source .env_sglang/bin/activate
 pip install -U pip
 # 1) ROCm torch FIRST, from the ROCm index:
 pip install torch==2.11.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm7.2
@@ -410,13 +413,13 @@ pip install --force-reinstall --no-deps torch==2.11.0 --index-url https://downlo
 Never `pip install flash-attn` here (CUDA-only build). Never `pip install aiter` — the
 PyPI project of that name is an unrelated async-iterator library, **not** AMD's AITER.
 
-All three SGLang folders use the identical stack, so the sibling folders symlink this venv
-(`.env_inference_embedding_sglang` / `.env_inference_reranker_sglang` →
-`../../../inference/sglang/llm/.env_inference_llm_sglang`) instead of duplicating 16 GB twice.
-Create a real venv per folder instead if you want them independently pinned.
+All three SGLang leaves use the identical stack, so build **one** shared `.env_sglang` at the
+software root (`inference/sglang/`) and activate it from `llm/`, `embedding/` and `reranker/`
+rather than duplicating ~16 GB per leaf. Create a real venv per folder instead if you want them
+independently pinned.
 
 **Client verified independently of the engine.** Because no SGLang server can serve on this
-build, `inference_llm_sglang.py` was exercised against a minimal OpenAI-compatible stub to
+build, `inference_llm_sglang.py` can be exercised against a minimal OpenAI-compatible stub to
 confirm the client itself is correct (health wait → POST → response parsing → output):
 
 ```
@@ -444,10 +447,10 @@ either a genuine success before the kernel boundary or a genuine failure at it.
 
 ```bash
 # diagnostic only; delete to get the clean upstream ImportError back
-rm .env_inference_llm_sglang/lib/python3.12/site-packages/_rocm_missing_kernel_shim*.p*
+rm .env_sglang/lib/python3.12/site-packages/_rocm_missing_kernel_shim*.p*
 ```
 
-### NVIDIA / CUDA (upstream route — not run here, no NVIDIA GPU on this host)
+### NVIDIA / CUDA (upstream route — see "H100 install" above for the validated variant)
 
 ```bash
 pip install --upgrade pip && pip install uv
@@ -468,18 +471,18 @@ The client loads it via `load_dotenv("dev.env")`, so run from inside this folder
 Weights must not land on `/`:
 
 ```bash
-export HF_HOME=/mnt/data_1.5t/hf_cache
-export HIP_VISIBLE_DEVICES=2,3          # this agent owns physical GPUs 2 and 3 only
-export CUDA_VISIBLE_DEVICES=2,3         # never set this empty on ROCm
+export HF_HOME=/path/to/hf_cache        # Hugging Face model cache, on a volume with space
+export HIP_VISIBLE_DEVICES=0,1          # the GPUs this job may use
+export CUDA_VISIBLE_DEVICES=0,1         # never set this empty on ROCm
 ```
 
 ## Run
 
-### Launch — single GPU (physical GPU 2)
+### Launch — single GPU
 
 ```bash
-source .env_inference_llm_sglang/bin/activate
-export HIP_VISIBLE_DEVICES=2 CUDA_VISIBLE_DEVICES=2 HF_HOME=/mnt/data_1.5t/hf_cache
+source .env_sglang/bin/activate
+export HIP_VISIBLE_DEVICES=0 CUDA_VISIBLE_DEVICES=0 HF_HOME=/path/to/hf_cache
 
 python -m sglang.launch_server \
   --model-path Qwen/Qwen3.8-27B-FP8 \
@@ -492,14 +495,14 @@ python -m sglang.launch_server \
 ```
 
 This is the **conservative AMD** command. Do **not** copy the NVIDIA cookbook's
-`--attention-backend flashinfer` / `--kv-cache-dtype fp8_e4m3` flags onto ROCm; on this
-host SGLang already auto-selects the AMD path and logs
+`--attention-backend flashinfer` / `--kv-cache-dtype fp8_e4m3` flags onto ROCm; on gfx950
+SGLang already auto-selects the AMD path and logs
 `Attention backend not specified. Use aiter backend by default.`
 
-### Launch — multi-GPU, TP=2 (physical GPUs 2+3)
+### Launch — multi-GPU, TP=2
 
 ```bash
-export HIP_VISIBLE_DEVICES=2,3 CUDA_VISIBLE_DEVICES=2,3
+export HIP_VISIBLE_DEVICES=0,1 CUDA_VISIBLE_DEVICES=0,1
 python -m sglang.launch_server --model-path Qwen/Qwen3.8-27B-FP8 --trust-remote-code \
   --tp 2 --mem-fraction-static 0.85 --host 0.0.0.0 --port 8100
 ```
@@ -521,19 +524,19 @@ Expected on a working build:
 
 ## Single-GPU results (measured, gfx950)
 
-Run with the cached fallback `Qwen/Qwen3-0.6B` — the 27B FP8 download was skipped
-deliberately (see "FP8 analysis"), because the failure is engine-level and identical.
+Run with the smaller cached fallback `Qwen/Qwen3-0.6B` — the 27B FP8 download is unnecessary
+to reproduce this (see "FP8 analysis"), because the failure is engine-level and identical.
 
 ```
-[01:34:37] Attention backend not specified. Use aiter backend by default.
-[01:34:44] Init torch distributed ends. elapsed=0.04 s, mem usage=0.15 GB
-[01:34:44] Load weight begin. avail mem=287.26 GB
-[01:34:45] Load weight end. elapsed=0.42 s, type=Qwen3ForCausalLM, avail mem=286.05 GB, mem usage=1.21 GB.
-[01:34:46] KV Cache is allocated. dtype: torch.bfloat16, #tokens: 1360288, K size: 72.65 GB, V size: 72.65 GB
-[01:34:46] Memory pool end. avail mem=140.05 GB
-[01:34:47] Capture target decode CUDA graph begin. backend=full, ... avail mem=134.61 GB
-[01:34:50] Exception: Capture cuda graph failed:
-           ROCm shim: sgl_kernel.rotary_embedding was really called - needs a native ROCm build
+Attention backend not specified. Use aiter backend by default.
+Init torch distributed ends. elapsed=0.04 s, mem usage=0.15 GB
+Load weight begin. avail mem=287.26 GB
+Load weight end. elapsed=0.42 s, type=Qwen3ForCausalLM, avail mem=286.05 GB, mem usage=1.21 GB.
+KV Cache is allocated. dtype: torch.bfloat16, #tokens: 1360288, K size: 72.65 GB, V size: 72.65 GB
+Memory pool end. avail mem=140.05 GB
+Capture target decode CUDA graph begin. backend=full, ... avail mem=134.61 GB
+Exception: Capture cuda graph failed:
+    ROCm shim: sgl_kernel.rotary_embedding was really called - needs a native ROCm build
 ```
 
 | Metric | Value |
@@ -552,26 +555,26 @@ call into the first real prefill; rotary embedding is on every forward path.
 ## Multi-GPU (TP=2) results (measured, gfx950)
 
 ```
-[01:40:11 TP0] Init torch distributed begin.
-[01:40:11 TP1] Init torch distributed begin.
-[01:40:11 TP0] sglang is using nccl==2.27.7
-[01:40:14 TP0] [AR] Using AiterCustomAllreduce (AMD default)
-[01:40:14 TP1] [AR] Using AiterCustomAllreduce (AMD default)
-[01:40:16 TP0] Load weight end. elapsed=0.30 s, type=Qwen3ForCausalLM, avail mem=285.65 GB, mem usage=0.61 GB.
-[01:40:16 TP1] Load weight end. elapsed=0.30 s, ...                                        mem usage=0.61 GB.
-[01:40:22 TP1] Exception: Capture cuda graph failed:
-               ROCm shim: sgl_kernel.rotary_embedding was really called - needs a native ROCm build
+[TP0] Init torch distributed begin.
+[TP1] Init torch distributed begin.
+[TP0] sglang is using nccl==2.27.7
+[TP0] [AR] Using AiterCustomAllreduce (AMD default)
+[TP1] [AR] Using AiterCustomAllreduce (AMD default)
+[TP0] Load weight end. elapsed=0.30 s, type=Qwen3ForCausalLM, avail mem=285.65 GB, mem usage=0.61 GB.
+[TP1] Load weight end. elapsed=0.30 s, ...                                        mem usage=0.61 GB.
+[TP1] Exception: Capture cuda graph failed:
+      ROCm shim: sgl_kernel.rotary_embedding was really called - needs a native ROCm build
 ```
 
 **Tensor parallelism itself works on ROCm up to the kernel boundary.** Per-rank weight
 memory is **0.61 GB vs 1.21 GB at TP=1 — exactly half**, so the weights really were sharded
 across the two MI355X, both ranks initialised, and RCCL 2.27.7 formed the process group.
-`rocm-smi` sampled during a TP=2 launch shows **both owned cards holding memory
-simultaneously** (bytes used, card2/card3, 288 GB each):
+`rocm-smi` sampled during a TP=2 launch shows **both cards holding memory
+simultaneously** (total/used bytes per card, 288 GB each):
 
 ```
-01:40:59 | card2,309220868096,816869376 | card3,309220868096,816869376
-01:41:01 | card2,309220868096,1550635008 | card3,309220868096,1550630912   # ~1.44 GiB each
+card0,309220868096,816869376  | card1,309220868096,816869376
+card0,309220868096,1550635008 | card1,309220868096,1550630912   # ~1.44 GiB each
 ```
 
 SGLang also chose AMD's `AiterCustomAllreduce` by default and, with AITER absent, logged
@@ -632,21 +635,21 @@ Server flags that mattered here:
 
 ## Output
 
-The server writes no artifacts; probe logs from this validation are under
-`/mnt/data_1.5t/outputs/inference_llm_sglang/` (`probe_0p6b.log`, `llm_tp2.log`). Weights
-live in `$HF_HOME=/mnt/data_1.5t/hf_cache`, never on `/`. The client prints health-wait
+The server writes no artifacts; probe logs land wherever you redirect them, e.g.
+`$OUTPUT_DIR/inference_llm_sglang/` (`probe_0p6b.log`, `llm_tp2.log`). Weights
+live in `$HF_HOME`, never on `/`. The client prints health-wait
 time, latency, token usage, and the generated text to stdout only.
 
 ## Hardware support & evidence
 
 | | NVIDIA | AMD |
 |---|---|---|
-| Status here | **Not tested** — no NVIDIA GPU on this host | **Tested, blocked** — 2×MI355X 288GB (gfx950), ROCm 7.2.4 |
+| Status | **Works** — H100 80GB, CUDA 13.0 (see the H100 section above) | **pip route blocked** — 2×MI355X 288GB (gfx950), ROCm 7.2.4; container route works |
 | Install | `uv pip install sglang` (works as documented) | pip route unusable; needs `lmsysorg/sglang-rocm` or a hipcc source build |
 | Kernels | `sglang-kernel` CUDA wheel from PyPI | `sgl_kernel` + `aiter` must be built for HIP — **no wheel published** |
 | Attention | `flashinfer` (cookbook) | `aiter` (auto-selected on gfx950) |
 
-Evidence gathered 2026-08-20:
+Evidence:
 
 - **PyPI metadata** — `sglang` 0.5.17 base dependencies include `cuda-python>=13.0`,
   `flashinfer_python[cu13]==0.6.15.post1`, `flash-attn-4`, `sglang-kernel==0.4.5`; there is
@@ -659,7 +662,7 @@ Evidence gathered 2026-08-20:
   `elif _is_hip: from sgl_kernel import rotary_embedding`. So on ROCm SGLang imports
   `sgl_kernel` directly — **building AITER alone can never substitute for it.** AITER is
   additionally opt-in: `_use_aiter = get_bool_env_var("SGLANG_USE_AITER") and _is_hip`.
-- **Docker Hub** — `lmsysorg/sglang-rocm` publishes exact tags for this host, e.g.
+- **Docker Hub** — `lmsysorg/sglang-rocm` publishes exact tags for this GPU family, e.g.
   `v0.5.17-rocm720-mi35x-20260819` (23.4 GB compressed) and a `rocm700-mi35x` variant,
   rebuilt daily. This is the supported AMD route.
 - **AMD wheel index** — `repo.radeon.com/rocm/manylinux/rocm-rel-7.2/` publishes no
@@ -670,8 +673,8 @@ Evidence gathered 2026-08-20:
 - **`Failed to import amdsmi`** is logged on every launch. Harmless here (SGLang falls back
   to other memory queries), but installing `amdsmi` from the ROCm tree gives SGLang proper
   AMD GPU telemetry.
-- **`Ignoring corrupted tree cache file ... Permission denied`** — the shared
-  `/mnt/data_1.5t/hf_cache` has snapshot tree-cache files owned by another user. Cosmetic:
+- **`Ignoring corrupted tree cache file ... Permission denied`** — appears when the shared
+  `$HF_HOME` has snapshot tree-cache files owned by another user. Cosmetic:
   SGLang re-reads the snapshot and logs `Found local HF snapshot ...; skipping download`.
 - **`--mem-fraction-static` is auto-reduced at TP>1** (0.5 → 0.425 at TP=2). Set it
   explicitly for reproducible KV sizing.
@@ -684,13 +687,12 @@ Evidence gathered 2026-08-20:
 
 ## Follow-ups
 
-1. Re-run this exact validation inside
-   `lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819` when `/` has >150 GB free, with
-   the canonical AMD flags: `--device /dev/kfd --device /dev/dri/renderD144 --device
-   /dev/dri/renderD152 --group-add video --group-add render --ipc=host --cap-add=SYS_PTRACE
-   --security-opt seccomp=unconfined --shm-size 64G`. Everything up to the kernel boundary
-   already passes, so that image is very likely to serve.
+1. The fullest AMD container flag set for
+   `lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819` is: `--device /dev/kfd --device
+   /dev/dri/renderD144 --device /dev/dri/renderD152 --group-add video --group-add render
+   --ipc=host --cap-add=SYS_PTRACE --security-opt seccomp=unconfined --shm-size 64G`.
+   Allow >150 GB free on the filesystem holding the image.
 2. If containers are off the table, build `sgl-kernel` for HIP and AITER from source
-   (hours, needs hipcc + composable_kernel) — not attempted under this task's time cap.
-3. Then benchmark the FP8 27B properly: first-token latency, decode tok/s, and output
+   (hours, needs hipcc + composable_kernel).
+3. Benchmark the FP8 27B properly: first-token latency, decode tok/s, and output
    agreement versus the Transformers reference.

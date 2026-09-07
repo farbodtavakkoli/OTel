@@ -13,21 +13,21 @@ OpenAI-compatible server).
 lots of CPU RAM and a modern server CPU. For a **dense** model, or anything that fits in
 VRAM, use [`../vllm/llm/`](../vllm/llm/) or [`../sglang/llm/`](../sglang/llm/) instead.
 
-## Verified on both vendors — with opposite verdicts
+## Verified on both vendors — with opposite outcomes
 
-This stack is the repo's clearest case of a verdict that is *hardware-dependent by
-design*. Full evidence for both campaigns lives in [`llm/README.md`](llm/README.md).
+This stack is the repo's clearest case of an outcome that is *hardware-dependent by
+design*. Full evidence for both platforms lives in [`llm/README.md`](llm/README.md).
 
-| | NVIDIA H100 (2026-08-23) | AMD MI355X (2026-08-22) |
+| | NVIDIA H100 | AMD MI355X |
 |---|---|---|
 | Route | prebuilt PyPI wheels (`kt-kernel` + `sglang-kt`), no build | **source build** of kt-kernel with `CPUINFER_USE_ROCM=1` (PyPI wheel is CUDA-only — verified) |
 | CPU kernel tier | **AMX** (Xeon 8480C Sapphire Rapids) | **AVX512-BF16** (EPYC 9575F — no AMX on Zen 5, by design) |
 | Serving | ✅ `sglang-kt` serves `Qwen/Qwen3-30B-A3B` (128 experts): coherent output, ~23–50 tok/s, experts in CPU DRAM (~72 GB RSS) with only **16.41 GB** on GPU | ❌ **blocked** — `sglang-kt` 0.7.0 hard-pins `cuda-python`, `flashinfer`, `sgl-kernel` (CUDA-only wheels); metadata requirements, so a container does not route around them |
 | Direct Python API | not exercised | ✅ hybrid proven: 48 MoE layers on CPU → **4.09 GB** VRAM vs 64.62 GB all-GPU (15.8×), 17.44 tok/s, output **character-identical** to the all-GPU baseline |
-| Verdict | **works on its designed workload** — use for MoE models too big for 80 GB | kernel library is genuinely ROCm-portable, but no serving layer — and 288 GB/card removes the VRAM-scarcity premise for this repo's targets |
+| Outcome | **works on its designed workload** — use for MoE models too big for 80 GB | kernel library is genuinely ROCm-portable, but no serving layer — and 288 GB/card removes the VRAM-scarcity premise for this repo's targets |
 
 Bottom line: **the kernel library ports across vendors; the serving layer is CUDA-first.**
-On NVIDIA this is a working niche tool; on this repo's AMD box it is a well-evidenced
+On NVIDIA this is a working niche tool; on AMD it is a well-evidenced
 "runs, but use vLLM/SGLang instead".
 
 ## Scope — why only an `llm/` leaf
@@ -37,6 +37,11 @@ models and has no embedding or reranker serving path — like
 [`../tensorrtllm/`](../tensorrtllm/), only an `llm/` subfolder exists.
 
 ## Install
+
+```bash
+# Set these to suit your machine
+export DATA_DIR=/path/to/data          # source checkouts and scratch space
+```
 
 ### NVIDIA (verified on H100 — the serving route)
 
@@ -48,9 +53,10 @@ pip install sglang-kt                     # 0.7.0 — kvcache-ai SGLang fork (NO
 pip install nvidia-cudnn-cu12==9.16.0.29  # sglang-kt guards against a torch-2.9.1/cuDNN<9.15 bug
 ```
 
-Notes from the H100 run: unset any box proxy first (it 403s pypi.nvidia.com / HF), and
-expect `kt-kernel`/`sglang-kt` to pull CUDA `torch 2.9.1+cu128` (fine on a cu130/driver-580
-host). Serve on a **distinct port** (runs here used 8380/38612), never SGLang's default.
+Notes for the H100 route: unset any host proxy first (a proxy typically 403s
+pypi.nvidia.com / HF), and expect `kt-kernel`/`sglang-kt` to pull CUDA `torch 2.9.1+cu128`
+(fine on a cu130/driver-580 host). Serve on a **distinct port** (e.g. 8380 or 38612), never
+SGLang's default.
 
 ### AMD (verified on MI355X — kernel library only; source build mandatory)
 
@@ -58,8 +64,8 @@ host). Serve on a **distinct port** (runs here used 8380/38612), never SGLang's 
 python3 -m venv .env_ktransformers && source .env_ktransformers/bin/activate
 pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2   # torch FIRST
 pip install numpy python-dotenv huggingface_hub transformers accelerate
-git clone https://github.com/kvcache-ai/ktransformers /mnt/data_450g/ktransformers_src
-cd /mnt/data_450g/ktransformers_src/kt-kernel
+git clone https://github.com/kvcache-ai/ktransformers $DATA_DIR/ktransformers_src
+cd $DATA_DIR/ktransformers_src/kt-kernel
 export CPUINFER_USE_ROCM=1 ROCM_PATH=/opt/rocm PYTORCH_ROCM_ARCH=gfx950
 export CPUINFER_CPU_INSTRUCT=NATIVE CPUINFER_ENABLE_AMX=OFF
 pip install . -v --no-build-isolation --no-deps    # --no-deps is MANDATORY (see trap below)
@@ -74,8 +80,7 @@ to CPU-only, which is why the source build is mandatory. Build detail, evidence,
 ## Environment & secrets
 
 - Client/probe deps: [`requirements.txt`](requirements.txt) (both vendor routes inside).
-- Venv convention: `python3 -m venv .env_ktransformers` at this software root. On the AMD
-  box the campaign venv lives at `/mnt/data_450g/envs/.env_inference_ktransformers`.
+- Venv convention: `python3 -m venv .env_ktransformers` at this software root.
 - `dev.env` symlinked at this root (`ln -sf ../../dev.env dev.env`) and in the leaf
   (`ln -sf ../../../dev.env dev.env`) for `HF_TOKEN`. Never commit tokens.
 
@@ -94,6 +99,6 @@ to CPU-only, which is why the source build is mandatory. Build detail, evidence,
 
 ## Leaves
 
-| Leaf | Verdict |
+| Leaf | Status |
 |---|---|
 | [`llm/`](llm/README.md) | H100: **serving works** on the designed MoE workload (dense 27B FP8 is a documented caveat — offload inert, use vLLM/SGLang). MI355X: **kernel library works** (hybrid proven via direct API); serving blocked upstream; premise moot on 288 GB cards. |

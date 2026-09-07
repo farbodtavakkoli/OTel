@@ -27,15 +27,14 @@ Use this folder when you want:
 > so the client never has to build the yes/no prompt itself.
 
 > **Tested topology:** 2xAMD Instinct MI355X (gfx950, 288 GB each), physical GPUs 6
-> and 7, ROCm 7.2.4, Ubuntu, Python 3.12.3. Verified **2026-08-20**.
+> and 7, ROCm 7.2.4, Ubuntu, Python 3.12.3.
 
 ## Build — see [`../README.md`](../README.md)
 
 One llama.cpp HIP build serves all three `inference/llamacpp/*` leaves — the full
 ROCm build recipe (prerequisites, cmake flags, the mandatory `-DLLAMA_OPENSSL=ON`,
-NVIDIA variant) lives in [`../README.md`](../README.md). The campaign's build tree
-was removed with the venvs in the 2026-08 reorg; the documented 40.6 s cold rebuild
-applies.
+NVIDIA variant) lives in [`../README.md`](../README.md); a cold build takes about
+40.6 s.
 
 Verified at commit **`d59d455fd8ea09e5a2e87ce2a9d668267ffb5ccd`** (Wed Aug 19 2026),
 `llama-server` **0.1.2-dev (build 1)**, ggml **0.20.2**.
@@ -50,13 +49,16 @@ export $(grep -v '^#' dev.env | xargs)          # only when a gated repo needs H
 Not required for this model. Never echo or commit `HF_TOKEN`.
 
 ```bash
+# Set these to suit your machine
+export HF_HOME=/path/to/hf_cache             # Hugging Face model cache
+export LLAMA_CACHE=$HF_HOME/llama_cpp        # llama.cpp's own -hf cache
+export OUTPUT_DIR=/path/to/outputs           # inference artifacts
+
 export HIP_VISIBLE_DEVICES=7 CUDA_VISIBLE_DEVICES=7      # this folder's test GPU
-export HF_HOME=/mnt/data_1.5t/hf_cache
-export LLAMA_CACHE=/mnt/data_1.5t/hf_cache/llama_cpp     # llama.cpp's own -hf cache
 ```
 
-`LLAMA_CACHE` is what actually controls where `-hf` writes; weights must land on
-`/mnt`. This model is 610 MB on disk.
+`LLAMA_CACHE` is what actually controls where `-hf` writes; point it at a filesystem
+with room rather than the root filesystem. This model is 610 MB on disk.
 
 > **Never set `CUDA_VISIBLE_DEVICES=""` on ROCm** — an empty string hides every device
 > and the server silently falls back to CPU.
@@ -68,7 +70,7 @@ export LLAMA_CACHE=/mnt/data_1.5t/hf_cache/llama_cpp     # llama.cpp's own -hf c
 ```bash
 cd <your llama.cpp checkout>          # built per ../README.md
 export HIP_VISIBLE_DEVICES=7 CUDA_VISIBLE_DEVICES=7
-export HF_HOME=/mnt/data_1.5t/hf_cache LLAMA_CACHE=/mnt/data_1.5t/hf_cache/llama_cpp
+# HF_HOME / LLAMA_CACHE as exported above
 
 ./build/bin/llama-server \
   -hf ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF:Q8_0 \
@@ -98,15 +100,15 @@ HIP_VISIBLE_DEVICES=7 CUDA_VISIBLE_DEVICES=7 ./build/bin/llama-server \
 
 ## Client / smoke command
 
-One shared venv at the software root serves all three leaves (the per-leaf campaign
-venvs were removed in the 2026-08 reorg; rebuild from `../requirements.txt`):
+One shared venv at the software root serves all three leaves — build it from
+`../requirements.txt`:
 
 ```bash
 cd .. && python3 -m venv .env_llamacpp && .env_llamacpp/bin/pip install -r requirements.txt && cd reranker
 
 ../.env_llamacpp/bin/python inference_reranker_llamacpp.py \
   --port 8202 \
-  --out /mnt/data_1.5t/outputs/inference_reranker_llamacpp/rerank_single_gpu.json
+  --out $OUTPUT_DIR/inference_reranker_llamacpp/rerank_single_gpu.json
 ```
 
 Equivalent raw curl:
@@ -122,8 +124,8 @@ curl -s -X POST http://127.0.0.1:8202/v1/rerank \
 
 ## Results — single GPU
 
-Real client output — **2 relevant documents interleaved with 2 irrelevant ones**, shown
-after the client re-sorts by score:
+**Expected client output** — **2 relevant documents interleaved with 2 irrelevant ones**,
+shown after the client re-sorts by score:
 
 ```text
 endpoint  : http://127.0.0.1:8202/v1/rerank
@@ -214,24 +216,24 @@ card7,309220868096,9601253376     <-- 9.60 GB
 (Each card also runs the embedding folder's server; the per-card total is dominated by
 KV-cache and HIP context allocation rather than the 604 MiB of weights.)
 
-## H100 (NVIDIA, CUDA) — verified 2026-08-22
+## H100 (NVIDIA, CUDA)
 
 Mirror of the MI355X run above, on **1x NVIDIA H100 80GB HBM3** (physical GPU 7,
 `CUDA_VISIBLE_DEVICES=7`), driver **580.173.02**, **CUDA 13.0**, Hopper cc 9.0,
 Python 3.12.3. Same binary, same **exact model**
 (`ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF:Q8_0` — only 610 MB, no substitution needed),
-same client, same `/v1/rerank` path. Only the backend build flag changed:
+same client, same `/v1/rerank` path. Only the backend build flag changes:
 `-DGGML_CUDA=ON` instead of `-DGGML_HIP=ON` (full recipe in
 [`../README.md`](../README.md); `-DLLAMA_OPENSSL=ON` is kept — vendor-neutral, required
 for the `-hf` HTTPS pull). Verified `llama-server` **0.2.0-dev (build 1, commit
 `70adb1b`)**, ggml **0.21.0**.
 
 ```bash
-cd /dev/shm/h100/out/llamacpp/llama.cpp          # CUDA build per ../README.md
+cd /dev/shm/llamacpp/llama.cpp                   # CUDA build per ../README.md
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy   # HF pull
 export CUDA_VISIBLE_DEVICES=7
-export HF_HOME=/mnt/gsma/gsma/gsma/models
-export LLAMA_CACHE=/dev/shm/h100/out/llamacpp/model_cache
+# HF_HOME as exported above
+export LLAMA_CACHE=/dev/shm/llamacpp/model_cache   # tmpfs, see quirks below
 
 ./build/bin/llama-server \
   -hf ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF:Q8_0 \
@@ -260,10 +262,10 @@ table, host-side by design. Confirmed by `nvidia-smi` filtered to GPU 7, by PID:
 ```text
 $ nvidia-smi -i 7 --query-compute-apps=pid,process_name,used_memory --format=csv
 pid, process_name, used_gpu_memory [MiB]
-1704960, ./build/bin/llama-server, 6010 MiB
+<pid>, ./build/bin/llama-server, 6010 MiB
 ```
 
-**Reranking is real and correct** — client output (2 relevant docs interleaved with 2
+**Reranking is correct** — client output (2 relevant docs interleaved with 2
 irrelevant, re-sorted by the client):
 
 ```text
@@ -277,7 +279,7 @@ top_hit_is_relevant : True
 
 Both relevant docs at **0.99968 / 0.99656**, both distractors at **0.00005 / 0.00003** —
 a ~4-order-of-magnitude gap, matching MI355X (0.99966 / 0.99639 / 0.00004 / 0.00002).
-Input order was interleaved, so the model reordered rather than echoing input order. The
+Input order is interleaved, so the model reorders rather than echoing input order. The
 alternate `/rerank` route returns the same scores
 (`[{"index":0,"relevance_score":0.9925...},{"index":1,"relevance_score":3.36e-05}]`).
 **Warm latency 28 ms** for a 4-document request (vs 16 ms on MI355X — same order).
@@ -285,16 +287,15 @@ alternate `/rerank` route returns the same scores
 **Quirks (shared with MI355X):** the harmless minja
 `Callee is not a function: got Undefined (hint: 'lstrip')` chat-template error prints at
 load — reranking does not go through the chat template, so scoring is unaffected (proven
-by the correct rankings). `--reranking` is mandatory or the rerank routes 404. New for
-this box: no GGUF was cached (ungated, pulled with no `HF_TOKEN`), and cmake/ninja were
-absent — installed into a throwaway venv (see `../README.md`); weights pulled to a tmpfs
+by the correct rankings). `--reranking` is mandatory or the rerank routes 404. This GGUF
+is ungated and pulls with no `HF_TOKEN`; if the host has no cmake/ninja, install them
+into a throwaway venv (see `../README.md`) and pull the weights to a tmpfs
 `LLAMA_CACHE`.
 
-**Multi-GPU (deferred):** only GPU 7 was used (GPUs 0–3 were a co-tenant production job).
-As on MI355X, do **not** split a 604 MiB reranker — run one instance per GPU behind a
-load balancer.
+**Multi-GPU:** only GPU 7 is used in this single-GPU smoke. As on MI355X, do **not**
+split a 604 MiB reranker — run one instance per GPU behind a load balancer.
 
-**H100 verdict: PASS.** All 29/29 layers on the H100 (CUDA0 603.87 MiB + `nvidia-smi` by
+**On H100 this path works.** All 29/29 layers on the H100 (CUDA0 603.87 MiB + `nvidia-smi` by
 PID), correct rankings with a decisive margin, 28 ms warm. Both `/v1/rerank` and `/rerank`
 routes work.
 
@@ -329,7 +330,8 @@ routes work.
 
 ## Output
 
-Artifacts go to `/mnt/data_1.5t/outputs/inference_reranker_llamacpp/`, never to `/`:
+Artifacts go to `$OUTPUT_DIR/inference_reranker_llamacpp/`, never to the root
+filesystem:
 
 ```text
 server_single_gpu.log        offload summary + load trace, GPU 7
@@ -339,7 +341,7 @@ client_single_gpu.txt        client stdout
 rocm_smi_two_instances.csv   per-card VRAM with both instances live
 ```
 
-Model weights (610 MB) live in `/mnt/data_1.5t/hf_cache/llama_cpp/`, never on `/`.
+Model weights (610 MB) live in `$LLAMA_CACHE/`, never on the root filesystem.
 
 ## Hardware support & evidence
 
@@ -386,9 +388,9 @@ Model weights (610 MB) live in `/mnt/data_1.5t/hf_cache/llama_cpp/`, never on `/
 7. **`LLAMA_CACHE`, not `HF_HOME`, controls where `-hf` writes.**
 8. **Do not split this model across GPUs.** Run one instance per GPU instead.
 
-## VERDICT
+## Summary
 
-**PASS — fully working on MI355X (gfx950).**
+**Fully working on MI355X (gfx950).**
 
 The ROCm/HIP build serves `ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF:Q8_0` with **all
 29/29 layers on the GPU** (603.87 MiB ROCm0 buffer, 1.92 GB VRAM in `rocm-smi`) and
@@ -401,9 +403,9 @@ reranker**, so llama.cpp is one of the few working reranker paths on AMD hardwar
 
 Multi-GPU splitting is **deliberately not used** — 604 MiB on a 288 GB card gains
 nothing from a layer split. The demonstrated scale-out pattern is **two concurrent
-single-GPU instances**, which produced **bit-identical scores** on both GPUs.
+single-GPU instances**, which produce **bit-identical scores** on both GPUs.
 
-The only real gotcha is the build-time one shared by all three folders:
+The main gotcha is the build-time one shared by all three folders:
 **`-DLLAMA_OPENSSL=ON` + `libssl-dev`** are required for the `-hf` downloader.
 
 ## Follow-ups

@@ -4,10 +4,10 @@ One SGLang runtime serves all three workloads. Shared setup lives here; each lea
 documents only its workload: [`llm/`](llm/) · [`embedding/`](embedding/) ·
 [`reranker/`](reranker/).
 
-**The MI355X verdict in one line: the pip route cannot serve; the vendor container serves
-everything.** Both facts are evidenced in the leaves.
+On MI355X the pip route cannot serve; the vendor container serves everything. Both facts
+are evidenced in the leaves.
 
-| Leaf | Model | Verdict on MI355X (gfx950, ROCm 7.2.4) |
+| Leaf | Model | Status on MI355X (gfx950, ROCm 7.2.4) |
 |---|---|---|
 | [`llm/`](llm/) | `Qwen/Qwen3.8-27B-FP8` | **works in the container** — FP8 27B generates at TP=1 **and** TP=2; pip route blocked |
 | [`embedding/`](embedding/) | `google/embeddinggemma-300m` | **works in the container** — `/v1/embeddings`, dim 768, correct cosine ordering; pip route blocked |
@@ -15,22 +15,27 @@ everything.** Both facts are evidenced in the leaves.
 
 ---
 
-# `inference/sglang` — SGLang serving on NVIDIA H100 (verified 2026-08-22)
+# `inference/sglang` — SGLang serving on NVIDIA H100
 
-**The H100 headline in one line: the pip route WORKS — this flips the MI355X "pip cannot
-serve" limitation.** On NVIDIA the exact import that killed the ROCm pip route
-(`from sgl_kernel import rotary_embedding`) succeeds, because `sglang-kernel` ships native
-CUDA wheels on PyPI. **All three workloads serve from a plain `pip install "sglang[all]"`
-venv — no container needed.** Everything below was measured on **physical GPU 6** of an
-8×H100 node (single-GPU smoke test; GPUs 0–3 were a co-tenant production job, untouched).
+On NVIDIA the pip route works, which flips the MI355X "pip cannot serve" limitation: the
+exact import that killed the ROCm pip route (`from sgl_kernel import rotary_embedding`)
+succeeds, because `sglang-kernel` ships native CUDA wheels on PyPI. All three workloads
+serve from a plain `pip install "sglang[all]"` venv — no container needed. The notes below
+come from a single-GPU pass on one free GPU of an 8×H100 node; set `CUDA_VISIBLE_DEVICES`
+to whichever GPU is free on yours.
 
-| Leaf | Model | Verdict on H100 (cc9.0, CUDA 13.0, driver 580.173.02) — **pip route** |
+| Leaf | Model | Status on H100 (cc9.0, CUDA 13.0, driver 580.173.02) — **pip route** |
 |---|---|---|
 | [`llm/`](llm/) | `Qwen/Qwen3.8-27B-FP8` | **WORKS** — FP8 27B loads as `Qwen3_5ForConditionalGeneration` (hybrid-GDN VL arch) and generates correct text; capital-of-France=Paris, ROCm→AMD/CUDA→NVIDIA |
 | [`embedding/`](embedding/) | `google/embeddinggemma-300m` | **WORKS** — `/v1/embeddings`, dim 768, correct cosine ordering (+0.7931 rel > +0.2750 irrel) |
 | [`reranker/`](reranker/) | `Qwen/Qwen3-Reranker-0.6B` | **WORKS** — `/v1/rerank`, correct 3-tier ordering (0.7773 / 0.1480 / 0.000033) |
 
-## Install (NVIDIA / CUDA — the pip route, VERIFIED WORKING)
+## Install (NVIDIA / CUDA — the pip route)
+
+```bash
+# Set these to suit your machine
+export HF_HOME=/path/to/hf_cache        # Hugging Face model cache
+```
 
 ```bash
 python3 -m venv .env_sglang && source .env_sglang/bin/activate
@@ -63,18 +68,18 @@ not hardware; the H100 result confirms that directly.**
 ## Environment & GPU pinning (H100)
 
 ```bash
-export HF_HOME=/mnt/gsma/gsma/gsma/models    # 1.1 TB cached; all 4 models below already present
-export HF_HUB_OFFLINE=1                       # cache-first; every model here was cached, nothing downloaded
-export CUDA_VISIBLE_DEVICES=6                  # plain CUDA — no HIP_VISIBLE_DEVICES / RAY_EXPERIMENTAL_NOSET_* needed
+export HF_HOME=/path/to/hf_cache              # Hugging Face model cache
+export HF_HUB_OFFLINE=1                       # cache-first; nothing is downloaded when the models are already cached
+export CUDA_VISIBLE_DEVICES=<free-gpu>        # plain CUDA — no HIP_VISIBLE_DEVICES / RAY_EXPERIMENTAL_NOSET_* needed
 ln -sf ../../dev.env dev.env                  # stack-root symlink -> repo-root dev.env (supplies HF_TOKEN for gated embeddinggemma)
 ```
 
 Reversed ROCm workarounds: plain `CUDA_VISIBLE_DEVICES`, no `HIP_VISIBLE_DEVICES`, no
 `--disable-custom-all-reduce`, no `aiter` backend. SGLang auto-selects `fa3` attention +
-`flashinfer` sampling on Hopper. Multi-GPU (TP=2/8) is DEFERRED (production job holds GPUs 0–3);
-a multi-GPU pass would just add `--tp N` with `CUDA_VISIBLE_DEVICES` listing N free GPUs.
+`flashinfer` sampling on Hopper. Multi-GPU (TP=2/8) is not covered here; it just adds
+`--tp N` with `CUDA_VISIBLE_DEVICES` listing N free GPUs.
 
-## Hardware support (updated)
+## Hardware support
 
 - **NVIDIA H100 (cc9.0, CUDA 13.0, driver 580.173.02): verified — the PIP ROUTE serves all
   three workloads.** No container required.
@@ -85,19 +90,22 @@ a multi-GPU pass would just add `--tp N` with `CUDA_VISIBLE_DEVICES` listing N f
 ## Install (AMD / ROCm — the route that works)
 
 ```bash
+# Set these to suit your machine
+export HF_HOME=/path/to/hf_cache        # Hugging Face model cache
+
 docker pull lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819   # ~23 GB compressed / ~90 GB on disk
 docker run -d --name sglang_serve \
   --device /dev/kfd --device /dev/dri --group-add video --ipc=host --shm-size 16g \
   --security-opt seccomp=unconfined --cap-add SYS_PTRACE \
   -p 8100:8100 -p 8101:8101 -p 8102:8102 \
-  -v /mnt/data_1.5t/hf_cache:/hf_cache -e HF_HOME=/hf_cache \
+  -v "$HF_HOME":/hf_cache -e HF_HOME=/hf_cache \
   lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819 sleep infinity
 ```
 
 Pick the tag matching your GPU family (`mi35x` = gfx950) and ROCm line. Launch commands
 per workload live in each leaf README. Ports: llm 8100, embedding 8101, reranker 8102.
 
-## Why pip cannot work on ROCm (kept because it is a finding, not a failure to try)
+## Why pip cannot work on ROCm
 
 `uv pip install sglang` is actively harmful on ROCm — the base wheel depends on CUDA
 torch, flashinfer and `sglang-kernel`, and SGLang's HIP code path does
@@ -118,12 +126,12 @@ python3 -m venv .env_sglang && source .env_sglang/bin/activate
 pip install -r requirements.txt
 ```
 
-Campaign venvs were removed in the 2026-08 reorg; rebuild from this requirements file.
+One shared venv at the stack root (`inference/sglang/.env_sglang`) serves the `llm/`,
+`embedding/` and `reranker/` leaves — build it once here, activate it from any leaf.
 
-## Hardware support
+## Upstream images and other hardware
 
-- **AMD MI355X (gfx950, ROCm 7.2.4): verified** — container route, all three workloads.
-- **NVIDIA:** not yet verified in this repo (`lmsysorg/sglang` is the upstream CUDA image,
-  with an exact Qwen3.8-27B cookbook).
+- **NVIDIA:** `lmsysorg/sglang` is the upstream CUDA image, with an exact Qwen3.8-27B
+  cookbook; the pip route documented above also serves all three workloads on H100.
 - **Other hardware (upstream claims — not verified here):** none beyond NVIDIA CUDA and
   AMD ROCm in upstream's supported-hardware documentation.

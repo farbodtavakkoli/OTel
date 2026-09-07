@@ -10,14 +10,14 @@ Rust router (TEI 1.9.3) was **built from source inside a ROCm PyTorch container*
 ROCm 7.2 torch image for gfx950 works; an SGLang-ROCm image already on disk was used).
 Rust + protoc added, `cargo build --release ... -F python -F http --no-default-features`,
 3m 44s, **no source patches needed for gfx950**. Upstream documents ROCm as *experimental*
-and tested only on MI200/MI300 — this is the first gfx950 data point we are aware of.
+and tested only on MI200/MI300, so gfx950 is beyond its documented matrix.
 Decisive ROCm-not-CPU evidence: the `warmup_rocm` log line.
 
-**The H100 route that worked (verified 2026-08-22):** NVIDIA *does* publish an image, so
+**The H100 route that worked:** NVIDIA *does* publish an image, so
 there is **no source build** — pull `ghcr.io/huggingface/text-embeddings-inference:hopper-1.9`
 (the **Hopper** tag for cc 9.0; the generic `cuda-*` tag is the wrong arch) and `docker run`
 it. Same router (TEI 1.9.3). One deviation: the Hopper (candle CUDA) backend **rejects
-`bfloat16`** — it accepts only `float16`/`float32`, so we serve `--dtype float32` (the
+`bfloat16`** — it accepts only `float16`/`float32`, so serve `--dtype float32` (the
 EmbeddingGemma card warns against fp16). Verified on 1×H100 80GB, driver 580.173.02, CUDA 13.0:
 correct 768-dim fp32 embeddings, correct semantic ranking, ~19–35 ms/request. Decisive
 CUDA-not-CPU evidence: the candle `Starting Gemma3 model on Cuda(CudaDevice(...))` log line
@@ -37,7 +37,7 @@ Deliberate, not an omission:
 
 ## Leaves
 
-| Leaf | Verdict |
+| Leaf | Status |
 |---|---|
 | [`embedding/`](embedding/README.md) — MI355X | **Works (build-from-source required)** — EmbeddingGemma-300m, correct 768-dim bf16 embeddings, ~20 ms/request on 1×MI355X; genuine ROCm backend confirmed. |
 | [`embedding/`](embedding/README.md) — H100 | **Works (prebuilt Hopper image, no build)** — `hopper-1.9` image, EmbeddingGemma-300m, correct 768-dim **fp32** embeddings, correct ranking, ~19–35 ms/request on 1×H100; candle CUDA backend resident by PID. Deviation: `--dtype float32` (Hopper image rejects bf16). |
@@ -46,8 +46,7 @@ Deliberate, not an omission:
 
 - Client deps: [`requirements.txt`](requirements.txt) — just `requests` + `python-dotenv`;
   the server is a Rust binary (build toolchain documented in the same file).
-- Venv convention: `python3 -m venv .env_tei` at this software root. Per-campaign venvs
-  were removed in the 2026-08 reorg.
+- Venv convention: `python3 -m venv .env_tei` at this software root.
 - Secrets: `HF_TOKEN` from `dev.env` (EmbeddingGemma is a gated model). TEI echoes a
   partially-masked token in its startup log — keep server logs out of git.
 

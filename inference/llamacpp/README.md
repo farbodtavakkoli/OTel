@@ -11,27 +11,26 @@ binary runs chat completions, `/v1/embeddings`, and `/v1/rerank` depending on fl
 > official FP8/FP16 repos.
 
 > **Tested topology:** 2xAMD Instinct MI355X (gfx950, 288 GB each), physical GPUs 6
-> and 7, ROCm 7.2.4, Ubuntu, Python 3.12.3. Verified **2026-08-20**.
+> and 7, ROCm 7.2.4, Ubuntu, Python 3.12.3.
 >
 > **Also verified on NVIDIA H100** (1x H100 80GB HBM3, physical GPU 7, CUDA 13.0,
-> driver 580.173.02, Hopper cc 9.0, Python 3.12.3) — single-GPU, **2026-08-22**. Only the
+> driver 580.173.02, Hopper cc 9.0, Python 3.12.3) — single-GPU. Only the
 > backend build flag changes (`-DGGML_CUDA=ON`); every serve/client command is identical.
-> See "NVIDIA (H100 / CUDA) — verified" below and each leaf's H100 section.
+> See "NVIDIA (H100 / CUDA)" below and each leaf's H100 section.
 
 ## Leaves
 
-| Leaf | Model | MI355X verdict | H100 verdict |
+| Leaf | Model | Status on MI355X | Status on H100 |
 |---|---|---|---|
-| [`llm/`](llm/README.md) | `unsloth/Qwen3.8-27B-GGUF:Q8_0` | **PASS** — 66/66 layers on GPU, 66.7 tok/s single-GPU; layer split works (65.9 tok/s), `--split-mode row` broken on HIP | **PASS** — 29/29 layers on CUDA0 (verified with small `unsloth/Qwen3-1.7B-GGUF:Q8_0`, 370 tok/s); swap `-hf` back to the 27B for prod |
-| [`embedding/`](embedding/README.md) | `ggml-org/embeddinggemma-300M-GGUF:Q8_0` | **PASS** — 768-d L2-normalised vectors, ~50 ms/3-text batch; scale out with one instance per GPU, don't split | **PASS** — same GGUF, 25/25 layers on CUDA0 (311.97 MiB, identical buffer), 768-d, related 0.29 > unrelated 0.10 |
-| [`reranker/`](reranker/README.md) | `ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF:Q8_0` | **PASS** — correct rankings, 16 ms warm; one of the few working reranker paths on AMD (TEI lacks this model) | **PASS** — same GGUF, 29/29 layers on CUDA0 (603.87 MiB, identical buffer), correct rankings, 28 ms warm |
+| [`llm/`](llm/README.md) | `unsloth/Qwen3.8-27B-GGUF:Q8_0` | **works** — 66/66 layers on GPU, 66.7 tok/s single-GPU; layer split works (65.9 tok/s), `--split-mode row` broken on HIP | **works** — 29/29 layers on CUDA0 (verified with small `unsloth/Qwen3-1.7B-GGUF:Q8_0`, 370 tok/s); swap `-hf` back to the 27B for prod |
+| [`embedding/`](embedding/README.md) | `ggml-org/embeddinggemma-300M-GGUF:Q8_0` | **works** — 768-d L2-normalised vectors, ~50 ms/3-text batch; scale out with one instance per GPU, don't split | **works** — same GGUF, 25/25 layers on CUDA0 (311.97 MiB, identical buffer), 768-d, related 0.29 > unrelated 0.10 |
+| [`reranker/`](reranker/README.md) | `ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF:Q8_0` | **works** — correct rankings, 16 ms warm; one of the few working reranker paths on AMD (TEI lacks this model) | **works** — same GGUF, 29/29 layers on CUDA0 (603.87 MiB, identical buffer), correct rankings, 28 ms warm |
 
-## Build — the exact ROCm/HIP commands that worked
+## Build — the ROCm/HIP commands
 
-llama.cpp is a C++ build, not a pip package. The campaign's build tree was removed
-with the venvs in the 2026-08 reorg; rebuild it anywhere convenient (e.g. a
-git-ignored directory under this folder) — the documented **40.6 s** cold rebuild
-applies.
+llama.cpp is a C++ build, not a pip package. Build it anywhere convenient (e.g. a
+git-ignored directory under this folder); a cold build takes about **40.6 s** on the
+hardware below.
 
 ### 0. Build prerequisites (apt)
 
@@ -87,7 +86,7 @@ Available devices:
   ROCm1: AMD Instinct MI355X (294896 MiB, 294310 MiB free)
 ```
 
-### NVIDIA (H100 / CUDA) — verified 2026-08-22
+### NVIDIA (H100 / CUDA)
 
 Verified on **1x NVIDIA H100 80GB HBM3** (physical GPU 7, `CUDA_VISIBLE_DEVICES=7`),
 **CUDA 13.0** (`nvcc` at `/usr/local/cuda`), driver **580.173.02**, Hopper cc 9.0,
@@ -117,14 +116,14 @@ compiled clean, first try. Configure logs confirm the vendor-neutral OpenSSL fix
 `OpenSSL found: 3.0.13`. Verified `llama-server` **0.2.0-dev (build 1, commit `70adb1b`)**,
 ggml **0.21.0**.
 
-> **Two prerequisites this box did NOT have (both fixed without touching the system):**
-> 1. **`cmake` and `ninja` were absent** (only `make`/`g++` 13.3.0). Installed via
+> **Two prerequisites a host may be missing (both fixable without touching the system):**
+> 1. **`cmake` and `ninja` absent** (only `make`/`g++` 13.3.0). Install them via
 >    `pip` into a throwaway venv — `python3 -m venv <venv> && <venv>/bin/python -m pip
 >    install cmake ninja` (gives cmake 4.4.2 + ninja 1.13.0) — then put `<venv>/bin` on
 >    `PATH`. A prebuilt CUDA `llama.cpp` release binary is the documented fallback if you
->    cannot get a toolchain, but the source build here finished in 100 s so it was
+>    cannot get a toolchain, but the source build finishes in 100 s so it is usually
 >    unnecessary.
-> 2. **The `/mnt/gsma` share rejects pip installs and `-hf` downloads** with
+> 2. **A network/NFS model share may reject pip installs and `-hf` downloads** with
 >    `OSError: [Errno 1] Operation not permitted` on rename. Put both the toolchain venv
 >    **and** `LLAMA_CACHE` on tmpfs (`/dev/shm/...`) — the build tree and model cache live
 >    there, `HF_HOME` still points at the read-only model share.
@@ -142,10 +141,10 @@ Available devices:
   CUDA0: NVIDIA H100 80GB HBM3 (81079 MiB, 80552 MiB free)
 ```
 
-All three leaves were served on **port 8700** and passed with all layers on the GPU
+All three leaves serve on **port 8700** with all layers on the GPU
 (`offloaded N/N layers to GPU`, weights in the `CUDA0` buffer, and `nvidia-smi -i 7`
 showing `llama-server` by PID). See each leaf's "H100 (NVIDIA, CUDA)" section for the
-exact residency logs, the real output, and the per-leaf verdict.
+residency logs and expected output.
 
 > **Do not set `CUDA_VISIBLE_DEVICES=""`** — like the ROCm caveat below, an empty string
 > hides every device and the server silently runs on CPU.
@@ -158,14 +157,15 @@ export $(grep -v '^#' dev.env | xargs)          # only when a gated repo needs H
 ```
 
 Leaves symlink the same file as `ln -sf ../../../dev.env dev.env`. None of the three
-models served here are gated — no `HF_TOKEN` was needed. Never echo or commit
+models served here are gated — no `HF_TOKEN` is needed. Never echo or commit
 `HF_TOKEN`.
 
-Model weights must land on `/mnt`, not on `/`:
+Point the model caches at a filesystem with room, not at the root filesystem:
 
 ```bash
-export HF_HOME=/mnt/data_1.5t/hf_cache
-export LLAMA_CACHE=/mnt/data_1.5t/hf_cache/llama_cpp   # llama.cpp's own -hf cache
+# Set these to suit your machine
+export HF_HOME=/path/to/hf_cache             # Hugging Face model cache
+export LLAMA_CACHE=$HF_HOME/llama_cpp        # llama.cpp's own -hf cache
 ```
 
 `LLAMA_CACHE` is the one that actually matters for `-hf`: llama.cpp keeps its own
@@ -185,9 +185,6 @@ python3 -m venv .env_llamacpp
 .env_llamacpp/bin/pip install -r requirements.txt
 ```
 
-The per-leaf campaign venvs were removed in the 2026-08 reorg; rebuild from
-`requirements.txt` here.
-
 ## Shared quirks (all three leaves)
 
 1. **`-DLLAMA_OPENSSL=ON` + `libssl-dev` are mandatory for `-hf`.** This revision
@@ -199,7 +196,7 @@ The per-leaf campaign venvs were removed in the 2026-08 reorg; rebuild from
    get "model loaded" and nothing else. Use `-lv 5` to see
    `offloaded N/N layers to GPU` and per-device buffer sizes, then drop it.
 3. **`LLAMA_CACHE`, not `HF_HOME`, controls where `-hf` writes.** Set it explicitly
-   or the weights land in `~/.cache` on `/`.
+   or the weights land in `~/.cache` on the root filesystem.
 4. **`--split-mode row` is broken on the CUDA/HIP backend** in this revision — the
    backend registers no `ggml_backend_split_buffer_type`. Only `layer` (the default)
    and `none` are usable. See the LLM leaf for the source trace.

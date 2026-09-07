@@ -28,16 +28,23 @@ Prefer **HF TEI** or **vLLM** for maximum embedding throughput, and prefer raw
 Lemonade does not currently expose per model.
 
 > **Tested topology:** 2x AMD Instinct MI355X (gfx950, 288 GB each), physical GPUs
-> **4 and 5**, ROCm 7.2.4 host, Ubuntu 24.04, Python 3.12.3. Verified **2026-08-20**.
+> **4 and 5**, ROCm 7.2.4 host, Ubuntu 24.04, Python 3.12.3.
 
-## Install — the exact route that worked
+## Install — the route that works
+
+```bash
+# Set these to suit your machine
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache (weights land here)
+export DATA_DIR=/path/to/data          # Lemonade tarball, binaries and backend cache
+export OUTPUT_DIR=/path/to/outputs     # inference artifacts
+```
 
 ### The package-name trap: two different Lemonades
 
-| What | Command it gives you | Has `backends install`? | Verdict here |
+| What | Command it gives you | Has `backends install`? | Notes |
 |---|---|---|---|
 | pip `lemonade-sdk==9.1.4` | `lemonade`, `lemonade-server-dev` | **No** | Deprecated python server — **its ROCm backend rejects gfx950** (tested, see below) |
-| C++ Lemonade Server **11.7.0** (GitHub releases) | `lemonade`, `lemond` | **Yes** | **This is the documented server — used here** |
+| C++ Lemonade Server **11.7.0** (GitHub releases) | `lemonade`, `lemond` | **Yes** | **This is the documented server — use this one** |
 
 `pip install lemonade-sdk` gets you the SDK and a **deprecated** Python server whose
 backend choice is a serve-time flag (`lemonade-server-dev serve --llamacpp rocm`). The
@@ -50,17 +57,16 @@ ships as a release artifact, not on PyPI.
 > `lemonade/tools/llamacpp/utils.py:375` with
 > `ValueError: ROCm backend selected but no compatible ROCm target architecture found.`
 > The pip server's ROCm support does not cover gfx950. Only the C++ server 11.7.0 does.
-> Transcript: `/mnt/data_450g/outputs/pip_lemonade_server_rocm_gfx950_unsupported.txt`.
 
 
 ```bash
 # (a) python venv — shared across the three inference_*_lemonade folders (see note)
-python3 -m venv .env_inference_llm_lemonade
-export PIP_CACHE_DIR=/mnt/data_1.5t/pip_cache
-.env_inference_llm_lemonade/bin/pip install lemonade-sdk        # 9.1.4, 8.8 s
+python3 -m venv .env_lemonade
+export PIP_CACHE_DIR=$DATA_DIR/pip_cache
+.env_lemonade/bin/pip install lemonade-sdk        # 9.1.4, 8.8 s
 
 # (b) the C++ server that actually implements `backends install`
-cd /mnt/data_450g/lemonade
+cd $DATA_DIR/lemonade
 curl -sL -O https://github.com/lemonade-sdk/lemonade/releases/download/v11.7.0/lemonade-embeddable-11.7.0-ubuntu-x64.tar.gz
 mkdir -p emb && tar xzf lemonade-embeddable-11.7.0-ubuntu-x64.tar.gz -C emb
 ```
@@ -83,7 +89,7 @@ mkdir -p emb && tar xzf lemonade-embeddable-11.7.0-ubuntu-x64.tar.gz -C emb
 One venv serves all three `inference_*_lemonade` folders; the other two are symlinks:
 
 ```bash
-ln -sfn ../../../inference/lemonade/llm/.env_inference_llm_lemonade .env_inference_embedding_lemonade
+ln -sfn ../../../inference/lemonade/llm/.env_lemonade .env_lemonade
 ```
 
 This is deliberate (a sibling folder set does the same) — the python side here is only the
@@ -94,7 +100,7 @@ the Lemonade cache.
 
 ```bash
 export HIP_VISIBLE_DEVICES=4,5 CUDA_VISIBLE_DEVICES=4,5
-LEM=/mnt/data_450g/lemonade/emb/lemonade-embeddable-11.7.0-ubuntu-x64
+LEM=$DATA_DIR/lemonade/emb/lemonade-embeddable-11.7.0-ubuntu-x64
 $LEM/lemonade --port 8350 --no-discovery backends install llamacpp:rocm
 ```
 
@@ -119,19 +125,19 @@ ln -sf ../../../dev.env dev.env                       # already done in this fol
 export $(grep -v '^#' ../dev.env | xargs)       # only when a gated checkpoint needs HF_TOKEN
 ```
 
-Not needed for this model — `ggml-org/embeddinggemma-300M-GGUF` is ungated and was pulled
+Not needed for this model — `ggml-org/embeddinggemma-300M-GGUF` is ungated and pulls
 with no `HF_TOKEN` exported. Never echo or commit the token.
 
 ```bash
 export HIP_VISIBLE_DEVICES=4,5 CUDA_VISIBLE_DEVICES=4,5   # this folder's GPUs
-export HF_HOME=/mnt/data_1.5t/hf_cache                    # where model weights land
+# HF_HOME (exported above) is where model weights land
 ```
 
 - **`HF_HOME` controls the weights.** Lemonade downloads into `$HF_HOME/hub/` in an
   HF-hub-shaped tree (`snapshots/<sha>/<file>` + a `.lemonade_registry.json`).
-- **The `cache_dir` positional controls the binaries.** `/mnt/data_450g/lemonade/cache`
-  holds the llama.cpp build and the ROCm wheels — **4.8 GB**. Neither may land on `/`
-  (99 GB free).
+- **The `cache_dir` positional controls the binaries.** `$DATA_DIR/lemonade/cache`
+  holds the llama.cpp build and the ROCm wheels — **4.8 GB**. Neither should land on the
+  root filesystem.
 - These env vars must be set **on the `lemond` process**, not on the CLI client. `lemond`
   is what forks `llama-server`, so it is what propagates `HIP_VISIBLE_DEVICES`.
 
@@ -143,11 +149,10 @@ export HF_HOME=/mnt/data_1.5t/hf_cache                    # where model weights 
 ### 1. Start the server on port 8350
 
 ```bash
-LEM=/mnt/data_450g/lemonade/emb/lemonade-embeddable-11.7.0-ubuntu-x64
+LEM=$DATA_DIR/lemonade/emb/lemonade-embeddable-11.7.0-ubuntu-x64
 export HIP_VISIBLE_DEVICES=4,5 CUDA_VISIBLE_DEVICES=4,5
-export HF_HOME=/mnt/data_1.5t/hf_cache
 
-$LEM/lemond /mnt/data_450g/lemonade/cache --port 8350 --host 127.0.0.1 --no-broadcast
+$LEM/lemond $DATA_DIR/lemonade/cache --port 8350 --host 127.0.0.1 --no-broadcast
 ```
 
 ### 2. Register EmbeddingGemma as an embedding model
@@ -167,9 +172,9 @@ server with `--embeddings` and route `/v1/embeddings` to it.
 ```bash
 $LEM/lemonade --port 8350 --no-discovery load user.EmbeddingGemma-300M
 
-.env_inference_embedding_lemonade/bin/python inference_embedding_lemonade.py \
+.env_lemonade/bin/python inference_embedding_lemonade.py \
   --port 8350 \
-  --out /mnt/data_450g/outputs/inference_embedding_lemonade/embeddings_two_gpu.json
+  --out $OUTPUT_DIR/inference_embedding_lemonade/embeddings_two_gpu.json
 ```
 
 Equivalent raw curl:
@@ -206,16 +211,16 @@ GPU-residency proof for this run — one GPU, and the KFD accounting names it:
 
 ```text
 PID      PROCESS NAME    GPU(s)  VRAM USED     SDMA USED       CU OCCUPANCY
-1961159  llama-server    1       1801560064    1271208351006   0
+<pid>    llama-server    1       1801560064    1271208351006   0
 
-/sys/class/kfd/kfd/proc/1961159/vram_51023 = 1801560064   -> gpu_id 51023 = card4
+/sys/class/kfd/kfd/proc/<pid>/vram_51023 = 1801560064   -> gpu_id 51023 = card4
 ```
 
 **1.80 GB on exactly one card**, and every other `vram_*` entry for that PID is `0`.
 
 ## Results — two GPUs visible (physical GPUs 4 and 5)
 
-Real client output:
+**Expected client output**
 
 ```text
 endpoint   : http://127.0.0.1:8350/v1/embeddings
@@ -253,8 +258,8 @@ to be proven, not assumed.
 The wrapped process (Lemonade proxies 8350 -> 8001):
 
 ```text
-/mnt/data_450g/lemonade/cache/bin/llamacpp/rocm-stable/llama-b10469/llama-server \
-  -m /mnt/data_1.5t/hf_cache/hub/models--ggml-org--embeddinggemma-300M-GGUF/snapshots/0f741b5a.../embeddinggemma-300M-Q8_0.gguf \
+$DATA_DIR/lemonade/cache/bin/llamacpp/rocm-stable/llama-b10469/llama-server \
+  -m $HF_HOME/hub/models--ggml-org--embeddinggemma-300M-GGUF/snapshots/0f741b5a.../embeddinggemma-300M-Q8_0.gguf \
   --ctx-size 8192 --port 8001 --jinja --metrics --reasoning-format auto --no-ui --embeddings
 ```
 
@@ -263,10 +268,10 @@ appear in at all:
 
 ```text
 PID      PROCESS NAME    GPU(s)  VRAM USED     SDMA USED       CU OCCUPANCY
-1877700  llama-server    2       3123228672    2525538537143   0
+<pid>    llama-server    2       3123228672    2525538537143   0
 ```
 
-Per-GPU breakdown straight from `/sys/class/kfd/kfd/proc/1877700/`:
+Per-GPU breakdown straight from `/sys/class/kfd/kfd/proc/<pid>/`:
 
 ```text
 vram_51023 = 1361514496 bytes   -> gpu_id 51023 = unique_id 0xf743d583ac01fcfd = card4
@@ -274,7 +279,7 @@ vram_17306 = 1577820160 bytes   -> gpu_id 17306 = unique_id 0x38d73d00d7b9cb71 =
 ```
 
 and 12 live HSA compute queues split across those two `gpu_id`s
-(`/sys/class/kfd/kfd/proc/1877700/queues/*/gpuid`). `rocm-smi` agrees at the card level:
+(`/sys/class/kfd/kfd/proc/<pid>/queues/*/gpuid`). `rocm-smi` agrees at the card level:
 
 ```text
 device,VRAM Total Memory (B),VRAM Total Used Memory (B)
@@ -293,7 +298,7 @@ Two independent comparisons:
    Lemonade-managed backend is numerically the same engine.
 2. **Against `inference/transformers/embedding`** (bf16 `google/embeddinggemma-300m` via
    sentence-transformers), reference vectors at
-   `/mnt/data_1.5t/outputs/inference_embedding_transformers/`:
+   `$OUTPUT_DIR/inference_embedding_transformers/`:
 
 The baseline encodes with `SentenceTransformer.encode_query` / `.encode_document`, which
 prepend EmbeddingGemma's task prompts. Lemonade/llama.cpp does **not** apply them, so the
@@ -318,8 +323,8 @@ The client does this for you — `--reference` with no `--texts` adopts the base
 queries and applies the prompt template automatically:
 
 ```bash
-.env_inference_embedding_lemonade/bin/python inference_embedding_lemonade.py \
-  --reference /mnt/data_1.5t/outputs/inference_embedding_transformers/reference_embedding_1gpu.json
+.env_lemonade/bin/python inference_embedding_lemonade.py \
+  --reference $OUTPUT_DIR/inference_embedding_transformers/reference_embedding_1gpu.json
 ```
 
 ```text
@@ -346,7 +351,7 @@ not with a different model or wrong pooling.
 
 | Argument | Used | Meaning |
 |---|---|---|
-| `lemond <cache_dir>` | `/mnt/data_450g/lemonade/cache` | Binaries + backend venv live here. Keep off `/` |
+| `lemond <cache_dir>` | `$DATA_DIR/lemonade/cache` | Binaries + backend venv live here. Keep off the root filesystem |
 | `--port` / `--host` | `8350` / `127.0.0.1` | Bind address (suggested port) |
 | `--no-broadcast` | on | Disable the UDP discovery beacon |
 | `--no-discovery` (client) | on | **Required on a shared host** — without it the CLI hangs looking for beacons |
@@ -374,7 +379,7 @@ not with a different model or wrong pooling.
 
 ## Output
 
-Artifacts go to `/mnt/data_450g/outputs/inference_embedding_lemonade/`, never to `/`:
+Artifacts go to `$OUTPUT_DIR/inference_embedding_lemonade/`, never to the root filesystem:
 
 ```text
 embeddings_two_gpu.json        raw /v1/embeddings response (3x768 floats)
@@ -385,8 +390,8 @@ rocm_smi_two_gpu.csv           per-card VRAM
 rocm_smi_pids_two_gpu.txt      KFD process attribution
 ```
 
-Weights (319 MB) live in `/mnt/data_1.5t/hf_cache/hub/`; Lemonade binaries + ROCm wheels
-(4.8 GB) in `/mnt/data_450g/lemonade/cache/`.
+Weights (319 MB) live in `$HF_HOME/hub/`; Lemonade binaries + ROCm wheels
+(4.8 GB) in `$DATA_DIR/lemonade/cache/`.
 
 ## Hardware support & evidence
 
@@ -396,7 +401,7 @@ Weights (319 MB) live in `/mnt/data_1.5t/hf_cache/hub/`; Lemonade binaries + ROC
 | `llamacpp:rocm` is supported on gfx950 | Listed `installable`, then `installed b10470` |
 | Backend really carries gfx950 code | Install pulled `rocm_sdk_device_gfx950-7.14.0-…whl` (1240 MB); `libggml-hip.so` (1.26 GB fat binary) contains a `gfx950` code object alongside gfx900/906/908/942/10xx/11xx/12xx |
 | No `hipErrorNoBinaryForGpu` | Model loaded and ran; zero HSA/ISA errors in the server log |
-| Model really on GPU | `rocm-smi --showpids`: PID 1877700, **2 GPUs, 3.12 GB VRAM**, live KFD queues |
+| Model really on GPU | `rocm-smi --showpids`: **2 GPUs, 3.12 GB VRAM**, live KFD queues |
 | Embeddings are real | 3 vectors x 768 dims, L2 norm 1.0000 |
 | Embeddings are *meaningful* | related 0.2931 > unrelated 0.1026 |
 | Same numbers as a hand-built gfx950 llama.cpp | `head[0]` bit-identical to `inference/llamacpp/embedding` |
@@ -410,7 +415,7 @@ Weights (319 MB) live in `/mnt/data_1.5t/hf_cache/hub/`; Lemonade binaries + ROC
    (`libmbedcrypto.so.16`, `libcpp-httplib.so.0.41` missing). Use the `embeddable`
    tarball.
 3. **`--no-discovery` on every CLI call.** Without it the client broadcasts UDP looking
-   for servers and hangs well past 60 s on this multi-tenant host.
+   for servers and can hang well past 60 s on a multi-tenant host.
 4. **The `user.` prefix is registration-only.** `/v1/models` reports
    `EmbeddingGemma-300M`; use that as `"model"`.
 5. **No `-ngl` is exposed.** Lemonade builds the `llama-server` command line itself and
@@ -448,7 +453,7 @@ Weights (319 MB) live in `/mnt/data_1.5t/hf_cache/hub/`; Lemonade binaries + ROC
    `Could not load architecture_defaults.json`, `Web app directory not found`. Only the
    web UI is affected; the API is complete.
 
-## H100 (NVIDIA, Hopper sm_90) — verified 2026-08-22
+## H100 (NVIDIA, Hopper sm_90)
 
 Single-GPU smoke on **physical GPU 6** (`CUDA_VISIBLE_DEVICES=6`), driver 580.173.02,
 host CUDA 13.0, Python 3.12.3. This is the **exact same GGUF** as the MI355X run
@@ -463,18 +468,18 @@ sm_90)` and logged `Using LlamaCpp Backend: cuda`. Registration is byte-for-byte
 command — **`--label embeddings` still does the whole trick** (see the cmdline below):
 
 ```bash
-LEM=/dev/shm/h100/lemonade/emb/lemonade-embeddable-11.7.0-ubuntu-x64
-export CUDA_VISIBLE_DEVICES=6 HF_HOME=/mnt/gsma/gsma/gsma/models
+LEM=/dev/shm/lemonade/emb/lemonade-embeddable-11.7.0-ubuntu-x64
+export CUDA_VISIBLE_DEVICES=6   # HF_HOME as exported above
 $LEM/lemonade --port 8350 --no-discovery pull user.EmbeddingGemma-300M \
   --checkpoint main ggml-org/embeddinggemma-300M-GGUF:Q8_0 --recipe llamacpp --label embeddings
 $LEM/lemonade --port 8350 --no-discovery load user.EmbeddingGemma-300M
 ```
 
-**Exact smoke command + real output:**
+**Smoke command and expected output:**
 
 ```bash
 .env_lemonade/bin/python inference_embedding_lemonade.py --port 8350 \
-  --model EmbeddingGemma-300M --out /dev/shm/h100/out/lemonade/embeddings_single_gpu.json
+  --model EmbeddingGemma-300M --out $OUTPUT_DIR/lemonade/embeddings_single_gpu.json
 ```
 
 ```text
@@ -500,36 +505,34 @@ engine, same model, different vendor math.
 **Wrapped cmdline (`--embeddings` auto-appended, `--ctx-size 8192` as on MI355X):**
 
 ```text
-/dev/shm/h100/lemonade/cache/bin/llamacpp/cuda/llama-server \
+/dev/shm/lemonade/cache/bin/llamacpp/cuda/llama-server \
   -m …/models--ggml-org--embeddinggemma-300M-GGUF/…/embeddinggemma-300M-Q8_0.gguf \
   --ctx-size 8192 --port 8002 --jinja --metrics --reasoning-format auto --no-ui --embeddings
 ```
 
-**GPU-residency proof** (`nvidia-smi` VRAM-by-PID, GPU-6 UUID `GPU-e4fe48bc` = index 6):
+**GPU-residency proof** (`nvidia-smi` VRAM-by-PID, filtered to the GPU-6 UUID):
 
 ```text
-1725003, /dev/shm/h100/lemonade/cache/bin/llamacpp/cuda/llama-server, 982 MiB, GPU-e4fe48bc-…
+<pid>, /dev/shm/lemonade/cache/bin/llamacpp/cuda/llama-server, 982 MiB, GPU-<uuid>
 ```
 
-**0.98 GB on GPU 6 for our PID.** A CPU fallback (which would still return correct-looking
-vectors) shows 0 MiB here — this is the load-bearing check and it passes.
+**0.98 GB on GPU 6 for the server PID.** A CPU fallback (which would still return
+correct-looking vectors) shows 0 MiB here — this is the load-bearing check and it passes.
 
-**Multi-GPU (deferred):** pointless for a 300M embedder, same as MI355X — run one server
-per GPU. Not launched (production on GPUs 0–3).
+**Multi-GPU:** pointless for a 300M embedder, same as MI355X — run one server per GPU.
 
 **Deviations from MI355X:** backend `llamacpp:cuda` (b10397) vs `llamacpp:rocm` (b10470);
-client venv built in tmpfs (a `venv` on the `/mnt/gsma` NFS mount didn't create pip/console
-scripts reliably — use `python -m pip`). Model, quant, client and API are otherwise
-identical.
+client venv built in tmpfs (a `venv` on an NFS mount does not create pip/console scripts
+reliably — use `python -m pip`). Model, quant, client and API are otherwise identical.
 
-**H100 VERDICT: PASS.** Zero-build sm_90 CUDA backend in ~41 s, 768-dim L2-normalised
+**On H100 this path works.** Zero-build sm_90 CUDA backend in ~41 s, 768-dim L2-normalised
 semantically-correct embeddings in ~135 ms, 0.98 GB resident on GPU 6, and vectors agree
 with the MI355X ROCm run to ~1e-3. On NVIDIA, as on AMD, the accelerated path is
 llama.cpp/GGUF (`llamacpp:cuda`); there is no vLLM/TEI-style engine inside Lemonade.
 
-## VERDICT (MI355X)
+## Summary (MI355X)
 
-**PASS — fully working on MI355X (gfx950), and the zero-build install is the real story.**
+**Fully working on MI355X (gfx950), and the zero-build install is the real story.**
 
 `lemonade backends install llamacpp:rocm` detected `gfx950` on its own, fetched an
 arch-matched `rocm_sdk_device_gfx950` wheel and a prebuilt ROCm `llama.cpp` in **27

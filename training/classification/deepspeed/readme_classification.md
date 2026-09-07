@@ -49,6 +49,15 @@ python3.12 -m venv ~/.venv && source ~/.venv/bin/activate
 pip install -r requirements_classification.txt
 ```
 
+The commands below refer to a couple of machine-specific locations through environment
+variables — set them to suit your machine:
+
+```bash
+# Set these to suit your machine
+export OUTPUT_DIR=/path/to/outputs     # training artifacts
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+```
+
 `evaluate` and `scikit-learn` are required for the metrics and are installed by the
 requirements file. Verify the import graph:
 
@@ -91,21 +100,17 @@ bf16 needs none. `flash-attn` as pinned here is a CUDA-only build — skip it;
 `train_llm_classification.py` now auto-falls back to `"sdpa"` when `flash_attn` is not
 importable (no manual edit needed).
 
-### Tested on AMD MI355X (ROCm 7.2) — 2026-08-19
+### Platform notes — AMD MI355X (ROCm 7.2)
 
 Verified end-to-end on an AMD Instinct MI355X (gfx950, 288 GB), ROCm 7.2.4, Python
 3.12.3, single GPU. Exact install:
 
 ```bash
-python3 -m venv .env_train_llm_classification && source .env_train_llm_classification/bin/activate
+python3 -m venv .env_deepspeed && source .env_deepspeed/bin/activate
 pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
 grep -vE '^(flash-attn|torch)==' requirements_classification.txt | grep -vE '^\s*#' > /tmp/reqs_rocm.txt
 pip install -r /tmp/reqs_rocm.txt        # includes deepspeed==0.19.4 — installs cleanly, no hipcc build
 ```
-
-> Note: the campaign venvs (including `.env_train_llm_classification`) were removed in
-> the 2026-08 repo reorg — to reproduce, recreate one as `python3 -m venv .env_deepspeed`
-> and run the same installs.
 
 Exact smoke command (single GPU; scale `--num_processes` up for more):
 
@@ -116,7 +121,7 @@ accelerate launch --num_processes=1 --mixed_precision=bf16 --use_deepspeed \
   --batch_size 1 --grad_accum 1 --max_length 512 --warmup_steps 2
 ```
 
-Observed (finite loss, real DeepSpeed ZeRO-2 engine, eval metrics, model saved):
+**Expected output** (finite loss, real DeepSpeed ZeRO-2 engine, eval metrics, model saved):
 
 ```
 INFO - accelerate.utils.dataclasses - ROCm + DeepSpeed + bf16 detected: setting `communication_data_type='fp32'` to avoid bf16 overflow corrupting weights.
@@ -145,22 +150,23 @@ ROCm quirks found and fixed in `train_llm_classification.py`:
   transformers 5.5.0. `google/gemma-3-1b-it` (used above) and other registered decoder
   architectures work.
 
-**Verdict: works with changes** — the two small script fixes above (tf32 guard, sdpa
+This path works on MI355X with the two small script fixes above (tf32 guard, sdpa
 fallback); the stack itself (torch 2.11.0+rocm7.2, deepspeed 0.19.4, transformers
 5.5.0) needed no patches.
 
-### 8-GPU run (8x MI355X, ROCm 7.2.4) — tested August 2026
+### 8-GPU run (8x MI355X, ROCm 7.2.4)
 
-**Verdict: WORKS — scales cleanly to 8 GPUs with no further code changes.** The same
+This path scales cleanly to 8 GPUs with no further code changes: the same
 recipe, same model (`google/gemma-3-1b-it`), same two ROCm fixes as the 1-GPU run;
-only the launch flags and the data slice changed. Exit code 0, no teardown hang.
+only the launch flags and the data slice changed. The run finishes with exit code 0 and
+no teardown hang.
 
-Exact launch (run 2026-08-19; the venv's `activate` ends with a stale
-`CUDA_VISIBLE_DEVICES=2` from the 1-GPU session — **override it after sourcing or you
-will silently train on one GPU**):
+Exact launch (if the venv's `activate` ends with a stale `CUDA_VISIBLE_DEVICES` pin from
+an earlier single-GPU session, **override it after sourcing or you will silently train on
+one GPU**):
 
 ```bash
-source .env_train_llm_classification/bin/activate
+source .env_deepspeed/bin/activate
 export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7   # must come AFTER the source
 python -c "import torch; assert torch.cuda.device_count()==8"
@@ -170,7 +176,7 @@ accelerate launch --num_processes=8 --mixed_precision=bf16 --use_deepspeed \
   train_llm_classification.py \
   --model_id google/gemma-3-1b-it \
   --train_file <640-row slice> --test_file data/classification_sample.csv \
-  --output_dir /mnt/data_1.5t/outputs/train_llm_classification/gpu8/model_8gpu \
+  --output_dir $OUTPUT_DIR/train_llm_classification/gpu8/model_8gpu \
   --num_epochs 1 --batch_size 4 --grad_accum 1 --max_length 512 \
   --warmup_steps 2 --eval_steps 10 --save_steps 1000
 ```
@@ -199,9 +205,9 @@ Loss is finite and decreasing (17.99 -> 2.85), eval loss falls between the two e
 and the head's prediction distribution `{0:1, 1:4, 2:2, 3:3}` exactly reproduces the
 true class counts of the 10-row eval set — the classification head is really training.
 
-**8-GPU evidence — `rocm-smi` sampled *inside* the run** (sampler runs in-band, in the
+**8-GPU residency — `rocm-smi` sampled *inside* the run** (run the sampler in-band, in the
 background of the training script itself, so the sample is provably contemporaneous with
-this job and not a neighbouring one). Mid-training sample at 17:06:43:
+this job and not a neighbouring one). A healthy mid-training sample looks like:
 
 ```
 GPU[0] VRAM Total Used Memory (B): 11910205440      GPU[4] ...: 12686188544
@@ -209,15 +215,14 @@ GPU[1] ...: 12803596288   GPU[2] ...: 12816175104   GPU[5] ...: 12501614592
 GPU[3] ...: 12791042048                             GPU[6] ...: 12539387904
                                                     GPU[7] ...: 12518383616
 ----- rocm-smi --showpids -----
-3484335 python3  12 GB | 3484336 python3  12 GB | 3484337 python3  12 GB | 3484338 python3  12 GB
-3484339 python3  12 GB | 3484340 python3  12 GB | 3484341 python3  12 GB | 3484342 python3  12 GB
-3483495 pt_elastic  0                       # the accelerate launcher
+8 x python3   12 GB each        # one training process per GPU
+  pt_elastic  0                 # the accelerate launcher
 ```
 
 All 8 GPUs hold **~11.6-12.8 GB each** (~4% of the 288 GB HBM — this model is far from
-memory-bound), and the 8 VRAM-holding PIDs `3484335-3484342` are exactly this run's own
-`train_llm_classification.py` children (cross-checked against `pgrep -f` in the same
-sample), parented by launcher `3483495`. GPU utilisation sampled 24-26% on all eight
+memory-bound), and the 8 VRAM-holding PIDs are exactly this run's own
+`train_llm_classification.py` children (cross-check them against `pgrep -f` in the same
+sample), parented by the launcher. GPU utilisation sampled 24-26% on all eight
 simultaneously.
 
 **ZeRO-2 really is active at 8 ranks** (not a silent DDP fallback) — the step-20
@@ -232,7 +237,7 @@ checkpoint-20/global_step20/bf16_zero_pp_rank_{0..7}_mp_rank_00_optim_states.pt 
 clean 8-way partition of the optimizer state.
 
 **Throughput vs 1 GPU** (same per-device batch 4, same `--max_length 512`, same model,
-measured back to back in one session):
+measured back to back):
 
 | | world size | global batch | steps | `train_samples_per_second` |
 |---|---|---|---|---|
@@ -265,24 +270,23 @@ What differed from the 1-GPU run:
 - Accelerate again logged `ROCm + DeepSpeed + bf16 detected: setting
   communication_data_type='fp32'` — once per rank, benign, same as at 1 GPU.
 
-### 4-GPU sharding run — **ZeRO-2 vs ZeRO-3** (4×MI355X, ROCm 7.2.4) — tested August 2026
+### 4-GPU sharding run — **ZeRO-2 vs ZeRO-3** (4×MI355X, ROCm 7.2.4)
 
 > Extends, and does not contradict, the 1-GPU and 8-GPU sections above — both of those
 > ran **ZeRO stage 2 only**. This run repeats the recipe at 4 ranks and additionally
-> exercises `--zero_stage 3`, which had never been run in this folder on any GPU count.
+> exercises `--zero_stage 3`.
 
-Verified 2026-08-19 on physical GPUs **4,5,6,7** of the same node (a sibling job owned
-0-3), same venv and pins, `google/gemma-3-1b-it`, 640-row replicated slice, 40 steps.
+Verified on physical GPUs **4,5,6,7** of a node whose other four GPUs were held by a
+sibling job, same venv and pins, `google/gemma-3-1b-it`, 640-row replicated slice, 40 steps.
 
-**Verdict: ZeRO-2 holds at 4 GPUs (rc=0, correct output). ZeRO-3 trains correctly but
+ZeRO-2 holds at 4 GPUs (rc=0, correct output). ZeRO-3 trains correctly but
 silently writes NO HuggingFace weights — see the finding below. Prefer `--zero_stage 2`
-here until `build_deepspeed_config` is fixed.**
+here until `build_deepspeed_config` is fixed.
 
 ```bash
-source .env_train_llm_classification/bin/activate
+source .env_deepspeed/bin/activate
 export HIP_VISIBLE_DEVICES=4,5,6,7      # must come AFTER the source (stale pin, see above)
 export CUDA_VISIBLE_DEVICES=4,5,6,7
-export HF_HOME=/mnt/data_1.5t/hf_cache
 python -c "import torch; assert torch.cuda.device_count()==4"
 
 accelerate launch --num_processes=4 --mixed_precision=bf16 --use_deepspeed \
@@ -290,14 +294,14 @@ accelerate launch --num_processes=4 --mixed_precision=bf16 --use_deepspeed \
   train_llm_classification.py \
   --model_id google/gemma-3-1b-it --zero_stage 3 \
   --train_file <640-row replicated slice> --test_file data/classification_sample.csv \
-  --output_dir /mnt/data_1.5t/outputs/train_llm_classification_4gpu/zero3 \
+  --output_dir $OUTPUT_DIR/train_llm_classification_4gpu/zero3 \
   --num_epochs 1 --batch_size 4 --grad_accum 1 --max_length 512 \
   --warmup_steps 2 --eval_steps 10 --save_steps 1000
 ```
 
 (The ZeRO-2 control was the identical command with `--zero_stage 2` and port 29795.)
 
-**Evidence — training itself is healthy at 4 ranks under both stages:**
+**What a healthy 4-rank run looks like under either stage:**
 
 ```
 [assert] device_count= 4
@@ -311,7 +315,6 @@ Training completed in 0h 0m 54s        # rc=0, no hang, no rank divergence
 `rocm-smi` sampled every 4 s *during* training (all four owned GPUs):
 
 ```
-=== 20:44:01 ===
 GPU[4]: GPU use (%): 99    VRAM Total Used Memory (B): 6877257728   # 6.4 GiB
 GPU[5]: GPU use (%): 99    VRAM Total Used Memory (B): 6944395264   # 6.5 GiB
 GPU[6]: GPU use (%): 98    VRAM Total Used Memory (B): 6877290496   # 6.4 GiB
@@ -363,15 +366,15 @@ Other notes at 4 ranks: no RCCL tuning, no new packages, no code change; ports
 29794/29795 (29500 collides on a shared box); per-GPU VRAM even across all four
 (6.4-6.5 GiB, ~0.1 GiB spread) and utilisation 98-99% on all four simultaneously.
 
-### Tested on NVIDIA H100 80GB (CUDA 13.0) — 2026-08-22
+### Platform notes — NVIDIA H100 80GB (CUDA 13.0)
 
-**Verdict: WORKS on H100** (single-GPU, DeepSpeed ZeRO-2). The stack installs and runs
-with **zero code changes** — the two guards added for the MI355X campaign (`tf32` on CUDA
+This path works as documented on H100 (single-GPU, DeepSpeed ZeRO-2). The stack installs
+and runs with **zero code changes** — the two guards added for MI355X (`tf32` on CUDA
 only, `sdpa` fallback when `flash_attn` is absent) are exactly what a plain-CUDA box wants,
 so they no-op correctly here. Verified end-to-end: train (ZeRO-2) → `model.safetensors`
 with real weights → `prepare_model_for_hf.py` → `inference_telelogs.py` accuracy.
-This wave was **single-GPU only** (GPUs 0-3 were a co-tenant production job; multi-GPU is
-deferred — see the MI355X 8-GPU / 4-GPU sections for what a multi-rank pass looks like).
+This validation was **single-GPU only** (the node's other GPUs were held by a co-tenant
+job; see the MI355X 8-GPU / 4-GPU sections for what a multi-rank pass looks like).
 
 Verified on one NVIDIA H100 80GB HBM3 (Hopper cc 9.0), driver **580.173.02**, CUDA 13.0,
 Python 3.12.3, single physical GPU (`CUDA_VISIBLE_DEVICES=5`). Key versions: **torch
@@ -395,8 +398,8 @@ python -c "import torch;print(torch.__version__, torch.version.cuda)"   # re-che
 **Model note.** The script default `EssentialAI/rnj-1` is a **`Gemma3ForCausalLM` ~12B
 decoder** (7 safetensors shards, hidden 4096). Full fine-tuning that at world-size 1 does
 **not fit in 80 GB** — ZeRO-2 shards optimizer state but **not** parameters/grads, so a
-1-GPU run holds the whole model + grads + Adam states on one card and OOMs. This wave used
-`google/gemma-3-1b-it` (the exact model the MI355X sections used, and a decoder that matches
+1-GPU run holds the whole model + grads + Adam states on one card and OOMs. This validation
+used `google/gemma-3-1b-it` (the exact model the MI355X sections used, and a decoder that matches
 this pipeline's `.score`-head + left-padding contract). It is not in the shared HF cache;
 download it once with the proxy unset (gated → needs `HF_TOKEN` from `dev.env`):
 `unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy` then `huggingface-cli download
@@ -408,7 +411,7 @@ Exact smoke command (single GPU, port 29659, GPU 5 only):
 
 ```bash
 export CUDA_VISIBLE_DEVICES=5                 # plain CUDA — no HIP_VISIBLE_DEVICES on NVIDIA
-export HF_HOME=/mnt/gsma/gsma/gsma/models
+export HF_HOME=/path/to/hf_cache              # HF model cache (see "Install" above)
 export HF_DATASETS_CACHE=/dev/shm/h100/dscache_classification
 accelerate launch --num_processes=1 --mixed_precision=bf16 --use_deepspeed \
   --main_process_port 29659 \
@@ -423,7 +426,7 @@ accelerate launch --num_processes=1 --mixed_precision=bf16 --use_deepspeed \
 batch 1 → **50 optimizer steps** over 5 epochs (`Total optimization steps = 50`,
 `Number of trainable parameters = 999,890,560`). Non-trivial; every step is a real update.
 
-Observed (finite, **decreasing** loss; real ZeRO-2 engine; eval metrics; weights saved):
+**Expected output** (finite, **decreasing** loss; real ZeRO-2 engine; eval metrics; weights saved):
 
 ```
 {'loss': '3.216', 'grad_norm': '301.3', 'learning_rate': '7e-06',    'epoch': '0.3'}
@@ -453,18 +456,18 @@ Both the 1.9 GiB `model.safetensors` and the 12 GiB `bf16_zero_pp_*optim*` shard
 **byte-for-byte the same size as the MI355X 1-GPU reference** — same model, same ZeRO-2
 optimizer partition.
 
-**GPU-5 residency — `nvidia-smi -i 5` sampled *in-band* during the run** (a background
-sampler in the launching shell, so the sample is provably contemporaneous with THIS job and
-scoped to physical GPU 5; the card read **0 MiB** immediately before launch):
+**GPU residency — `nvidia-smi -i <gpu>` sampled *in-band* during the run** (run a background
+sampler in the launching shell, so the sample is provably contemporaneous with the job and
+scoped to the physical GPU in use; the card should read **0 MiB** immediately before launch):
 
 ```
-=== 04:27:04 (GPU5) util: 0 % ===   1597506 python3  1174 MiB     # warmup / model load
-=== 04:27:34 (GPU5) util: 29 % ===  1597506 python3 24636 MiB     # steady-state training
-=== 04:27:42 (GPU5) util: 0 % ===   1597506 python3 24638 MiB
+util:  0 %   python3  1174 MiB     # warmup / model load
+util: 29 %   python3 24636 MiB     # steady-state training
+util:  0 %   python3 24638 MiB
 ```
 
-Peak **~24.6 GB** on GPU 5, held by this run's own `train_llm_classification.py` child
-(PID 1597506, a `.env_deepspeed/bin/python3`). GPUs 0-3 (co-tenant) were never touched.
+Peak **~24.6 GB** on the training GPU, held by the run's own `train_llm_classification.py`
+child (a `.env_deepspeed/bin/python3`). Co-tenant GPUs are never touched.
 
 **Full pipeline (prepare → infer) also verified on H100:**
 
@@ -505,8 +508,8 @@ Quirks / what differed from the MI355X recipe:
 - **`tf32` guard engaged as `True`** on CUDA (the MI355X guard `tf32=torch.version.cuda is
   not None` evaluates True here) — no crash, TF32 tensor cores enabled. This is the one
   place the ROCm workaround "reverses" itself automatically.
-- **flash-attn not installed** — the pinned `flash-attn==2.8.3` is a source build; in the
-  time budget it was skipped, so the script's `attn_implementation` auto-selected `sdpa`
+- **flash-attn not installed** — the pinned `flash-attn==2.8.3` is a source build; it was
+  skipped here, so the script's `attn_implementation` auto-selected `sdpa`
   (as on ROCm). SDPA is fully sufficient for this smoke. To use FA2 on H100, add flash-attn
   (prebuilt cu13 wheel or a source build against CUDA 13) and the script picks it up
   automatically — no edit needed.
@@ -520,7 +523,7 @@ Quirks / what differed from the MI355X recipe:
 - **VRAM.** 80 GB here vs 288 GB on MI355X; the 1B model peaks ~24.6 GB single-GPU, well
   within budget. The 12B default would not fit single-GPU (needs multi-GPU ZeRO-3 or offload).
 
-**What a multi-GPU pass would need (deferred this wave):** free GPUs, `--num_processes=N`
+**What a multi-GPU pass on H100 would need:** free GPUs, `--num_processes=N`
 + a distinct `--main_process_port`, and a **replicated data slice** (the 10-row sample
 can't feed N ranks — the MI355X 8-GPU run used a ×64 = 640-row slice for 20 steps at global
 batch 32). Everything else is unchanged. If that run uses `--zero_stage 3`, apply the save
@@ -669,7 +672,7 @@ python inference_telelogs.py --model_path best_model_hf_ready --test_file /path/
 - **AMD: tested** — MI355X (gfx950), ROCm 7.2.4, `torch==2.11.0+rocm7.2`,
   `deepspeed==0.19.4` (real ZeRO-2 engine, no fallback), single-GPU **and 8-GPU** smoke
   runs to completion with finite loss and saved checkpoints (8-GPU: ZeRO-2 sharded
-  across all 8 ranks, 5.5x throughput). See "Tested on AMD MI355X
+  across all 8 ranks, 5.5x throughput). See "Platform notes — AMD MI355X
   (ROCm 7.2)" and "8-GPU run" above for exact commands and the two script fixes it required
   (tf32 guard, sdpa fallback). flash-attn is skipped; attention runs via SDPA.
 

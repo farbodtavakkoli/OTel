@@ -1,6 +1,6 @@
 # `inference/ktransformers/llm` — CPU-GPU heterogeneous MoE inference (H100 + MI355X)
 
-One leaf, two vendor stories — both campaigns' evidence is preserved below in full.
+One leaf, two vendor stories — the evidence for both platforms is preserved below in full.
 
 ## Overview & when to use
 
@@ -10,7 +10,7 @@ runs attention and the active weights. Reach for it when total weights exceed VR
 host has a strong server CPU; for dense models, or models that fit in VRAM, use
 [`../../vllm/llm/`](../../vllm/llm/) or [`../../sglang/llm/`](../../sglang/llm/).
 
-## VERDICT (read this first)
+## Summary (read this first)
 
 | | NVIDIA H100 (Intel Xeon 8480C, AMX) | AMD MI355X (EPYC 9575F, AVX512) |
 |---|---|---|
@@ -27,7 +27,7 @@ The script serves four modes: `--mode probe` (import/environment check, both ven
 
 ---
 
-# NVIDIA H100 (CUDA 13.0) — serving works · tested 2026-08-23
+# NVIDIA H100 (CUDA 13.0) — serving works
 
 ### Host & versions (verified)
 
@@ -53,9 +53,11 @@ CPU variants (AMX / AVX512-BF16/VBMI/VNNI/Base / AVX2) auto-selected at import, 
 SM80/86/89/90 wheel with a static CUDA runtime.
 
 ```bash
-# 1. UNSET the box proxy (403s pypi.nvidia.com / HF; pypi.org itself is allowlisted).
+# Set these to suit your machine
+export HF_HOME=/path/to/hf_cache          # Hugging Face model cache
+
+# 1. UNSET any host proxy (proxies typically 403 pypi.nvidia.com / HF; pypi.org is allowlisted).
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
-export HF_HOME=/mnt/gsma/gsma/gsma/models
 
 # 2. venv + base
 python3 -m venv .env_ktransformers && source .env_ktransformers/bin/activate
@@ -70,7 +72,7 @@ pip install nvidia-cudnn-cu12==9.16.0.29  # or set SGLANG_DISABLE_CUDNN_CHECK=1
 ```
 
 **torch-clobber note (expected, leave it):** both wheels pin the stock CUDA `torch 2.9.1+cu128`,
-which downgrades this box's default `torch 2.13.0+cu130`. `cu128` runs fine on the cu130 /
+which downgrades a default `torch 2.13.0+cu130`. `cu128` runs fine on the cu130 /
 driver-580 host (CUDA is backward-compatible). Do **not** force torch back to cu130 — it breaks
 the kt-kernel / sglang-kt pins. Confirmed: `torch.cuda.is_available() == True`, device 0 =
 `NVIDIA H100 80GB HBM3`, cc `(9, 0)`.
@@ -85,12 +87,12 @@ and runs).
 
 ```bash
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
-export HF_HOME=/mnt/gsma/gsma/gsma/models CUDA_VISIBLE_DEVICES=6
+export CUDA_VISIBLE_DEVICES=6
 source .env_ktransformers/bin/activate
 python llm/infer_llm_ktransformers.py --mode probe --out /dev/shm/h100/out/ktransformers/llm/probe.json
 ```
 
-Real output:
+**Expected output**
 
 ```
 torch 2.9.1+cu128 cuda 12.8 avail True
@@ -108,21 +110,20 @@ In Numa Worker Pool at NUMA 1, 2 threads
 ```
 
 The `amx` variant + the 2-NUMA worker pools are the CPU-side proof that KT loaded its best
-kernel path for this host.
+kernel path for the host.
 
 ### PRIMARY RESULT — `Qwen/Qwen3-30B-A3B` (MoE, KT's real job)
 
 This is the workload KTransformers exists for: a genuine **Mixture-of-Experts** model
 (`Qwen3MoeForCausalLM`, **128 experts, 8 active/token, 48 layers**) whose experts are quantized
 to AMX INT8 and **offloaded to CPU DRAM**, while attention/active weights and the hot experts
-stay on the H100. On this Xeon-8480C (AMX) + 1870 GB DRAM box KT ran it end-to-end with
+stay on the H100. On a Xeon-8480C (AMX) host with 1870 GB DRAM, KT runs it end-to-end with
 **coherent output**.
 
 #### Step 1 — download the MoE weights (bf16, ~57 GB) with the proxy unset
 
 ```bash
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
-export HF_HOME=/mnt/gsma/gsma/gsma/models
 hf download Qwen/Qwen3-30B-A3B --local-dir <models>/Qwen3-30B-A3B     # Qwen3MoeForCausalLM, 128 experts
 ```
 
@@ -139,7 +140,7 @@ python scripts/convert_cpu_weights.py \
 #   -> "Conversion completed successfully!"  (74163 tensors across 49 shards, ~31 GB)
 ```
 
-Real convert log (the NUMA-aware AMX MoE quant path):
+**Expected output** (the NUMA-aware AMX MoE quant path):
 
 ```
 TP MOE layer 0, pool: 0x..., expert num: 128, num_experts_per_tok: 8
@@ -157,7 +158,7 @@ Conversion completed successfully!
 
 ```bash
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
-export HF_HOME=/mnt/gsma/gsma/gsma/models HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export CUDA_VISIBLE_DEVICES=6
 python -m sglang.launch_server \
   --host 127.0.0.1 --port 8380 \
@@ -169,7 +170,7 @@ python -m sglang.launch_server \
   --tensor-parallel-size 1
 ```
 
-Real log lines (`/dev/shm/h100/out/ktransformers/llm/serve_30b_a3b.log`):
+**Expected output**
 
 ```
 TP MOE layer 0, pool: 0x..., expert num: 128, num_experts_per_tok: 8
@@ -187,7 +188,7 @@ The server is fired up and ready to roll!      # <- ready in ~70 s (no DeepGEMM 
 
 ```
 $ nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader -i 6
-1898288, 70692 MiB          # 16.41 GB MoE+dense weights on GPU + ~50 GB KV cache
+<server-pid>, 70692 MiB     # 16.41 GB MoE+dense weights on GPU + ~50 GB KV cache
 $ ps -o rss= $(pstree -p <server-pid>) | awk '{s+=$1} END{printf "%.1f GB\n",s/1048576}'
 71.8 GB                     # <- process-tree DRAM RSS: the 128 INT8 experts live in the 1870 GB DRAM
 ```
@@ -202,7 +203,7 @@ The contrast with the dense 27B is the whole story:
 Only 16.4 GB of a 30B model on the GPU — the rest of the parameter mass is in DRAM. That
 reduction *is* CPU-expert offload; on a smaller GPU it is what lets the model fit at all.
 
-#### Real coherent generations (the pass criterion)
+#### Coherent generations (the pass criterion)
 
 `infer_llm_ktransformers.py --mode chat --port 8380 --model qwen3-30b-a3b`:
 
@@ -229,7 +230,7 @@ vision-language** model, not an MoE. Serve command (single GPU 6, distinct port 
 
 ```bash
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
-export HF_HOME=/mnt/gsma/gsma/gsma/models HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export CUDA_VISIBLE_DEVICES=6
 snap=$(ls -d $HF_HOME/hub/models--Qwen--Qwen3.8-27B-FP8/snapshots/*/ | head -1)
 python -m sglang.launch_server \
@@ -240,7 +241,7 @@ python -m sglang.launch_server \
   --mem-fraction-static 0.85 --tensor-parallel-size 1
 ```
 
-Real log lines (`/dev/shm/h100/out/ktransformers/llm/serve_27b_fp8.log`):
+**Expected output**
 
 ```
 WARNING model_config.py: Transformers version 5.15.1 is used for model type qwen3_5. ...
@@ -256,7 +257,7 @@ Capture cuda graph begin. ... Entering DeepGEMM JIT Pre-Compile session. It may 
 
 ```
 $ nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader -i 6
-1881913, 69834 MiB          # our sglang-kt worker: 39 GiB weights + KV/Mamba cache + CUDA graphs
+<server-pid>, 69834 MiB     # the sglang-kt worker: 39 GiB weights + KV/Mamba cache + CUDA graphs
 ```
 
 **CPU/DRAM residency (the tell-tale of the caveat):** the same process held only **~5 GB DRAM
@@ -264,7 +265,7 @@ RSS** total (parent 2.1 GB + children 2.8 GB). For a real MoE run KT would park 
 of GB of experts in DRAM; here there is nothing to offload, so DRAM stays near-empty and the
 whole 39 GB of weights sits in HBM. This is the design-point mismatch made visible.
 
-**Generation is real but the output is incoherent (honest result).** After ~15 min (weight load
+**Generation runs but the output is incoherent.** After ~15 min (weight load
 ~7.5 min + DeepGEMM JIT warmup over the 8 CUDA-graph batch sizes) the server reached
 `"The server is fired up and ready to roll!"` and served real completions on GPU 6:
 
@@ -306,7 +307,7 @@ not even parse `qwen3_5`), but still short of usable output on this exact checkp
   10-20 mins" on first run, once per CUDA-graph batch size). This is a one-time first-run cost;
   pre-run `python -m sglang.compile_deep_gemm` to avoid it.
 
-### Verdict (H100)
+### Platform notes (H100)
 
 - **Stack builds/imports on H100: YES** — prebuilt wheels, `__cpu_variant__ == 'amx'`, CUDA visible.
 - **WORKS on its designed MoE workload: YES.** `Qwen/Qwen3-30B-A3B` (128 experts) converted to
@@ -324,8 +325,8 @@ not even parse `qwen3_5`), but still short of usable output on this exact checkp
 
 ### Single-GPU only; what multi-GPU would need
 
-Per the shared-node rules this was a **single-GPU** run on GPU 6 (GPUs 0–3 = co-tenant
-production job, never touched). Multi-GPU is **deferred**. A multi-GPU pass would add
+The evidence above comes from a **single-GPU** run, scoped to one card on a shared node.
+Multi-GPU is **not covered here**. A multi-GPU pass would add
 `--tensor-parallel-size N` (and for MoE, tune `--kt-num-gpu-experts` per-GPU) and re-verify
 residency across all N GPUs.
 
@@ -349,10 +350,10 @@ Probe exits 0 only when `kt_kernel` imports **and** a CUDA GPU is visible.
 
 | | Status |
 |---|---|
-| NVIDIA Hopper H100 (cc 9.0) | **Verified** — kt-kernel wheel supports SM 90; served on GPU 6. |
+| NVIDIA Hopper H100 (cc 9.0) | **Verified** — kt-kernel wheel supports SM 90; served on a single GPU. |
 | **MoE offload (KT's real job)** | **Verified** — `Qwen/Qwen3-30B-A3B` (128 experts) AMX INT8, experts in CPU DRAM (~72 GB RSS, 16.41 GB on GPU), coherent output at ~23–50 tok/s. |
 | NVIDIA Ampere/Ada (cc 8.0–8.9) | Upstream-supported (A100, RTX 3000/4000). Not tested here. |
-| Intel AMX CPU (this host) | **Verified** — `__cpu_variant__ == 'amx'`, KT's best CPU tier; AMX MoE kernels created per-NUMA-node. |
+| Intel AMX CPU (Xeon 8480C) | **Verified** — `__cpu_variant__ == 'amx'`, KT's best CPU tier; AMX MoE kernels created per-NUMA-node. |
 | AMD GPU / ROCm | **Upstream-supported (Beta)** — `doc/en/ROCm.md`. **Not tested here.** |
 | AMD Zen4 CPU (BLIS) / universal CPU (llamafile/GGUF) / Intel Arc XPU / Ascend NPU | Upstream-supported. Not tested here. |
 | Repo dense target `Qwen/Qwen3.8-27B-FP8` | **Loads + runs, but DENSE** (`num_experts: null`) → KT's MoE offload is inert, and output is incoherent (FP8-scale + `qwen3_5` RoPE version gap). Use vLLM/SGLang for this model. |
@@ -360,8 +361,8 @@ Probe exits 0 only when `kt_kernel` imports **and** a CUDA GPU is visible.
 
 ### Notes & quirks
 
-- **Prebuilt wheels, no source build.** The brief anticipated a slow `kt-kernel` CPU-kernel
-  compile; the current PyPI wheel makes it unnecessary on standard x86-64 + NVIDIA. Source build
+- **Prebuilt wheels, no source build.** A slow `kt-kernel` CPU-kernel compile is not required:
+  the current PyPI wheel makes it unnecessary on standard x86-64 + NVIDIA. Source build
   (`cd kt-kernel && ./install.sh`) is only for AMD BLIS / ARM KML / custom CUDA.
 - **`sglang-kt`, not `sglang`.** Install the kvcache-ai fork. If the official `sglang` is
   present, `pip uninstall sglang -y` first.
@@ -376,7 +377,7 @@ Probe exits 0 only when `kt_kernel` imports **and** a CUDA GPU is visible.
 
 ---
 
-# AMD MI355X (ROCm 7.2.4) — kernel library works, serving blocked · tested 2026-08-22
+# AMD MI355X (ROCm 7.2.4) — kernel library works, serving blocked
 
 ### Model
 
@@ -402,9 +403,13 @@ See [`../README.md`](../README.md) for the full source build. The short version 
 PyPI wheel is the NVIDIA build and will not give you a ROCm kt-kernel**:
 
 ```bash
-export PIP_CACHE_DIR=/mnt/data_1.5t/pip_cache HF_HOME=/mnt/data_1.5t/hf_cache
-source /mnt/data_450g/envs/.env_inference_ktransformers/bin/activate
-cd /mnt/data_450g/ktransformers_src/kt-kernel
+# Set these to suit your machine
+export HF_HOME=/path/to/hf_cache        # Hugging Face model cache
+export DATA_DIR=/path/to/data           # source checkouts and scratch space
+export OUTPUT_DIR=/path/to/outputs      # run logs and artifacts
+
+source ../.env_ktransformers/bin/activate
+cd $DATA_DIR/ktransformers_src/kt-kernel
 export CPUINFER_USE_ROCM=1 ROCM_PATH=/opt/rocm PYTORCH_ROCM_ARCH=gfx950
 export CPUINFER_CPU_INSTRUCT=NATIVE CPUINFER_ENABLE_AMX=OFF
 export CPUINFER_ENABLE_AVX512_VNNI=ON CPUINFER_ENABLE_AVX512_BF16=ON CPUINFER_ENABLE_AVX512_VBMI=ON
@@ -417,12 +422,11 @@ pip install . -v --no-build-isolation --no-deps      # --no-deps is MANDATORY
 supplies `HF_TOKEN`, loaded by `load_dotenv("dev.env")`. Never echo it.
 
 ```bash
-export HF_HOME=/mnt/data_1.5t/hf_cache
 export HIP_VISIBLE_DEVICES=0,1 CUDA_VISIBLE_DEVICES=0,1
 ```
 
-Never set `CUDA_VISIBLE_DEVICES=""` on ROCm — an empty string hides every GPU. Logs go to
-`/mnt/data_450g/outputs/inference_ktransformers/`; nothing large lands in the repo.
+Never set `CUDA_VISIBLE_DEVICES=""` on ROCm — an empty string hides every GPU. Send logs to
+`$OUTPUT_DIR/inference_ktransformers/` so nothing large lands in the repo.
 
 ### Commands
 
@@ -444,7 +448,7 @@ The real hybrid run:
 python infer_llm_ktransformers.py --mode generate --max_new_tokens 160 --sample_hw
 ```
 
-Tuned for this CPU (128 physical cores, 2 NUMA nodes) — these are already the defaults:
+Tuned for a 128-physical-core, 2-NUMA-node CPU — these are already the defaults:
 
 ```bash
 python infer_llm_ktransformers.py --mode generate \
@@ -471,7 +475,7 @@ amx fast path      : UNAVAILABLE (EPYC — AVX512 path used)
 `avx512_bf16` is the correct selection for an EPYC 9575F (Zen 5) and confirms kt-kernel's
 detection is right: it picked the best AVX512 variant and did **not** try AMX.
 
-Kernel check — the CPU MoE kernel is numerically correct on this silicon:
+Kernel check — the CPU MoE kernel is numerically correct on this CPU:
 
 ```
 kernel forward     : 1.02 ms
@@ -494,7 +498,7 @@ Sub-0.5% is BF16 rounding, not a broken kernel. Note `backend=AVX512-BF16` and t
 
 ### The hybrid run — both halves are live
 
-**Verdict: works, first try, no code changes to kt-kernel.** All 48 MoE layers offloaded:
+This path works with no code changes to kt-kernel. All 48 MoE layers offloaded:
 
 ```
 host load          : 10.7s
@@ -519,20 +523,20 @@ Per-layer expert load, from the same run (48 of these, ~0.21 s each, ~10 s total
 
 #### Proof the GPU half is real
 
-`rocm-smi` sampled every 2 s across the run. `card0` is this agent's GPU; it sits at
-0.30 GB idle and jumps to ~5.4 GB when the non-expert half uploads:
+Sample `rocm-smi` every 2 s across the run. The job's card sits at 0.30 GB idle and jumps to
+~5.4 GB when the non-expert half uploads:
 
 ```
-timestamp  device,GPU use (%),VRAM Total (B),VRAM Used (B)
-1787485761 card0,0,309220868096,299364352      <- 0.30 GB, before load
-1787485786 card0,0,309220868096,299470848      <- still 0.30 GB (experts loading into DRAM)
-1787485794 card0,0,309220868096,5406072832     <- 5.41 GB, non-expert half resident
-1787485773 card1,100,309220868096,68042088448  <- sibling agent's TRAINING job, untouched
+device,GPU use (%),VRAM Total (B),VRAM Used (B)
+card0,0,309220868096,299364352      <- 0.30 GB, before load
+card0,0,309220868096,299470848      <- still 0.30 GB (experts loading into DRAM)
+card0,0,309220868096,5406072832     <- 5.41 GB, non-expert half resident
+card1,100,309220868096,68042088448  <- an unrelated co-tenant job, untouched
 ```
 
-`card1`'s 68 GB at 100% belongs to a concurrent `mini_trainer` process, not to this run —
+The 68 GB at 100% on `card1` belongs to a concurrent training process, not to this run —
 useful negative evidence that the hybrid run stayed on `card0` and used **4.09 GB** of a
-288 GB card.
+288 GB card. On a shared node, always attribute residency to your own card and PID.
 
 #### Proof the CPU half is real
 
@@ -558,7 +562,7 @@ length of the baseline output (291 characters / 64 tokens, verified programmatic
 is the strongest possible correctness signal: routing the expert FFNs through kt-kernel's
 CPU AVX512-BF16 kernels reproduces MI355X BF16 output token-for-token.
 
-Real generated text from the hybrid run (`--max_new_tokens 160 --seed 42`):
+**What a healthy run looks like** (`--max_new_tokens 160 --seed 42`):
 
 ```
 --- response ---
@@ -612,12 +616,12 @@ tok/s** — the short run is dominated by first-call pinned-buffer allocation in
   to destroy the environment. Re-check `torch.version.hip` after any pip operation.
 - **`pip install kt-kernel` does not give you a ROCm build.** The PyPI wheel statically
   links the CUDA runtime and dlopens `libcuda.so.1`; there is no `libamdhip64` in it. On
-  this host it silently degrades to CPU-only. Verify with
+  an AMD host it silently degrades to CPU-only. Verify with
   `readelf -d $(python -c 'import kt_kernel;print(kt_kernel.kt_kernel_ext.__file__)') | grep NEEDED`
   — you want to see `libamdhip64.so.7`.
 - **The AMX backends are permanently unavailable here.** EPYC 9575F has no `amx_tile`.
   `--kt-method AMXINT4/AMXINT8` — the configuration in most of upstream's tutorials and
-  benchmarks — cannot run on this box. Build with `CPUINFER_ENABLE_AMX=OFF` and use the
+  benchmarks — cannot run on such a CPU. Build with `CPUINFER_ENABLE_AMX=OFF` and use the
   AVX512 native-precision methods.
 - **`--num_gpu_experts > 0` is not usable from this standalone harness.** kt-kernel's
   `gpu_experts_mask` tells the CPU side to *skip* the masked experts on the assumption that
@@ -644,7 +648,7 @@ tok/s** — the short run is dominated by first-call pinned-buffer allocation in
   if you are parsing output.
 - **Do not set `CUDA_VISIBLE_DEVICES=""` on ROCm** — an empty string hides all GPUs.
 
-### Verdict
+### Platform notes (MI355X)
 
 #### 1. Does it work on MI355X / gfx950 / ROCm 7.2.4? — ✅ **YES, cleanly.**
 
@@ -654,17 +658,17 @@ the correct `avx512_bf16` CPU variant on the EPYC 9575F, builds NUMA-aware exper
 across both sockets, and runs a real 30B MoE model with all 48 expert layers on CPU and the
 rest on one MI355X — producing text **character-identical to the all-GPU baseline**.
 
-This was expected to be the hard part and it was the easy part. The reason is architectural:
+This is the easy part, for an architectural reason:
 kt-kernel's ROCm backend compiles **no device kernels**. Its entire GPU dependency is
 `hipLaunchHostFunc`, used to enqueue CPU work on a HIP stream. There is nothing
 gfx950-specific to break. The stale `doc/en/ROCm.md` (Radeon 7900XTX, ROCm 6.2.4, conda)
 was not needed — a plain Python 3.12 venv on Ubuntu 24.04 worked, with no GLIBCXX wall.
 
-#### 2. Is it useful on this box? — ⚠️ **No, not for anything this repo runs.**
+#### 2. Is it useful on MI355X? — ⚠️ **No, not for anything this repo runs.**
 
 The measurement that settles it: **4.09 GB vs 64.62 GB of VRAM, for 17.44 vs 35.13 tok/s.**
-kt-kernel saved 60 GB of VRAM on a card that has **288 GB**, and charged 2× throughput for
-it. It optimised the resource this machine has most of, using the resource it can least
+kt-kernel saves 60 GB of VRAM on a card that has **288 GB**, and charges 2× throughput for
+it. It optimises the resource such a machine has most of, using the resource it can least
 easily scale.
 
 Concretely: `Qwen/Qwen3.8-27B-FP8`, this repo's target model, occupies 29.38 GiB on one
@@ -674,16 +678,16 @@ KTransformers use case — fits in 8× 288 GB at full GPU speed.
 
 **Where it would earn its place, and does not today:**
 
-- **1T-class models at BF16** (Kimi-K2, ~2 TB) genuinely strain 2.3 TB of VRAM, and this
-  agent only owns 2 of 8 GPUs. There, CPU-expert offload into 2.2 TB of DRAM is a real
+- **1T-class models at BF16** (Kimi-K2, ~2 TB) genuinely strain 2.3 TB of VRAM, more so when
+  only a subset of the node's GPUs is available. There, CPU-expert offload into 2.2 TB of DRAM is a real
   option rather than a downgrade — and the 2× throughput cost measured here is the honest
   estimate of what it would cost. **But you cannot get there on ROCm today**, because
   serving a model that size needs SGLang, and `sglang-kt` is CUDA-only by package
   metadata. The Python API demonstrated here is a single-stream research harness, not a
   server.
 - **Keeping GPUs free for training** while a big MoE answers low-QPS requests is a real
-  scheduling argument — this host is running concurrent training jobs on other cards. But
-  17 tok/s single-stream with no continuous batching is not a serving story.
+  scheduling argument on a node that also runs training jobs. But 17 tok/s single-stream
+  with no continuous batching is not a serving story.
 
 #### Recommendation
 
@@ -693,10 +697,10 @@ converts two open questions into settled facts, both of which are non-obvious:
 1. *"Does the ROCm path in kt-kernel actually work on modern AMD hardware?"* — **Yes, and
    better than the beta-quality docs suggest**, because the port is trivially thin. That is
    worth knowing, and worth re-checking cheaply with `--mode probe`.
-2. *"Could we use KTransformers to serve something huge here?"* — **Not today.** The blocker
+2. *"Can KTransformers serve something huge on ROCm?"* — **Not today.** The blocker
    is not the GPU, the CPU, ROCm, or gfx950; it is that `sglang-kt`'s CUDA-only dependency
    chain has no ROCm equivalent. That is the specific thing to re-check when revisiting,
-   and it is upstream's decision, not ours.
+   and it is an upstream decision.
 
 Do **not** promote this to a serving stack. For every workload in this repo,
 `inference/vllm` and `inference/sglang` are strictly better on this hardware.

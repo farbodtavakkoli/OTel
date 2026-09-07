@@ -1,17 +1,17 @@
 # `training/llm/fsdp` — chat SFT on PyTorch-native FSDP2
 
 > **Tested topology:** verified on **2x and 8x AMD Instinct MI355X (gfx950, ROCm 7.2.4)**
-> on 2026-08-19 — see the tested section below, including the 8-GPU subsection. The folder was written against the upstream
-> PyTorch, accelerate and Transformers docs as of **August 2026**; the NVIDIA (8x H100)
-> and Intel XPU paths remain untested and their commands are a starting point, not a
-> proven recipe.
+> — see the platform notes below, including the 8-GPU subsection. The folder was written
+> against the upstream PyTorch, accelerate and Transformers docs for the pinned versions
+> below; the NVIDIA (8x H100) and Intel XPU paths remain untested and their commands are a
+> starting point, not a proven recipe.
 
-## ✅ Tested on AMD MI355X (ROCm 7.2) — 2026-08-19
+## Platform notes — AMD MI355X (ROCm 7.2)
 
-**Verdict: works with changes** (two fixes below; both are already applied / documented).
-2-rank FSDP2 SFT of `google/gemma-4-E4B-it` (~8B params) ran end-to-end on 2x MI355X
-(gfx950, 288GB), ROCm 7.2.4, Python 3.12.3: finite decreasing loss, both GPUs busy
-(~41% VRAM each mid-run per `rocm-smi`), clean collective `save_model`, exit code 0.
+This path works on MI355X with the two fixes below (both are already applied /
+documented). 2-rank FSDP2 SFT of `google/gemma-4-E4B-it` (~8B params) runs end-to-end on
+2x MI355X (gfx950, 288GB), ROCm 7.2.4, Python 3.12.3: finite decreasing loss, both GPUs
+busy (~41% VRAM each mid-run per `rocm-smi`), clean collective `save_model`, exit code 0.
 
 Install — exactly as the AMD section below says (venv `.env_fsdp/` inside this
 folder, git-ignored):
@@ -22,9 +22,14 @@ pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2  
 pip install -r requirements_fsdp.txt                                             # transformers 5.5.0, accelerate 1.14.0
 ```
 
-> **Venv note:** the as-run transcripts below reference the campaign venv
-> (`.env_train_llm_fsdp`) verbatim. The campaign venvs were removed during the 2026-08
-> reorg — rebuild from `requirements_fsdp.txt` (new convention: `.env_fsdp`).
+The commands below refer to two directories by environment variable — set them to suit
+your machine:
+
+```bash
+# Set these to suit your machine
+export OUTPUT_DIR=/path/to/outputs     # training artifacts
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+```
 
 Launch (2 GPUs; scale `--num_processes` to your node — the YAML's default is 8):
 
@@ -32,13 +37,13 @@ Launch (2 GPUs; scale `--num_processes` to your node — the YAML's default is 8
 accelerate launch --config_file fsdp2_config.yaml --num_processes 2 --fsdp_cpu_ram_efficient_loading false \
   train_llm_fsdp.py \
   --model_name google/gemma-4-E4B-it \
-  --output_dir /mnt/data_1.5t/outputs/train_llm_fsdp/smoke_final \
+  --output_dir $OUTPUT_DIR/fsdp/smoke_final \
   --num_train_epochs 2 --logging_steps 1 \
   --batch_size 1 --grad_acc_steps 1 --max_seq_len 2048 \
   --gradient_checkpointing
 ```
 
-Observed log lines:
+**Expected output:**
 
 ```
 INFO - __main__ - Accelerator: cuda | model: google/gemma-4-E4B-it | LoRA: False
@@ -68,21 +73,21 @@ Quirks found and their fixes:
    via `HIP_VISIBLE_DEVICES`/`CUDA_VISIBLE_DEVICES`, and the collective
    `save_model` across both ranks.
 
-### 8-GPU run (8x MI355X, ROCm 7.2.4) — tested August 2026
+### 8-GPU run (8x MI355X, ROCm 7.2.4)
 
-**Verdict: WORKS.** The exact 2-GPU recipe above scales to all 8 MI355X with **no new
-flags, no RCCL tuning and no OOM workarounds** — the only additions are operational
-(`--no_save` for disk, an explicit GPU mask). 80 optimizer steps of FSDP2 full-shard SFT
-on `google/gemma-4-E4B-it` (~8B) across `world_size=8`: finite monotonically-decreasing
-loss, all 8 GPUs at 100% utilisation, clean teardown, **exit code 0**, no hang.
+The 2-GPU recipe above scales to all 8 MI355X with **no new flags, no RCCL tuning and no
+OOM workarounds** — the only additions are operational (`--no_save` for disk, an explicit
+GPU mask). 80 optimizer steps of FSDP2 full-shard SFT on `google/gemma-4-E4B-it` (~8B)
+across `world_size=8`: finite monotonically-decreasing loss, all 8 GPUs at 100%
+utilisation, clean teardown, exit code 0, no hang.
 
-Launch (exactly what was run, under a machine-wide `flock` so it owned all 8 GPUs):
+Launch under a machine-wide `flock` so the job owns all 8 GPUs:
 
 ```bash
-cd training/llm/fsdp && source .env_train_llm_fsdp/bin/activate
+cd training/llm/fsdp && source .env_fsdp/bin/activate
 export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7      # see the GPU-mask warning below
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export HF_HOME=/mnt/data_1.5t/hf_cache
+# HF_HOME / OUTPUT_DIR: see the "Set these to suit your machine" block above
 source ./dev.env                                # HF_TOKEN
 python -c "import torch;assert torch.cuda.device_count()==8"   # assert BEFORE training
 
@@ -93,7 +98,7 @@ accelerate launch \
   --fsdp_cpu_ram_efficient_loading false \
   train_llm_fsdp.py \
   --model_name google/gemma-4-E4B-it \
-  --output_dir /mnt/data_1.5t/outputs/train_llm_fsdp/gpu8/run \
+  --output_dir $OUTPUT_DIR/fsdp/gpu8/run \
   --num_train_epochs 40 --logging_steps 1 \
   --batch_size 1 --grad_acc_steps 1 --max_seq_len 2048 \
   --gradient_checkpointing \
@@ -115,7 +120,7 @@ torchrun's `--master_port` and avoids rendezvous collisions with other jobs on t
 | steps | 9 rows -> 2 steps/epoch x 40 epochs = **80 steps** |
 | precision | bf16, `sdpa` attention, `--gradient_checkpointing` |
 
-**Real log lines** (`/mnt/data_1.5t/outputs/train_llm_fsdp/gpu8/run.log`):
+**Expected output** (from the run log):
 
 ```
 ASSERT device_count=8 torch=2.11.0+rocm7.2
@@ -133,12 +138,11 @@ INFO - __main__ - --no_save set: skipped checkpointing and final save_model.
 (The loss collapsing to ~3e-05 is the 8-row sample dataset being memorised over 40 epochs —
 expected for a smoke test, not a quality signal.)
 
-**8-GPU rocm-smi evidence** — full capture in
-`/mnt/data_1.5t/outputs/train_llm_fsdp/gpu8/rocm_smi_8gpu.txt` (26 samples, 4s apart,
-spanning the whole training loop). All 8 GPUs busy simultaneously, e.g.:
+**8-GPU rocm-smi evidence** — sampling `rocm-smi` every 4s across the whole training loop
+(26 samples) shows all 8 GPUs busy simultaneously, e.g.:
 
 ```
-########## sample 20  2026-08-19T16:34:44+00:00 ##########
+########## sample 20 ##########
 GPU[0..7] : GPU use (%):                  96  96  98  97  97  44  96  98
 GPU[0..7] : GPU Memory Allocated (VRAM%): 18  18  19  19  18  19  18  18
 GPU[0..7] : Socket Power (W):            419 414 419 417 404 425 412 425
@@ -168,13 +172,13 @@ micro-steps on an 80-step job, not idle GPUs); all 8 held VRAM in **every** samp
    mandatory, because `save_model` is a collective under FSDP and a rank-0 guard would
    hang the other seven. Total disk written by this run: **396 KB** (logs + tensorboard).
    The 2-GPU run's collective `save_model` path is untouched and still the default.
-5. **Beware the venv's GPU pin.** `.env_train_llm_fsdp/bin/activate` had a leftover
-   `export CUDA_VISIBLE_DEVICES=4,5` from the 2-GPU session, which silently caps you at
-   2 GPUs after `source`. It has been commented out; regardless, always set the mask
-   explicitly after activating and assert `torch.cuda.device_count() == 8` before
-   training, or you will report an 8-GPU pass you never ran.
+5. **Beware a GPU pin inside the venv.** A leftover `export CUDA_VISIBLE_DEVICES=4,5` in
+   `.env_fsdp/bin/activate` — easy to accumulate from an earlier 2-GPU session — silently
+   caps you at 2 GPUs after `source`. Always set the mask explicitly *after* activating,
+   and assert `torch.cuda.device_count() == 8` before training, or you will report an
+   8-GPU pass that never ran.
 
-### 4-GPU sharding run — **collective `save_model` enabled** (4×MI355X, ROCm 7.2.4) — tested August 2026
+### 4-GPU sharding run — **collective `save_model` enabled** (4×MI355X, ROCm 7.2.4)
 
 > Closes the one gap the 8-GPU run above deliberately left open: it ran with `--no_save`,
 > so the collective FULL_STATE_DICT `save_model` had only ever been proven at **2** ranks.
@@ -182,15 +186,15 @@ micro-steps on an 80-step job, not idle GPUs); all 8 held VRAM in **every** samp
 > `save_strategy="epoch"` plus the final `save_model`). Nothing below contradicts the
 > 2-GPU or 8-GPU results.
 
-Verified 2026-08-19 on physical GPUs **4,5,6,7** of the same node (a sibling job owned
-0-3), same venv and pins. **Verdict: FSDP2 holds at 4 GPUs, and the collective
-`save_model` completes — no deadlock, no rank divergence, rc=0.**
+Validated on physical GPUs **4,5,6,7** of the same node (a sibling job owned 0-3), same
+venv and pins: FSDP2 holds at 4 GPUs, and the collective `save_model` completes — no
+deadlock, no rank divergence, rc=0.
 
 ```bash
-cd training/llm/fsdp && source .env_train_llm_fsdp/bin/activate
+cd training/llm/fsdp && source .env_fsdp/bin/activate
 export HIP_VISIBLE_DEVICES=4,5,6,7      # re-export after activate (see quirk 5 above)
 export CUDA_VISIBLE_DEVICES=4,5,6,7     # renumber to 0-3 inside the process
-export HF_HOME=/mnt/data_1.5t/hf_cache
+# HF_HOME: see the "Set these to suit your machine" block above
 source ./dev.env                        # HF_TOKEN
 python -c "import torch;assert torch.cuda.device_count()==4"
 
@@ -201,7 +205,7 @@ accelerate launch \
   --fsdp_cpu_ram_efficient_loading false \
   train_llm_fsdp.py \
   --model_name google/gemma-4-E4B-it \
-  --output_dir /mnt/data_1.5t/outputs/train_llm_fsdp_4gpu/run \
+  --output_dir $OUTPUT_DIR/fsdp_4gpu/run \
   --num_train_epochs 1 --save_total_limit 1 --logging_steps 1 \
   --train_file <200-row messages jsonl: the shipped 10-row sample tiled ×20> \
   --batch_size 1 --grad_acc_steps 1 --max_seq_len 2048 \
@@ -228,7 +232,7 @@ INFO - __main__ - Training complete.        # rc=0
 `rocm-smi` sampled every 5 s *during* training (all four owned GPUs):
 
 ```
-=== 20:39:34 ===
+=== sample taken mid-training ===
 GPU[4]: GPU use (%): 100    VRAM Total Used Memory (B): 79404371968   # 73.9 GiB
 GPU[5]: GPU use (%): 100    VRAM Total Used Memory (B): 77335080960   # 72.0 GiB
 GPU[6]: GPU use (%): 100    VRAM Total Used Memory (B): 79404269568   # 73.9 GiB
@@ -262,10 +266,10 @@ GPU[7]: GPU use (%): 100    VRAM Total Used Memory (B): 80386899968   # 74.9 GiB
   advertised.
 - No RCCL tuning, no new flags, no code change. Port 29793 (29500 collides on a shared box).
 
-## ✅ Tested on NVIDIA H100 (CUDA 13.0) — 2026-08-22 (single-GPU smoke)
+## Platform notes — NVIDIA H100 (CUDA 13.0), single-GPU smoke
 
-**Verdict: WORKS-WITH-CHANGES.** Single-GPU FSDP2 SFT of `google/gemma-4-E4B-it` (~8B)
-runs end-to-end on **1x H100 80GB HBM3** (driver 580.173.02, CUDA 13.0, Hopper cc(9,0),
+**This path works on H100 with the changes below.** Single-GPU FSDP2 SFT of
+`google/gemma-4-E4B-it` (~8B) runs end-to-end on **1x H100 80GB HBM3** (driver 580.173.02, CUDA 13.0, Hopper cc(9,0),
 Python 3.12.3): 20 optimizer steps, **finite decreasing loss (20.1 → ~1–8)**, consolidated
 fp32 model saved, GPU-6 residency confirmed by PID, clean exit 0. **But the shipped
 `fsdp2_config.yaml` does not run this model as-is** — it took four changes: (1) venv off
@@ -311,7 +315,7 @@ actually trains to a decreasing loss uses `reshard_after_forward: false` +
 `fsdp_offload_params: true` and an untie shim:
 
 ```bash
-export CUDA_VISIBLE_DEVICES=6 HF_HOME=/mnt/gsma/gsma/gsma/models HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+export CUDA_VISIBLE_DEVICES=6 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1   # HF_HOME points at the model cache (set above)
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 source ./dev.env
 # load from the explicit snapshot DIR, not the repo id (change 3); a LOCAL tmpfs copy (change 3b)
@@ -330,10 +334,10 @@ accelerate launch --config_file fsdp2_offload.yaml --num_processes 1 \
   --attn_implementation sdpa --gradient_checkpointing --no_save
 ```
 
-Full fine-tuning (not LoRA) mirrors the MI355X campaign. `--no_save` for the
+Full fine-tuning (not LoRA) mirrors the MI355X recipe. `--no_save` for the
 loss/residency smoke; the consolidated-save behavior is in its own run below.
 
-**Real log (single H100, GPU 6, offload config) — 20 optimizer steps, exit 0:**
+**Expected output (single H100, GPU 6, offload config) — 20 optimizer steps, exit 0:**
 
 ```
 INFO __main__ Loaded 4 rows from data/OTel_LLM_sample_10.jsonl (dropped 6 over 1024 tokens, 0 with no supervised tokens)
@@ -372,7 +376,7 @@ NVIDIA H100 80GB HBM3, 0 %, 46089 MiB, 81559 MiB
    already managed by another FSDP group. For shared/tied parameters, use
    fully_shard([module_a, module_b]) ...`. gemma-4 **ties input/output embeddings**;
    PEFT + `TRANSFORMER_BASED_WRAP` place the tied weight into two `fully_shard` groups,
-   which FSDP2 forbids. The MI355X campaign only ever ran **full FT** on this model, so
+   which FSDP2 forbids. The MI355X recipe only ever ran **full FT** on this model, so
    this path was never exercised there — it is newly surfaced on H100. **Full FT hits the
    exact same error** (`Parameter 'model.language_model.embed_tokens.weight' is shared ...`)
    — it is NOT LoRA-specific: gemma-4 `tie_word_embeddings: True` collides with
@@ -428,8 +432,8 @@ the fit-end save gathers the model to **fp32**: the written
 note's "~32 GB for an 8B model"), and the fit-end training checkpoint (`save_strategy:
 epoch`, weights **+ fp32 Adam optimizer state**) is **126 GB on disk**. During that gather
 HBM spiked from the 46 GB training plateau to the **full 80 GB card** — right at the OOM
-edge even *with* CPU offload enabled. This is the single-card echo of the MI355X campaign's
-"a saving run cost ~99 GB with optimizer state on 288 GB cards": on 80 GB the save, not the
+edge even *with* CPU offload enabled. This is the single-card echo of the MI355X note above
+("a saving run cost ~99 GB with optimizer state on 288 GB cards"): on 80 GB the save, not the
 training, is what nearly kills you.
 
 **Practical guidance for 1x 80 GB:** full FT of an 8B model needs `offload_params: true`
@@ -440,7 +444,7 @@ the fit-end checkpoint after** — 126 GB per epoch fills a disk fast. (`save_st
 / `--no_save` does stop the fit-end save here — verified exit 0 with "skipped ...
 save_model".)
 
-### 2-GPU run (2× H100) — 2026-08-23 (REAL multi-rank sharding proven)
+### 2-GPU run (2× H100) — real multi-rank sharding proven
 
 **This is the run that proves FSDP2's whole reason to exist: params really split across
 ranks.** The single-GPU smoke above is degenerate (`world_size=1` shards nothing); here
@@ -468,7 +472,7 @@ Batch geometry: `batch_size 1 × world 2 × grad_acc 1` → **global batch 2**. 
 2 optimizer steps/epoch**, so `--num_train_epochs 6` gives **12 steps** (≥8, decreasing).
 
 ```bash
-export CUDA_VISIBLE_DEVICES=4,5 HF_HOME=/mnt/gsma/gsma/gsma/models
+export CUDA_VISIBLE_DEVICES=4,5                 # HF_HOME points at the model cache (set above)
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_CACHE=/dev/shm/h100/dscache_fsdp2
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 source ./dev.env
@@ -506,7 +510,7 @@ confirms it was materialized as an independent, newly-initialized tensor.)
 the save runs):
 
 ```
-2026-08-23 - INFO - __main__ - Loaded 4 rows from data/OTel_LLM_sample_10.jsonl (dropped 6 over 1024 tokens, 0 with no supervised tokens)
+INFO - __main__ - Loaded 4 rows from data/OTel_LLM_sample_10.jsonl (dropped 6 over 1024 tokens, 0 with no supervised tokens)
 {'loss': '12.94', 'grad_norm': '54.81', 'learning_rate': '0',        'epoch': '0.5'}
 {'loss': '11.11', 'grad_norm': '38.37', 'learning_rate': '9.206e-06','epoch': '2'}
 {'loss': '6.391', 'grad_norm': '171.5', 'learning_rate': '4.288e-06','epoch': '4'}
@@ -534,8 +538,8 @@ $ nvidia-smi --query-compute-apps=pid --format=csv,noheader -i 0,1,2,3 | sort -u
 `--no_save`, the fit-end collective gathers the 2 shards to one fp32 checkpoint on rank 0:
 
 ```
-2026-08-23 - INFO - __main__ - Saved consolidated weights to /dev/shm/h100/out/fsdp2/save_run/final_model
-2026-08-23 - INFO - __main__ - Training complete.
+INFO - __main__ - Saved consolidated weights to .../fsdp2/save_run/final_model
+INFO - __main__ - Training complete.
 ```
 
 `final_model/model.safetensors` is **1.57 GiB** (fp32; reloads cleanly with
@@ -547,17 +551,17 @@ run, which spiked to the full 80 GB card at save). The fit-end training checkpoi
 were **deleted after capturing this evidence** (`save_strategy: epoch` writes one per epoch —
 they fill a disk fast even for a 350M model).
 
-**Verdict (2-GPU): WORKS.** Real FSDP2 full-shard across 2× H100 proven by the exact 0.500
+**2-GPU result: this path works.** Real FSDP2 full-shard across 2× H100 proven by the exact 0.500
 per-rank param split, decreasing loss over 12 steps, both GPUs resident by PID, and a working
 consolidated save — all on the *shipped* `fsdp2_config.yaml` (no offload, `reshard:true`),
 with only the model-agnostic untie shim carried over. **8-GPU is projected, not measured:**
 the co-tenant production job holds GPUs 0-3, so a full 8-rank pass (`--num_processes 8`,
-per-rank fraction → ~0.125) was not run this wave; the 2-rank 0.500 split is the direct
+per-rank fraction → ~0.125) was not run here; the 2-rank 0.500 split is the direct
 evidence that it would shard as advertised.
 
 ### Multi-GPU (deferred)
 
-Not run this wave (GPUs 0-3 were a sibling production job; only GPU 6 was free). A 2- or
+Not run here (GPUs 0-3 were a sibling production job; only GPU 6 was free). A 2- or
 8-GPU pass would be the exact MI355X `accelerate launch --num_processes N` recipe with
 `CUDA_VISIBLE_DEVICES` set to the free GPUs and `--main_process_port 29643`, asserting
 `torch.cuda.device_count()==N` before launch. Only at `world_size>=2` does FSDP2 actually
@@ -804,7 +808,7 @@ Under `--output_dir`:
 
 ## Hardware support & evidence
 
-Claims above were checked against upstream sources on **2026-08-19**:
+Claims above were checked against upstream sources for the pinned versions below:
 
 - **FSDP2 is device-agnostic.** The `fully_shard` documentation
   ([pytorch/pytorch `docs/source/distributed.fsdp.fully_shard.md`](https://github.com/pytorch/pytorch/blob/main/docs/source/distributed.fsdp.fully_shard.md))

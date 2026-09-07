@@ -22,17 +22,17 @@ Files in this folder:
 > **Tested topology:** Smoke-tested on **1x AMD Instinct MI355X (gfx950, ROCm 7.2)** and
 > then on **8x MI355X with FSDP `FULL_SHARD` (ROCm 7.2.4 / RCCL)** — see
 > [§8a MI355X (ROCm 7.2) — tested](#8a-mi355x-rocm-72--tested) for the exact
-> install, the run command and the verdict (**works with changes**), and the
-> [8-GPU subsection](#8-gpu-run-8x-mi355x-rocm-724--tested-august-2026) for the
+> install, the run command and the outcome (**works with changes**), and the
+> [8-GPU subsection](#8-gpu-run-8x-mi355x-rocm-724) for the
 > multi-GPU launch, the batch geometry Foundry logged and the per-rank VRAM delta that
-> proves sharding. **NVIDIA H100 (CUDA 13.0, driver 580) is now also verified** on
+> proves sharding. **NVIDIA H100 (CUDA 13.0, driver 580) is also verified** on
 > **1x H100 80GB (single-GPU SFT smoke, `flash_attention_2`)** — see
-> [§8b NVIDIA H100](#8b-nvidia-h100-cuda-130-driver-580--tested-2026-08-23) for the
+> [§8b NVIDIA H100](#8b-nvidia-h100-cuda-130-driver-580) for the
 > install, the torch reconciliation and the run evidence (**works with changes** — the
 > change is the model, not the code). Written against the LLM Foundry upstream README,
 > `scripts/train/README.md`, the shipped `yamls/finetune/*.yaml`, and the
-> `TrainConfig` / `finetuning/tasks.py` / `hf_checkpointer.py` sources on `main` as of
-> August 2026. Targets a single node of 8x H100 80GB (the support matrix upstream lists
+> `TrainConfig` / `finetuning/tasks.py` / `hf_checkpointer.py` sources on `main` for the
+> pinned versions below. Targets a single node of 8x H100 80GB (the support matrix upstream lists
 > A100 and H100 on torch 2.7 / CUDA 12.8). YAML schemas here move between minor releases —
 > always run `--dry-run` first and diff against `scripts/train/yamls/finetune/` in your
 > checkout before a long job.
@@ -250,6 +250,14 @@ python data_prep/convert_finetuning_dataset.py \
 
 ## 5. Run
 
+Some commands below use two placeholders — set them once to suit your machine:
+
+```bash
+# Set these to suit your machine
+export OUTPUT_DIR=/path/to/outputs     # checkpoints and run artifacts
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+```
+
 Always dry-run first — it prints the exact `composer` command and validates that the
 launcher, the checkout and the config all exist:
 
@@ -457,21 +465,21 @@ folder.
   section date from 2023–2024; post-acquisition the repo primarily serves Databricks
   Mosaic AI Training. Factor that into how much community support you expect.
 
-Sources: LLM Foundry README (`main`, fetched August 2026) — support matrix, Docker table,
+Sources: LLM Foundry README (`main`) — support matrix, Docker table,
 "AMD (BETA support)" and "Intel Gaudi" sections; `llmfoundry/data/finetuning/tasks.py`
 (chat-schema validation, `messages_format_preprocessor`); mosaicml.com/blog/amd-mi250.
 
-## 8b. NVIDIA H100 (CUDA 13.0, driver 580) — tested 2026-08-23
+## 8b. NVIDIA H100 (CUDA 13.0, driver 580)
 
 Verified on **1x NVIDIA H100 80GB HBM3** (Hopper cc 9.0), driver **580.173.02**, CUDA 13.0,
-Python 3.12.3. Single-GPU SFT smoke, **`flash_attention_2` active**. Verdict at the bottom.
+Python 3.12.3. Single-GPU SFT smoke, **`flash_attention_2` active**. Summary at the bottom.
 
 **Unlike the ROCm path, no `--no-deps` gymnastics and no torch pin-fight are needed on
 CUDA.** Foundry's `torch>=2.7.0,<2.7.1` pin resolves to a real CUDA wheel from PyPI
 (`torch 2.7.0+cu126`) that runs fine on this cu13/driver-580 box. Two things *do* differ
 from the MI355X recipe, and both are documented below: (1) the **model** — Foundry pins
 `transformers<4.52`, which does not know the `lfm2` architecture, so `LiquidAI/LFM2.5-350M`
-cannot load; we used `Qwen/Qwen3-0.6B` instead; (2) **`flash_attention_2` is kept** (the
+cannot load — use `Qwen/Qwen3-0.6B` instead; (2) **`flash_attention_2` is kept** (the
 YAML default) rather than overridden to `sdpa`.
 
 ### Environment / versions (what the install resolved to)
@@ -554,12 +562,11 @@ reranker yes/no judge that discards the `user`/`assistant` turns → every row r
 tokens with a 0-token response and the loader drops all of them. Don't use a reranker
 checkpoint for chat SFT.)
 
-### Exact smoke command
+### Smoke command
 
 ```bash
-export HF_HOME=/mnt/gsma/gsma/gsma/models              # 1.1 TB of cached models
-export HF_DATASETS_CACHE=/dev/shm/h100/dscache_llmfoundry   # datasets .arrow on tmpfs
-export MASTER_PORT=29647                                # our distinct port (never 29500)
+export HF_DATASETS_CACHE=/dev/shm/dscache_llmfoundry     # datasets .arrow on tmpfs
+export MASTER_PORT=29647                                # a distinct port (never 29500)
 set -a; . ./dev.env; set +a                             # HF_TOKEN
 
 CUDA_VISIBLE_DEVICES=7 python3 train_llm_llmfoundry.py --recipe sft \
@@ -570,7 +577,7 @@ CUDA_VISIBLE_DEVICES=7 python3 train_llm_llmfoundry.py --recipe sft \
   --run-name h100-smoke-flash \
   --extra model.attn_implementation=flash_attention_2 model.init_device=cpu \
           save_folder=null eval_interval=1000ba console_log_interval=2ba \
-          callbacks.hf_checkpointer.save_folder=/dev/shm/h100/out/llmfoundry/hf_checkpoints
+          callbacks.hf_checkpointer.save_folder=$OUTPUT_DIR/llmfoundry/hf_checkpoints
 ```
 
 Only `CUDA_VISIBLE_DEVICES` is set (no `HIP_VISIBLE_DEVICES` — that is ROCm-only).
@@ -578,7 +585,7 @@ Only `CUDA_VISIBLE_DEVICES` is set (no `HIP_VISIBLE_DEVICES` — that is ROCm-on
 and Composer reverts FSDP→DDP on 1 GPU (`UserWarning: FSDP is not applicable for single-GPU
 training. Reverting to DDP.`), where `mixed` has no sharded ranks to sync from.
 
-### Real log evidence
+### Expected output
 
 Batch geometry: `global_train_batch_size=2`, `device_train_microbatch_size=1`, `n_gpus=1`
 → **`device_train_grad_accum=2`**. 40 logged batches over the 9 surviving rows ≈ 4.4 epochs
@@ -600,15 +607,16 @@ Train throughput/tokens_per_sec: 10016.4385   Train memory/peak_reserved_mem: 21
 llmfoundry.command_utils.train: Done.          # EXIT=0
 ```
 
-GPU-7 residency (`nvidia-smi` filtered by PID, sampled from **inside** the running job):
+GPU residency check (`nvidia-smi` filtered by PID, sampled from **inside** the running job)
+— map the target GPU's UUID to its index first, then confirm the VRAM holder is your own
+rank:
 
 ```
-$ GPU7 uuid = GPU-9eb34eec-449b-7839-d362-d1e995e95239   # = nvidia-smi index 7
 $ nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory --format=csv,noheader
-  1537452, GPU-9eb34eec-449b-7839-d362-d1e995e95239, 21888 MiB
+  <pid>, <gpu-uuid>, 21888 MiB
 $ pgrep -af scripts/train/train.py
-  1537315 .../composer -n 1 ... train.py     # launcher
-  1537452 .../python3        ... train.py     # rank 0 == the 21888 MiB holder above, on GPU 7
+  <pid> .../composer -n 1 ... train.py     # launcher
+  <pid> .../python3        ... train.py     # rank 0 == the 21888 MiB holder above, on GPU 7
 ```
 
 `peak_reserved_mem 21.58 GB` on an 80 GB card — a 0.6 B full fine-tune with DecoupledAdamW
@@ -619,18 +627,18 @@ leaves plenty of headroom; a larger model or longer `max_seq_len` would scale fr
 Composer/Foundry's `hf_checkpointer` writes a servable HF folder at
 `<save_folder>/huggingface/ba40/` (sharded `model-0000{1,2}-of-00002.safetensors` + config +
 tokenizer, ~1.5 GB) **at fit-end regardless of `save_interval`** — `save_folder=null` only
-suppresses the *Composer* `.pt` checkpoints, not this HF export. Captured as evidence, then
-**deleted** (outputs live under `/dev/shm/h100/out/llmfoundry`, not the repo).
+suppresses the *Composer* `.pt` checkpoints, not this HF export. Keep run outputs under
+`$OUTPUT_DIR`, not the repo.
 
-### Multi-GPU (deferred)
+### Multi-GPU (not exercised on H100)
 
-Not run in this wave (GPUs 0–3 were a co-tenant production job). A 2- or 8-GPU pass would
+A 2- or 8-GPU pass would
 drop `--gpus 1`/`init_device=cpu`, restore the YAML's `init_device: mixed` + `fsdp_config`
 (`FULL_SHARD`), bump `--global-batch-size` to a multiple of the world size, use a distinct
 `MASTER_PORT`, and expect a per-rank VRAM drop as FSDP shards (mirror the §8a 8-GPU run).
 The 9-row sample is too small to shard usefully — point `--data-local` at a real dataset.
 
-### Verdict — WORKS (with changes)
+### Summary — works with changes
 
 LLM Foundry **trains on 1x H100** on the stock CUDA path: torch resolves to `2.7.0+cu126`
 with no override, `flash_attention_2` builds and runs, loss falls 2.09 → 0.004 and the model
@@ -643,7 +651,7 @@ and add **`setuptools<81`** for `pkg_resources`.
 
 ## 8a. MI355X (ROCm 7.2) — tested
 
-**Verdict: WORKS WITH CHANGES.** The SFT recipe in this folder trains on an AMD Instinct
+**This path works with changes.** The SFT recipe in this folder trains on an AMD Instinct
 MI355X. Foundry's own code needed no patching — the changes are all in *how you install
 it* (its `torch` pin is unsatisfiable on ROCm 7.x) and four YAML overrides on the command
 line. Nothing here required editing `yamls/finetune_chat_sft.yaml`, so the NVIDIA defaults
@@ -680,10 +688,10 @@ NVIDIA GPU, replacing your ROCm torch. The fix is to install the dependency clos
 
 ```bash
 cd training/llm/llmfoundry
-python3 -m venv .env_train_llm_llmfoundry
-source .env_train_llm_llmfoundry/bin/activate
+python3 -m venv .env_llmfoundry
+source .env_llmfoundry/bin/activate
 export HIP_VISIBLE_DEVICES=7 CUDA_VISIBLE_DEVICES=7      # never set these to ""
-export HF_HOME=/mnt/data_1.5t/hf_cache PIP_CACHE_DIR=/mnt/data_1.5t/pip_cache
+export PIP_CACHE_DIR=/path/to/pip_cache                  # off tmpfs; see the flash-attn note
 pip install -U pip setuptools wheel
 
 # 1. ROCm torch FIRST — torchvision/torchaudio too, so nothing drags in a CUDA wheel later
@@ -712,7 +720,7 @@ pip install -c /tmp/rocm_constraints.txt \
   'catalogue>=2,<3' 'typer<1' GitPython==3.1.44 python-dotenv
 
 # 5. The checkout (kept inside the git-ignored venv dir so `git status` stays clean)
-cd .env_train_llm_llmfoundry
+cd .env_llmfoundry
 git clone --depth 1 https://github.com/mosaicml/llm-foundry.git
 cd llm-foundry && pip install --no-deps -e .     # --no-deps is what protects the ROCm torch
 ```
@@ -732,12 +740,12 @@ Model substituted: `Qwen/Qwen3-0.6B` instead of the YAML's `meta-llama/Llama-3.1
 The Llama default is unchanged in the YAML.
 
 ```bash
-source .env_train_llm_llmfoundry/bin/activate
+source .env_llmfoundry/bin/activate
 export $(grep -v '^#' ../dev.env | xargs)          # HF_TOKEN
-export MASTER_PORT=29720                            # 29500 is taken on this box
+export MASTER_PORT=29720                            # 29500 is often taken on a shared box
 
 python3 train_llm_llmfoundry.py --recipe sft \
-  --foundry-dir .env_train_llm_llmfoundry/llm-foundry \
+  --foundry-dir .env_llmfoundry/llm-foundry \
   --gpus 1 --model Qwen/Qwen3-0.6B \
   --max-seq-len 2048 --max-duration 20ba \
   --global-batch-size 2 --device-microbatch-size 1 \
@@ -745,10 +753,10 @@ python3 train_llm_llmfoundry.py --recipe sft \
   --extra model.attn_implementation=sdpa model.init_device=cpu \
           save_folder=null eval_interval=1000ba console_log_interval=5ba \
           callbacks.hf_checkpointer.save_interval=1000ba \
-          callbacks.hf_checkpointer.save_folder=/mnt/data_1.5t/outputs/train_llm_llmfoundry/hf_checkpoints
+          callbacks.hf_checkpointer.save_folder=$OUTPUT_DIR/llmfoundry/hf_checkpoints
 ```
 
-Evidence (log excerpts, exit code 0):
+Expected output (the run should finish with exit code 0):
 
 ```
 [batch=1/20]:
@@ -793,9 +801,9 @@ on ROCm — nothing calls into it on this path; Composer's dist init logs
 harmless on one rank); and `destroy_process_group() was not called` is printed at exit on
 every run, including successful ones.
 
-### 8-GPU run (8x MI355X, ROCm 7.2.4) — tested August 2026
+### 8-GPU run (8x MI355X, ROCm 7.2.4)
 
-**Verdict: WORKS.** The same SFT recipe scales from 1 to 8 MI355X with real FSDP
+**This path works as documented.** The same SFT recipe scales from 1 to 8 MI355X with real FSDP
 `FULL_SHARD` over RCCL. No code patch, no new package, no extra pin — the only changes
 versus the 1-GPU run are configuration (batch geometry that divides by 8, a bigger data
 slice, and `init_device: mixed` put *back*, which is what it was written for). Both runs
@@ -808,17 +816,16 @@ llm-foundry 0.23.0.dev0 — identical venv to the 1-GPU test.
 
 ```bash
 cd training/llm/llmfoundry
-source .env_train_llm_llmfoundry/bin/activate
-# The venv's bin/activate pins HIP_VISIBLE_DEVICES=7 from the 1-GPU test (lines 73-74).
-# Overriding it AFTER sourcing is mandatory or you silently train on one GPU.
+source .env_llmfoundry/bin/activate
+# If the venv's bin/activate pins HIP_VISIBLE_DEVICES=7 from a 1-GPU session,
+# overriding it AFTER sourcing is mandatory or you silently train on one GPU.
 export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export HF_HOME=/mnt/data_1.5t/hf_cache
 set -a; . ./dev.env; set +a            # HF_TOKEN
 python3 -c "import torch; assert torch.cuda.device_count()==8"
 
 composer -n 8 --master_port 29750 \
-  .env_train_llm_llmfoundry/llm-foundry/scripts/train/train.py \
+  .env_llmfoundry/llm-foundry/scripts/train/train.py \
   yamls/finetune_chat_sft_8gpu.yaml
 ```
 
@@ -858,7 +865,7 @@ changed (`memory/peak_reserved_mem`, GB, per rank):
 shards are genuinely split 8 ways. Reproduce the comparison with
 `... yamls/finetune_chat_sft_8gpu.yaml fsdp_config.sharding_strategy=NO_SHARD`.
 
-#### Real log lines (20ba, `FULL_SHARD`, exit 0)
+#### What a healthy run looks like (20ba, `FULL_SHARD`, exit 0)
 
 ```
 [batch=1/20]:  Train metrics/train/LanguageCrossEntropy: 1.9195
@@ -876,53 +883,53 @@ Finite, monotonically falling loss; ~50-63k tokens/s aggregate (~6.2-7.9k/s/devi
 The loss reaching 0.08 is **memorisation of a 10-row sample replicated 128x** — see the
 data note below. This is a pipeline proof, not a learning result.
 
-#### GPU evidence, sampled in-band and cross-checked against our own PIDs
+#### GPU evidence, sampled in-band and cross-checked against the job's own PIDs
 
-The `rocm-smi` sampler ran **inside** the flock-held runner as a background loop, so every
-sample is contemporaneous with our own training processes. From
-`rocm_smi_inband_fullshard.txt`, one sample (19:24:04Z), `rocm-smi --showpids`:
+Run the `rocm-smi` sampler **inside** the job (a background loop under the same
+machine-wide `flock`), so every sample is contemporaneous with the training processes.
+A healthy `rocm-smi --showpids` sample looks like:
 
 ```
 PID     PROCESS NAME  GPU(s)  VRAM USED
-642504  python3       1       4780736512     <- rank 0
-642505  python3       1       5233676288
-642506  python3       1       5239967744
-642507  python3       1       5227384832
-642508  python3       1       5174956032
-642509  python3       1       5082681344
-642510  python3       1       5101555712
-642511  python3       1       5091069952     <- 8 PIDs, ~4.8-5.2 GB each
+<pid>   python3       1       4780736512     <- rank 0
+<pid>   python3       1       5233676288
+<pid>   python3       1       5239967744
+<pid>   python3       1       5227384832
+<pid>   python3       1       5174956032
+<pid>   python3       1       5082681344
+<pid>   python3       1       5101555712
+<pid>   python3       1       5091069952     <- 8 PIDs, ~4.8-5.2 GB each
 ```
 
 `pgrep -af scripts/train/train.py` in the **same** sample:
 
 ```
-642121 .../bin/composer -n 8 --master_port 29750 .../scripts/train/train.py yamls/finetune_chat_sft_8gpu.yaml
-642504 .../python3 .../scripts/train/train.py yamls/finetune_chat_sft_8gpu.yaml
-... (642505-642511, the 8 ranks composer forked)
+<pid> .../bin/composer -n 8 --master_port 29750 .../scripts/train/train.py yamls/finetune_chat_sft_8gpu.yaml
+<pid> .../python3 .../scripts/train/train.py yamls/finetune_chat_sft_8gpu.yaml
+... (the remaining 7 ranks composer forked)
 ```
 
-The eight PIDs holding VRAM are exactly the eight ranks our `composer -n 8` (PID 642121)
-forked — not another tenant's job on the shared box.
+The eight PIDs holding VRAM should be exactly the eight ranks `composer -n 8` forked —
+not another tenant's job on a shared box.
 
 **Utilisation needed a longer run to measure.** In the 20ba run `rocm-smi --showuse`
 reported **0% busy on every GPU** in most samples: 20 steps is a few seconds of burst and
 the instantaneous poll lands in the gaps. Do not read that as an idle GPU, and do not
-report it as a pass either — we re-ran at `max_duration=150ba` with the sampler at 3 s
-(`rocm_smi_inband_long.txt`, exit 0, same config otherwise). Across 39 samples x 8 GPUs:
+report it as a pass either — re-run at `max_duration=150ba` with the sampler at 3 s (same
+config otherwise). Across 39 samples x 8 GPUs:
 
 ```
 busy%:  87:1   92:1   93:3   94:3   95:1   96:14   97:27   98:32   99:71   100:53
-sample 9 @19:29:05Z   GPU[1..7]: GPU use (%): 100      (GPU[0] polled 0 in this sample)
+one sample            GPU[1..7]: GPU use (%): 100      (GPU[0] polled 0 in this sample)
                       power:  272 / 315 / 326 / 317 / 319 / 320 / 322 / 328 W
---showpids            694178..694185  python3  ~5.6-7.8 GB VRAM each   (8 PIDs)
+--showpids            8 python3 PIDs, ~5.6-7.8 GB VRAM each
 pgrep -af (same sample)
-   693797 .../bin/composer -n 8 --master_port 29750 .../train.py yamls/finetune_chat_sft_8gpu.yaml max_duration=150ba
-   694178..694185 .../train.py yamls/finetune_chat_sft_8gpu.yaml max_duration=150ba   <- the 8 ranks
+   <pid> .../bin/composer -n 8 --master_port 29750 .../train.py yamls/finetune_chat_sft_8gpu.yaml max_duration=150ba
+   <pid>..<pid+7> .../train.py yamls/finetune_chat_sft_8gpu.yaml max_duration=150ba   <- the 8 ranks
 ```
 
 All eight GPUs sit at 96-100% under load at 272-328 W (idle is ~140 W), and the 8 VRAM
-holders are again our own `composer` children. The 150ba run peaked at 7.98 GB/rank and
+holders are again the `composer` launcher's own children. The 150ba run peaked at 7.98 GB/rank and
 drove cross-entropy 1.9195 → 0.0010 by batch 25 (full memorisation of the replicated
 sample, as expected).
 
@@ -931,10 +938,10 @@ sample, as expected).
 | Change | Why |
 |---|---|
 | **New file `yamls/finetune_chat_sft_8gpu.yaml`** | The 1-GPU YAML is left untouched (it keeps the NVIDIA defaults). The new one bakes in the §8a ROCm fixes plus 8-rank geometry |
-| `HIP_VISIBLE_DEVICES=0,...,7` exported **after** `source bin/activate` | `bin/activate` still carries the `=7` pin from the 1-GPU test. Without the override the run is silently single-GPU |
+| `HIP_VISIBLE_DEVICES=0,...,7` exported **after** `source bin/activate` | If `bin/activate` still carries a `=7` pin from a 1-GPU session, the run is silently single-GPU without the override |
 | `global_train_batch_size: 32` (was 2) | Must be divisible by the 8 ranks; Foundry aborts in config validation otherwise. 32 = 8 ranks x 4, with `device_train_microbatch_size: 1` giving grad accum 4 |
 | `init_device: mixed` **restored** (1-GPU needed `cpu`) | `mixed` requires FSDP; at 8 ranks FSDP is real, so the §8a workaround is no longer needed — and `mixed` is what stops 8 CPU copies of the weights at startup |
-| Data: 1280-row replicated slice **outside the repo** | The shipped 10-row sample cannot feed 8 ranks at global batch 32 with `drop_last: true` — zero batches. Written to `/mnt/data_1.5t/outputs/train_llm_llmfoundry/gpu8/data/OTel_LLM_sample_1280.jsonl` (10 rows x 128); the repo sample is unchanged |
+| Data: 1280-row replicated slice **outside the repo** | The shipped 10-row sample cannot feed 8 ranks at global batch 32 with `drop_last: true` — zero batches. Write it to `$OUTPUT_DIR/llmfoundry/gpu8/data/OTel_LLM_sample_1280.jsonl` (10 rows x 128); the repo sample stays unchanged |
 | `save_folder` and the `hf_checkpointer` callback omitted entirely | Nothing large should land for a smoke run. Verified: 0 bytes of weights on disk afterwards |
 | `max_seq_len: 2048`, `attn_implementation: sdpa` | Carried forward unchanged from §8a |
 

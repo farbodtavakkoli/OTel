@@ -45,9 +45,16 @@ re-implementation of the endpoint, not a supported path. Use
 [`../../vllm/reranker/`](../../vllm/reranker/) (production GPU-serving answer).
 
 > **Tested topology:** 2x AMD Instinct MI355X (gfx950, 288 GB each), physical GPUs **2
-> and 3**, ROCm 7.2.4, Ubuntu, Docker 29.7.2, Python 3.12.3. Verified **2026-08-20**.
+> and 3**, ROCm 7.2.4, Ubuntu, Docker 29.7.2, Python 3.12.3.
 
-## Install — the exact docker route that worked
+## Install — the docker route
+
+```bash
+# Set these to suit your machine
+export DATA_DIR=/path/to/data                    # Ollama model store (ollama create COPIES)
+export LLAMA_CACHE=/path/to/hf_cache/llama_cpp   # existing GGUF cache, mounted read-only
+export OUTPUT_DIR=/path/to/outputs               # inference artifacts
+```
 
 The shared route — `docker pull ollama/ollama:rocm` (0.32.14, digest, gfx950 native, no
 `HSA_OVERRIDE_GFX_VERSION`), the GPU→render-node mapping (GPU2 = `renderD144`,
@@ -60,8 +67,8 @@ GPU3 = `renderD152`), and the two deliberate run-line deviations — is document
 docker run -d \
   --device /dev/kfd \
   --device /dev/dri/renderD144 \
-  -v /mnt/data_450g/ollama:/root/.ollama \
-  -v /mnt/data_1.5t/hf_cache/llama_cpp:/ggufs:ro \
+  -v $DATA_DIR/ollama:/root/.ollama \
+  -v $LLAMA_CACHE:/ggufs:ro \
   -p 11434:11434 \
   --name ollama_llm \
   ollama/ollama:rocm
@@ -74,8 +81,8 @@ docker run -d \
   --device /dev/kfd \
   --device /dev/dri/renderD144 \
   --device /dev/dri/renderD152 \
-  -v /mnt/data_450g/ollama:/root/.ollama \
-  -v /mnt/data_1.5t/hf_cache/llama_cpp:/ggufs:ro \
+  -v $DATA_DIR/ollama:/root/.ollama \
+  -v $LLAMA_CACHE:/ggufs:ro \
   -p 11434:11434 \
   --name ollama_llm \
   ollama/ollama:rocm
@@ -92,8 +99,8 @@ docker logs ollama_llm 2>&1 | grep "inference compute"
 ... id=0 filter_id=0 library=ROCm compute=gfx950 name=ROCm0 libdirs=ollama,rocm_v7_2 pci_id=0000:a5:00.0 type=discrete total="288.0 GiB" available="74.8 GiB"
 ```
 
-Two GPUs, the right two — `0000:a5:00.0` and `0000:dc:00.0`. (`available` is only ~75 GiB
-of 288 GiB because other users' SGLang jobs held ~214 GiB on each card during this run.)
+Two GPUs, the right two — `0000:a5:00.0` and `0000:dc:00.0`. (`available` reads only
+~75 GiB of 288 GiB here because co-tenant SGLang jobs held ~214 GiB on each card.)
 
 NVIDIA variant, environment & secrets: see [`../README.md`](../README.md). (`dev.env` is
 symlinked to the repo-root file — `ln -sf ../../../dev.env dev.env` — and the client loads
@@ -143,12 +150,11 @@ qwen3.8-27b-q8:latest    b0322c83ce26    29 GB     3 minutes ago
 ## Client / smoke command
 
 ```bash
-python3 -m venv .env_inference_llm_ollama
-.env_inference_llm_ollama/bin/pip install -r requirements_llm_ollama.txt
+cd .. && python3 -m venv .env_ollama && .env_ollama/bin/pip install -r requirements.txt && cd llm
 
-.env_inference_llm_ollama/bin/python inference_llm_ollama.py \
+../.env_ollama/bin/python inference_llm_ollama.py \
   --api chat \
-  --out /mnt/data_1.5t/outputs/inference_llm_ollama/chat_multi_gpu.json
+  --out $OUTPUT_DIR/inference_llm_ollama/chat_multi_gpu.json
 ```
 
 Equivalent raw curl:
@@ -181,7 +187,7 @@ eval_duration: 1249794000  (1.25s)
 file had just been copied by `ollama create`; a genuinely cold page cache will be slower).
 Decode **74.4 tok/s**.
 
-Real generated text (`/api/chat`, `think:false`):
+**Expected generated text** (`/api/chat`, `think:false`):
 
 ```text
 AMD Instinct MI100, AMD Instinct MI200, AMD Instinct MI300
@@ -273,10 +279,10 @@ GPU[2] VRAM used   230080622592 B      258356191232 B     +28275568640 B  (+26.3
 GPU[3] VRAM used   229333782528 B      258322071552 B     +28988289024 B  (+27.0 GiB)
 ```
 
-**Both GPUs loaded, ~26-27 GiB each.** This is a real two-GPU measurement, not an
+**Both GPUs loaded, ~26-27 GiB each.** This is a direct two-GPU measurement, not an
 inference from the logs.
 
-Real generated text on the two-GPU placement:
+**Expected generated text** on the two-GPU placement:
 
 ```text
 Tensor parallelism partitions large weight matrices and intermediate activations across
@@ -313,7 +319,7 @@ To force a spread in the opposite case (a model that *would* fit on one):
 -e OLLAMA_SCHED_SPREAD=1
 ```
 
-The genuine multi-GPU win on this box is **concurrency, not tensor parallelism** — and
+The genuine multi-GPU win here is **concurrency, not tensor parallelism** — and
 Ollama does that natively. Both models resident at once, each `100% GPU`:
 
 ```text
@@ -322,22 +328,22 @@ embeddinggemma:latest    b48ed6e89ad7    393 MB    100% GPU     2048       4 min
 qwen3.8-27b-q8:latest    b0322c83ce26    54 GB     100% GPU     262144     4 minutes from now
 ```
 
-## H100 (NVIDIA) — verified 2026-08-22
+## H100 (NVIDIA)
 
 Single-GPU smoke on **NVIDIA H100 80GB HBM3** (Hopper cc 9.0, driver 580.173.02, CUDA 13.0),
-physical **GPU 4 only** (shared node — GPUs 0–3 were a production job). Container/run-line
-deviations and the "GGUFs had to be downloaded" finding are in [`../README.md`](../README.md).
+physical **GPU 4 only**. Container/run-line deviations and the GGUF-download note are in
+[`../README.md`](../README.md).
 
-**Model:** the 29 GB `unsloth/Qwen3.8-27B-GGUF:Q8_0` in the MI355X sections above is **not
-cached on this box** (the `FROM` path `/mnt/data_1.5t/hf_cache/llama_cpp/...` is MI355X-era and
-absent). For a fast smoke this wave served **`unsloth/Qwen3-0.6B-GGUF:Q8_0`** — same Qwen3
+**Model:** when the 29 GB `unsloth/Qwen3.8-27B-GGUF:Q8_0` used in the MI355X sections above
+is **not cached** (the Modelfile's `FROM` path under `$LLAMA_CACHE` is absent), serve
+**`unsloth/Qwen3-0.6B-GGUF:Q8_0`** for a fast smoke — same Qwen3
 family, same Q8_0 quant, ~639 MB. The 27B also fits an 80 GB H100 (weights ~26 GB + KV) and
-would follow the identical path; it was skipped only to keep the pull short.
+would follow the identical path; it is skipped here only to keep the pull short.
 
 ### Exact commands
 
 ```bash
-# GGUF (proxy unset — HF is proxy-blocked here):
+# GGUF (unset the proxy if HF is proxy-blocked on your host):
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 hf download unsloth/Qwen3-0.6B-GGUF Qwen3-0.6B-Q8_0.gguf --local-dir $GGUF/Qwen3-0.6B-GGUF
 
@@ -352,7 +358,7 @@ python inference_llm_ollama.py --port 11440 --model qwen3-0.6b-q8 --api chat \
   --prompt "What is the capital of France? Answer in one short sentence." --max_tokens 64
 ```
 
-### Real output (coherent — the check that matters)
+### Expected output (coherent — the check that matters)
 
 ```text
 endpoint      : http://127.0.0.1:11440/api/chat
@@ -362,11 +368,11 @@ The capital of France is Paris.
 ```
 
 Warm `/api/generate` ("Name three primary colors.") → `Three primary colors are **red, blue,
-and yellow**.` at **374.5 tok/s** (`load_s: 0.00`). (Cold start was ~26 s load + 4.8 tok/s for
+and yellow**.` at **374.5 tok/s** (`load_s: 0.00`). (Cold start is ~26 s load + 4.8 tok/s for
 the *first* call — that is model load + first-token latency, not CPU: the warm decode rate and
 the offload log below prove GPU execution. Caveat: a 0.6B model is weak on trivia — asked for
-Japan's capital it answered "Osaka"; the *serving path* is correct, the tiny model is the
-limitation. Use the 27B GGUF for real answers.)
+Japan's capital it answers "Osaka"; the *serving path* is correct, the tiny model is the
+limitation. Use the 27B GGUF for answer quality.)
 
 ### GPU-residency proof — `100% GPU` + nvidia-smi on GPU 4
 
@@ -389,34 +395,32 @@ llama_kv_cache:      CUDA0 KV buffer size =  4480.00 MiB
 sched_reserve:      CUDA0 compute buffer size =   264.04 MiB
 ```
 
-And by `nvidia-smi -i 4` — VRAM held by the ollama runner on physical GPU 4 (which was 0 MiB
+And by `nvidia-smi -i 4` — VRAM held by the ollama runner on physical GPU 4 (0 MiB
 before load):
 
 ```text
 # nvidia-smi -i 4 --query-compute-apps=pid,process_name,used_memory --format=csv
-1717079, /usr/lib/ollama/llama-server, 5942 MiB
+<pid>, /usr/lib/ollama/llama-server, 5942 MiB
 ```
 
-**29/29 layers on GPU, 5942 MiB resident on GPU 4.** GPU 4 = UUID `GPU-e13d18b6-…`, the one
-free card; the production job on GPUs 0–3 was never touched.
+**29/29 layers on GPU, 5942 MiB resident on GPU 4** — only the pinned card is touched.
 
 ### Single vs multi-GPU on H100
 
-Single-GPU only this wave (shared node — the multi-GPU pass is deferred until GPUs 0–3 free
-up). The MI355X finding carries over unchanged and is if anything *more* true on an 80 GB
+Single-GPU only here. The MI355X finding carries over unchanged and is if anything *more* true on an 80 GB
 card: Ollama/llama.cpp multi-GPU is **layer (pipeline) splitting = capacity, not throughput**,
 so a model that fits one card should stay on one card. A multi-GPU pass would just add
 `--gpus '"device=4,5"'` (or set `OLLAMA_SCHED_SPREAD=1` to force a spread) and re-measure per
 card with `nvidia-smi`. The genuinely useful multi-GPU pattern here is **concurrency** — both
 models resident on one card at once, both `100% GPU`, demonstrated in [`../README.md`](../README.md).
 
-### H100 verdict
+### H100 summary
 
-**PASS.** `ollama/ollama` (0.32.15, CUDA-13 userspace) served a Qwen3 GGUF on H100 out of the
+`ollama/ollama` (0.32.15, CUDA-13 userspace) serves a Qwen3 GGUF on H100 out of the
 box — no build, no patch, no override. `29/29` layers on GPU, `PROCESSOR: 100% GPU`, 5942 MiB
 on GPU 4 by `nvidia-smi`, 374.5 tok/s warm decode, coherent output. The only deviation from
 the MI355X recipe is the container image tag + `--gpus` pinning (both expected) and using a
-small GGUF for a fast smoke because nothing was cached. For real generation and for
+small GGUF for a fast smoke when no large GGUF is cached. For answer quality and for
 throughput, use the 27B GGUF here, or `../../vllm/llm` / `../../sglang/llm` with the FP8
 checkpoint and tensor parallelism.
 
@@ -429,8 +433,8 @@ checkpoint and tensor parallelism.
 | `--device /dev/kfd` | required | ROCm compute node; without it there is no GPU at all |
 | `--device /dev/dri/renderD144` | GPU 2 | per-GPU pinning; **use this instead of exposing the whole `/dev/dri`** |
 | `--device /dev/dri/renderD152` | GPU 3 | second GPU for the multi-GPU run |
-| `-v /mnt/data_450g/ollama:/root/.ollama` | 387 GB free | model store; a named volume lands on `/` which has only ~99 GB |
-| `-v /mnt/data_1.5t/hf_cache/llama_cpp:/ggufs:ro` | read-only | reuse cached GGUFs, no re-download |
+| `-v $DATA_DIR/ollama:/root/.ollama` | a disk with room | model store; a named volume lands on the root filesystem instead |
+| `-v $LLAMA_CACHE:/ggufs:ro` | read-only | reuse cached GGUFs, no re-download |
 | `-p 11434:11434` | default | Ollama's default port; a common benchmark layout suggests 8300 — this folder uses **11434** |
 | `-d --name ollama_llm` | — | detached, named for `docker exec ollama ps` |
 
@@ -481,10 +485,10 @@ tok_per_s     : 76.3
 An OpenTelemetry span is a fundamental unit of work within a trace that represents a
 specific operation or task, containing metadata such as its duration, parent-child
 relationships, and associated attributes.
-raw response written to /mnt/data_1.5t/outputs/inference_llm_ollama/chat_multi_gpu.json
+raw response written to $OUTPUT_DIR/inference_llm_ollama/chat_multi_gpu.json
 ```
 
-Raw JSON is written under `/mnt/data_1.5t/outputs/inference_llm_ollama/`, not into the
+Raw JSON is written under `$OUTPUT_DIR/inference_llm_ollama/`, not into the
 repo, so `git status` stays clean.
 
 ## Hardware support & evidence
@@ -497,7 +501,7 @@ repo, so `git status` stays clean.
 | Model is on the GPU, not the CPU | `ollama ps` → `PROCESSOR = 100% GPU`; `offloaded 66/66 layers to GPU` |
 | Single-GPU placement measured | `rocm-smi` GPU[2] +46.5 GB, GPU[3] **unchanged** |
 | Multi-GPU placement measured | `rocm-smi` GPU[2] +28.3 GB **and** GPU[3] +29.0 GB |
-| Real generation, not a stub | 74–76 tok/s decode with coherent text, `done_reason: stop` |
+| Generation is real, not a stub | 74–76 tok/s decode with coherent text, `done_reason: stop` |
 
 ## Notes & quirks
 
@@ -505,49 +509,49 @@ repo, so `git status` stays clean.
    carries a chat template that emits a reasoning block. Against
    `/v1/chat/completions` with `max_tokens: 400`, the result was
    `finish_reason: length`, `completion_tokens: 400`, and **`content: ''`** — the entire
-   budget went into `message.reasoning`, which the OpenAI shim exposes as a *separate,
+   budget goes into `message.reasoning`, which the OpenAI shim exposes as a *separate,
    non-standard* field. A client that reads only `choices[0].message.content` sees an
    empty string and looks broken.
    **Fix:** use the native API with `"think": false` (the client's default), which
-   returned clean text in 24 tokens. There is no `think` flag on the OpenAI route.
+   returns clean text in 24 tokens. There is no `think` flag on the OpenAI route.
 
 2. **Ollama's default context is derived from TOTAL VRAM, not free VRAM.**
    `msg="vram-based default context" total_vram="288.0 GiB" default_num_ctx=262144`.
-   That reserved a 16 GB KV cache and is the main reason the model spread over two GPUs.
+   That reserves a 16 GB KV cache and is the main reason the model spreads over two GPUs.
    Set `OLLAMA_CONTEXT_LENGTH` if you want predictable placement.
 
 3. **`ollama create` copies, it does not reference.** The 29 GB GGUF is duplicated into
-   `/root/.ollama/models`, so the store reached 55 GB. Budget disk accordingly — and this
-   is exactly why the store must not live on `/`.
+   `/root/.ollama/models`, so the store reaches 55 GB. Budget disk accordingly — and this
+   is exactly why the store must not live on the root filesystem.
 
 4. **`PROCESSOR: 100% GPU` can coexist with a non-zero `CPU_Mapped` buffer.** The
-   two-GPU run showed `CPU_Mapped model buffer size = 1288.28 MiB` (token embeddings)
+   two-GPU run shows `CPU_Mapped model buffer size = 1288.28 MiB` (token embeddings)
    while still reporting `100% GPU`. All 66 *layers* are on GPU; the percentage refers to
    layer offload, not to every byte.
 
 5. **The container needs no ROCm on the host.** It bundles `rocm_v7_2`. Host ROCm 7.2.4
-   is present here but was not used by the container.
+   is present here but is not used by the container.
 
-6. **Outbound calls to ollama.com fail on this host and are harmless.**
-   `model show cloud cache hydration failed … context deadline exceeded`. Purely the
-   model-recommendation refresh; local serving is unaffected.
+6. **Outbound calls to ollama.com may fail on an air-gapped or proxied host, and are
+   harmless.** `model show cloud cache hydration failed … context deadline exceeded`.
+   Purely the model-recommendation refresh; local serving is unaffected.
 
 7. **`available` VRAM reflects other tenants.** Discovery reported 74.8/75.0 GiB free of
-   288 GiB because siblings' SGLang jobs held ~214 GiB per card. All deltas in this
+   288 GiB because co-tenant SGLang jobs held ~214 GiB per card. All deltas in this
    README are measured against that live baseline.
 
 8. **Never set `CUDA_VISIBLE_DEVICES=""` on ROCm.** Ollama's own config echo shows
    `CUDA_VISIBLE_DEVICES:` and `HIP_VISIBLE_DEVICES:` empty, which means "unset" — device
    selection here is done by which `renderD*` nodes are passed into the container.
 
-## VERDICT
+## Summary
 
-**✅ PASS — Ollama on ROCm/MI355X is fully working for GGUF LLM serving, single-GPU and
+**✅ Ollama on ROCm/MI355X is fully working for GGUF LLM serving, single-GPU and
 multi-GPU, with proven GPU residency.**
 
-- `ollama/ollama:rocm` (`0.32.14`) ran gfx950 **out of the box** — no build, no patch, no
+- `ollama/ollama:rocm` (`0.32.14`) runs gfx950 **out of the box** — no build, no patch, no
   `HSA_OVERRIDE_GFX_VERSION`. Cheapest install in the whole repo: a 1.43 GB pull.
-- The cached 29 GB GGUF was registered via `Modelfile` in **1 m 41 s with zero network**.
+- A cached 29 GB GGUF registers via `Modelfile` in **1 m 41 s with zero network**.
 - **Single GPU:** `100% GPU`, 66/66 layers, +46.5 GB on GPU[2] and **nothing** on GPU[3],
   74.4 tok/s, 5.18 s cold start.
 - **Multi-GPU:** split automatically across both cards (+28.3 GB / +29.0 GB measured),
@@ -555,6 +559,6 @@ multi-GPU, with proven GPU residency.**
   is the correct placement for a 29 GB model on a 288 GB card**; the useful multi-GPU
   pattern here is concurrent model instances, demonstrated above.
 - **Not the throughput answer.** For MI355X-class serving use `inference/vllm/llm` /
-  `inference/sglang/llm` with the real FP8 checkpoint and tensor parallelism. Ollama is
+  `inference/sglang/llm` with the native FP8 checkpoint and tensor parallelism. Ollama is
   the "make this run locally with the least friction" answer, and at that it is excellent.
 - **No reranker route exists** — see the scope note above.

@@ -19,7 +19,7 @@ baseline. The reason to pick vLLM here is uniformity, not raw embedding speed.
 ## Install
 
 **There is no ROCm vLLM wheel — this is the single most important fact in this folder.**
-Verified 2026-08-20:
+Verified against the pinned versions below:
 
 - PyPI `vllm==0.27.1` publishes exactly two binary wheels
   (`manylinux_2_28_x86_64`, `manylinux_2_28_aarch64`), both **CUDA-only**. Its
@@ -31,31 +31,35 @@ Verified 2026-08-20:
 - Building vLLM from source for `gfx950` works but is an hours-long compile.
 
 So the pip/venv route that would normally be preferred is genuinely unavailable, and the
-verified route is a **container**. This host already had
-`rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2` on disk, which ships a
-working ROCm vLLM — zero pull cost, no `docker pull`, no disk spent:
+verified route is a **container**. The validated runs used
+`rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2`, which ships a
+working ROCm vLLM:
 
 ```bash
+# Set these to suit your machine
+export HF_HOME=/path/to/hf_cache        # Hugging Face model cache
+export OUTPUT_DIR=/path/to/outputs      # server logs and run artifacts
+
 docker run -d --name vllm_bringup \
   --device /dev/kfd --device /dev/dri/renderD128 --device /dev/dri/renderD136 \
   --group-add "$(getent group video | cut -d: -f3)" \
   --group-add "$(getent group render | cut -d: -f3)" \
   --ipc=host --cap-add=SYS_PTRACE --security-opt seccomp=unconfined --shm-size 64G \
   --network host \
-  -v "$PWD":/workspace/repo -v /mnt/data_1.5t:/mnt/data_1.5t \
-  -e HF_HOME=/mnt/data_1.5t/hf_cache -w /workspace/repo \
+  -v "$PWD":/workspace/repo -v "$HF_HOME":"$HF_HOME" \
+  -e HF_HOME="$HF_HOME" -w /workspace/repo \
   rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2 sleep infinity
 ```
 
 Two gotchas in that command, both learned the hard way:
 
 - The image has **no `render` group**, so the canonical `--group-add render` fails with
-  `unable to find group render`. Pass the host's **numeric** GIDs instead (`video`=44,
-  `render`=993 on this host) — that is what the `getent` substitutions above do.
-- Pinning GPUs by **render node** (`renderD128` = physical GPU0, `renderD136` = GPU1)
+  `unable to find group render`. Pass the host's **numeric** GIDs instead (typically
+  `video`=44, `render`=993) — that is what the `getent` substitutions above do.
+- Pinning GPUs by **render node** (`renderD128` = the first GPU, `renderD136` = the second)
   rather than by `HIP_VISIBLE_DEVICES` means `torch.cuda.device_count()` is `2` inside the
-  container no matter what any tool does to the environment. Confirmed: the container sees
-  exactly two `gfx950` devices and cannot touch a sibling's GPUs 2–7.
+  container no matter what any tool does to the environment: the container sees
+  exactly two `gfx950` devices and cannot touch any other card on the box.
 
 Verified versions inside that image:
 
@@ -86,9 +90,9 @@ HF_TOKEN=hf_xxxxxxxxxxxxxxxx
 ```
 
 Loaded by `load_dotenv("dev.env")` in the client, and exported into the serving shell.
-Never echo it. Model weights are kept off `/` with `HF_HOME=/mnt/data_1.5t/hf_cache`.
+Never echo it. Model weights are kept off `/` by pointing `HF_HOME` at a data volume.
 
-GPU pinning for this agent's two cards:
+GPU pinning for the two cards in use:
 
 ```bash
 export HIP_VISIBLE_DEVICES=0,1 CUDA_VISIBLE_DEVICES=0,1
@@ -101,7 +105,7 @@ Never set `CUDA_VISIBLE_DEVICES=""` on ROCm — an empty string hides *every* GP
 Single GPU (the verified command):
 
 ```bash
-export HF_HOME=/mnt/data_1.5t/hf_cache HIP_VISIBLE_DEVICES=0
+export HF_HOME=/path/to/hf_cache HIP_VISIBLE_DEVICES=0
 vllm serve google/embeddinggemma-300m \
   --runner pooling \
   --host 0.0.0.0 \
@@ -124,8 +128,8 @@ curl -s http://localhost:8001/v1/embeddings -H 'Content-Type: application/json' 
 
 ## Single-GPU results
 
-**Verdict: works, unmodified.** `vllm serve ... --runner pooling` came up on one MI355X
-and returned correct 768-dimension embeddings on the first attempt. No flags beyond the
+**This works, unmodified.** `vllm serve ... --runner pooling` comes up on one MI355X
+and returns correct 768-dimension embeddings on the first attempt. No flags beyond the
 documented ones, no code changes, no ROCm-specific workarounds.
 
 | Measurement | Value |
@@ -138,7 +142,7 @@ documented ones, no code changes, no ROCm-specific workarounds.
 | Max model len | 2048 (model default) |
 | Embedding dimension | **768** |
 
-Real output from `/v1/embeddings` (two inputs):
+**Expected output** from `/v1/embeddings` (two inputs):
 
 ```
 object   : list
@@ -180,35 +184,35 @@ on any vendor's hardware. The same command on an NVIDIA host fails identically. 
 It is also pointless: the model is 0.61 GiB. There is nothing to shard on a 288 GB card.
 
 **The honest production pattern for a model this size is horizontal replication — one
-independent single-GPU server per GPU, behind a load balancer.** That is what was verified
-instead:
+independent single-GPU server per GPU, behind a load balancer.** That is the verified
+pattern:
 
 ```bash
-# replica A — physical GPU 0
+# replica A — first GPU
 HIP_VISIBLE_DEVICES=0 vllm serve google/embeddinggemma-300m --runner pooling \
   --port 8001 --served-model-name embeddinggemma &
 
-# replica B — physical GPU 1
+# replica B — second GPU
 HIP_VISIBLE_DEVICES=1 vllm serve google/embeddinggemma-300m --runner pooling \
   --port 8011 --served-model-name embeddinggemma &
 ```
 
-Both came up and served concurrently. `rocm-smi` with both replicas resident — **both
-GPUs loaded, sibling GPUs untouched**:
+Both come up and serve concurrently. `rocm-smi` with both replicas resident — **both
+GPUs loaded, other cards untouched**:
 
 ```
 device,GPU use (%),VRAM Total Memory (B),VRAM Total Used Memory (B)
 card0,0,309220868096,2377240576      <- replica A  (2.38 GB)
 card1,0,309220868096,2377240576      <- replica B  (2.38 GB)
-card2,0,309220868096,298037248       <- idle, belongs to a sibling agent
+card2,0,309220868096,298037248       <- idle, another job's card
 ```
 
-Both replicas answered the same request correctly and near-identically:
+Both replicas answer the same request correctly and near-identically:
 
 ```
---- port 8001 (GPU0) ---
+--- port 8001 (GPU 0) ---
   vectors=2 dim=768 cos(q,doc)=0.6965 first3=[-0.09578, -0.08054, 0.04375]
---- port 8011 (GPU1) ---
+--- port 8011 (GPU 1) ---
   vectors=2 dim=768 cos(q,doc)=0.6974 first3=[-0.09595, -0.08037, 0.044]
 ```
 
@@ -216,9 +220,9 @@ The ~1e-3 spread between replicas is ordinary non-deterministic reduction order,
 correctness problem. Throughput scales linearly with replica count, which is the right
 answer for a 0.61 GiB model: **replicate, don't shard.**
 
-## H100 (NVIDIA) — verified 2026-08-22
+## H100 (NVIDIA)
 
-**Verdict: ✅ PASS, unmodified.** vLLM `0.27.1` (pip / CUDA 13.0) serves
+**This works unmodified.** vLLM `0.27.1` (pip / CUDA 13.0) serves
 `google/embeddinggemma-300m` on one H100 80GB with the documented `--runner pooling`
 command — correct **768-dim** vectors and correct semantic ordering on the first attempt,
 no code changes and no ROCm workarounds.
@@ -226,7 +230,8 @@ no code changes and no ROCm workarounds.
 ### Install (pip route — the big AMD caveat does NOT apply on NVIDIA)
 
 The "no ROCm vLLM wheel, container-only" fact above is AMD-specific. On **NVIDIA the pip
-wheel is native**. One tmpfs venv is shared across all three leaves:
+wheel is native**. One shared venv at the stack root (`inference/vllm/.env_vllm`) serves
+all three leaves:
 
 ```bash
 python3 -m venv .env_vllm && source .env_vllm/bin/activate
@@ -242,11 +247,11 @@ pip install python-dotenv
 | transformers | `5.15.1` |
 | driver / CUDA | 580.173.02 / 13.0, H100 80GB HBM3 |
 
-### Serve (the verified H100 command — identical to ROCm minus the HIP var)
+### Serve (the H100 command — identical to ROCm minus the HIP var)
 
 ```bash
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
-export HF_HOME=/mnt/gsma/gsma/gsma/models CUDA_VISIBLE_DEVICES=5
+export HF_HOME=/path/to/hf_cache CUDA_VISIBLE_DEVICES=<free-gpu>
 vllm serve google/embeddinggemma-300m \
   --runner pooling \
   --host 0.0.0.0 --port 8500 \
@@ -257,7 +262,7 @@ vllm serve google/embeddinggemma-300m \
 python embed_vllm.py --port 8500 --model embeddinggemma
 ```
 
-### Real output (H100)
+### Expected output (H100)
 
 ```
 [default_loader.py:430] Loading weights took 8.58 seconds
@@ -285,17 +290,15 @@ the MI355X run to ~1e-3 on both the leading dims (`-0.09578, -0.08054, 0.04375, 
 and the cosines (0.7105 / 0.2011 there) — ordinary cross-hardware reduction-order drift,
 not a correctness problem. **Model-load VRAM 0.61 GiB matches MI355X exactly.**
 
-### GPU-5 residency (sampled from inside serving)
+### GPU residency check (sampled while serving)
 
-```
-$ nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory --format=csv,noheader | grep <GPU5-UUID>
-1718783, GPU-e71a0833-4f61-11c9-6eff-10c149e752e4, 2000 MiB
-$ nvidia-smi --query-gpu=index,memory.used --format=csv,noheader -i 5
-5, 2009 MiB
+```bash
+nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory --format=csv,noheader
+nvidia-smi --query-gpu=index,memory.used --format=csv,noheader
 ```
 
-~2.0 GB resident on **physical GPU 5 only** (0.61 GiB weights + preallocated pool); the
-co-tenant GPUs 0–3 were untouched.
+Expect ~2.0 GB resident on the single selected GPU (0.61 GiB weights + preallocated pool).
+No other card is touched.
 
 ### Quirks (H100)
 
@@ -306,18 +309,18 @@ co-tenant GPUs 0–3 were untouched.
   request still returns correct vectors without it.
 - No AITER, no `quark_online_quant`, no GELU-approximation warning — those are all ROCm-only.
 
-### Multi-GPU (deferred, and architecturally capped)
+### Multi-GPU (architecturally capped)
 
 Same as ROCm: **TP=2 is impossible for this model** (3 attention heads, not divisible by 2)
 — an identical, correct refusal on NVIDIA. The right multi-GPU pattern is **N independent
-single-GPU replicas** (one `vllm serve ... --port 85xx` per free GPU). Not run this wave
-(single-GPU scope; GPUs 0–3 are a co-tenant production job).
+single-GPU replicas** (one `vllm serve ... --port 85xx` per free GPU); the H100 notes here
+are single-GPU only.
 
-### H100 verdict
+### H100 summary
 
-✅ **PASS — vLLM 0.27.1 (pip / cu130) serves EmbeddingGemma-300m unmodified on one H100.**
-Correct 768-dim embeddings, correct semantic ordering, 0.61 GiB weights, ~2.0 GB resident.
-The "✅ Native" rating holds on NVIDIA; the pip route is available here (unlike ROCm).
+vLLM 0.27.1 (pip / cu130) serves EmbeddingGemma-300m unmodified on one H100:
+correct 768-dim embeddings, correct semantic ordering, 0.61 GiB weights, ~2.0 GB resident.
+The "Native" rating holds on NVIDIA, and the pip route is available here (unlike ROCm).
 
 ## Arguments / flags
 
@@ -351,7 +354,7 @@ Serve-side flags used here:
 The client prints the endpoint, resolved model name, vector count, dimensionality, token
 usage, the leading components of the query vector, and one cosine line per document:
 
-Real captured run of `python embed_vllm.py --port 8001`:
+**Expected output** for `python embed_vllm.py --port 8001`:
 
 ```
 endpoint    : http://localhost:8001/v1/embeddings
@@ -367,17 +370,17 @@ query       : Which inference engines support AMD ROCm?
   cos=+0.2011  PostgreSQL is a relational database management system.
 ```
 
-Server logs go to `/mnt/data_1.5t/outputs/inference_embedding_vllm/`. Nothing large is
-written into the repo.
+Redirect server logs to a data volume, e.g. `$OUTPUT_DIR/inference_embedding_vllm/`.
+Nothing large is written into the repo.
 
 ## Hardware support & evidence
 
 - **AMD: tested and working.** 1×  and 2× (as replicas) AMD Instinct MI355X (`gfx950`,
   288 GB), host ROCm 7.2.4, container ROCm 7.0.2, vLLM `0.20.2rc1.dev253`, torch
   `2.9.1.dev+rocm7.0.2`. Correct 768-dim embeddings with correct semantic ordering.
-- **NVIDIA: not tested here** (no NVIDIA GPU on this host). The same `vllm serve` command
-  applies with `vllm/vllm-openai:latest`; the pip route additionally works on CUDA.
-- vLLM is **✅ Native** for EmbeddingGemma on both vendors, and on ROCm/gfx950 that is
+- **NVIDIA: tested and working** via the pip wheel — see the H100 section above. The same
+  `vllm serve` command also applies with `vllm/vllm-openai:latest`.
+- vLLM is **Native** for EmbeddingGemma on both vendors, and on ROCm/gfx950 that is
   **confirmed** — with one correction: the *install* story on AMD is container-only, so any
   "use the ROCm wheel or container" phrasing overstates what actually exists.
 
@@ -403,10 +406,10 @@ written into the repo.
 - **Do not set `CUDA_VISIBLE_DEVICES=""` on ROCm** — an empty string hides all GPUs
   rather than none.
 
-## Verdict
+## Summary
 
-✅ **PASS — vLLM serves EmbeddingGemma on MI355X/gfx950 with no changes.** The
-"✅ Native" rating holds. Correct 768-dim embeddings, correct semantic ordering (0.6975 vs
+**vLLM serves EmbeddingGemma on MI355X/gfx950 with no changes.** The
+"Native" rating holds: correct 768-dim embeddings, correct semantic ordering (0.6975 vs
 0.2216), sub-second weight load, 0.61 GiB resident, ~22 s warm cold-start.
 
 One important correction: **TP=2 is not available for this model** (3 attention

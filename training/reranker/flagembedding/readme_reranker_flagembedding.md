@@ -27,14 +27,17 @@ translates them into the `HfArgumentParser` dataclasses FlagEmbedding expects, a
 | **Built-in evaluation** | **yes** — `CrossEncoderRerankingEvaluator`, nDCG@10, best-checkpoint selection | **no** — trains and saves only |
 | Output | ST CrossEncoder folder | HF model folder, or a PEFT adapter for the LLM types |
 
-**Verdict on usefulness: keep — this folder earns its place.** It is not a second way to do what
+**Why this folder earns its place.** It is not a second way to do what
 `../sentence_transformers` already does; it trains a **different architecture**. A
 `CrossEncoder` cannot express `bge-reranker-v2-gemma`: that model has no classification head, it
 scores by reading a token logit off a causal LM, and it is trained with LoRA against a
-group-wise softmax. That path was **verified working here on 2× MI355X** (see below). The
+group-wise softmax. That path is **verified working on 2× MI355X** (see below). The
 group-wise loss is also a real modelling difference from the sentence-transformers folder's
 per-pair BCE — negatives compete with the positive inside one softmax rather than being
 independent binary targets.
+
+This folder covers the reranker side only; for embedding training see
+[`../../embedding/sentence_transformers`](../../embedding/sentence_transformers).
 
 Where the sentence-transformers folder still wins: it evaluates. FlagEmbedding's finetune
 runner emits no metrics and selects no best checkpoint, so use `../sentence_transformers` when
@@ -47,19 +50,23 @@ importable from the venv.
 
 ## Install
 
-Python 3.12. On this host `/` is at 94% (~97 GB free) and the existing per-folder venvs
-already total 404 GB, so the venv lives **outside the repo** on the roomy volume:
+Python 3.12, in its own venv. The commands below refer to a few machine-specific
+locations through environment variables — set them to suit your machine:
 
 ```bash
-export PIP_CACHE_DIR=/mnt/data_1.5t/pip_cache
-python3 -m venv /mnt/data_450g/envs/.env_train_flagembedding
-source /mnt/data_450g/envs/.env_train_flagembedding/bin/activate
+# Set these to suit your machine
+export DATA_DIR=/path/to/data          # venv + pip cache location
+export OUTPUT_DIR=/path/to/outputs     # training artifacts
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
 ```
 
-> This venv survived the 2026-08 repo reorg (it lives outside the repo); the in-repo campaign
-> venvs were removed in that reorg. It originally also served a FlagEmbedding *embedding*
-> trainer folder, which was removed in the reorg as redundant — that embedding-side
-> capability is covered by `../../embedding/sentence_transformers`.
+If the root filesystem is tight, put the venv outside the repo on a larger volume:
+
+```bash
+export PIP_CACHE_DIR=$DATA_DIR/pip_cache
+python3 -m venv $DATA_DIR/envs/.env_flagembedding
+source $DATA_DIR/envs/.env_flagembedding/bin/activate
+```
 
 ### AMD (ROCm) — the exact route that worked
 
@@ -84,10 +91,10 @@ Verify:
 python -c "import FlagEmbedding, transformers, torch; print(transformers.__version__, torch.__version__)"
 ```
 
-### Tested on NVIDIA H100 80GB — CUDA 13.0 (verified 2026-08-22)
+### Platform notes — NVIDIA H100 80GB (CUDA 13.0)
 
-**Verdict: WORKS on H100.** Single-GPU `encoder` reranker training completed with `rc=0`,
-converging loss, and a saved model. Same `transformers<5` pin and `Trainer.tokenizer` shim as
+This path works as documented on H100. Single-GPU `encoder` reranker training completes with
+`rc=0`, converging loss, and a saved model. Same `transformers<5` pin and `Trainer.tokenizer` shim as
 MI355X — those are library constraints, not hardware ones, so they carry over unchanged. No
 CUDA-specific code edit was needed; the ROCm-only guards in `utils.py` correctly no-op on CUDA
 (`tf32` is left at its HF default instead of being forced to `None`, and `resolve_attn()` no
@@ -100,7 +107,7 @@ Hopper cc 9.0), `FlagEmbedding 1.4.0`, `transformers 4.57.1`, `accelerate 1.14.0
 **Install that worked (venv on tmpfs, CUDA):**
 
 ```bash
-python3 -m venv /dev/shm/h100/venv_flagemb && source /dev/shm/h100/venv_flagemb/bin/activate
+python3 -m venv /dev/shm/h100/.env_flagembedding && source /dev/shm/h100/.env_flagembedding/bin/activate
 pip install torch numpy            # -> torch 2.13.0+cu130, CUDA 13.0 (verify BEFORE the next step)
 # The requirements pins torch==2.11.0, which has NO cu130 wheel. Install requirements WITHOUT
 # the torch line so it does not downgrade you off the CUDA-13 build:
@@ -114,29 +121,29 @@ ln -sf ../../../dev.env dev.env
 reranker data pipeline that dies under 5.x runs fine here — verified by
 `hasattr(PreTrainedTokenizerBase, 'prepare_for_model') == True`.
 
-**Model choice.** `BAAI/bge-reranker-base` (the script default) is NOT in the shared cache and
-the box's egress proxy 403s huggingface.co, so the encoder smoke used the cached, valid encoder
-reranker **`BAAI/bge-reranker-v2-m3`** (`XLMRobertaForSequenceClassification`, 568M). To use the
-tiny `bge-reranker-base` instead, `unset HTTP_PROXY HTTPS_PROXY ...` and let it download. Because
-everything needed was cached, the run was forced fully offline
-(`HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1`) to skip the proxy-blocked HEAD freshness probes that
-otherwise burn ~30s in retries before falling back to cache.
+**Model choice.** If `BAAI/bge-reranker-base` (the script default) is not in the local cache and
+an egress proxy 403s huggingface.co, the cached encoder reranker
+**`BAAI/bge-reranker-v2-m3`** (`XLMRobertaForSequenceClassification`, 568M) is a valid stand-in
+and is what the smoke below uses. To use the tiny `bge-reranker-base` instead,
+`unset HTTP_PROXY HTTPS_PROXY ...` and let it download. When everything needed is cached, force
+the run fully offline (`HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1`) to skip proxy-blocked HEAD
+freshness probes that otherwise burn ~30s in retries before falling back to cache.
 
 **Exact smoke command (single GPU, encoder, shipped 100-row sample):**
 
 ```bash
 export CUDA_VISIBLE_DEVICES=7            # plain CUDA var; NO HIP_VISIBLE_DEVICES on NVIDIA
-export HF_HOME=/mnt/gsma/gsma/gsma/models HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+export HF_HOME=/path/to/hf_cache HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 torchrun --nproc_per_node=1 --master_port=29658 train_reranker_flagembedding.py \
   --reranker_type encoder --model_name_or_path BAAI/bge-reranker-v2-m3 \
-  --output_dir /dev/shm/h100/out/flagembedding/smoke1gpu_enc \
+  --output_dir $OUTPUT_DIR/flagembedding/smoke1gpu_enc \
   --batch_size 2 --train_group_size 4 --epochs 2 --logging_steps 10
 ```
 
 That is `floor(100 / (2 × 1 × 1)) = 50` steps/epoch × 2 epochs = **100 optimizer steps**
 (`train_group_size` only sets passages-per-query, it does not change the step count). A 6-epoch
-repeat (`--epochs 6 --logging_steps 25`, lr 2e-5) ran **300 steps** to show clean convergence —
-real log lines from that run:
+repeat (`--epochs 6 --logging_steps 25`, lr 2e-5) runs **300 steps** and shows clean
+convergence. **Expected output:**
 
 ```
 [flagembedding] 1x NVIDIA H100 80GB HBM3 (torch 2.13.0+cu130, cuda 13.0)
@@ -154,36 +161,35 @@ memorizes the 100-row sample (expected on a toy set; per-step loss is noisy beca
 are resampled each epoch, so read the epoch-boundary trend, not adjacent steps). The 100-step
 2-epoch run finished identically (`train_runtime 25.2s`, `train_loss 0.263`).
 
-**GPU-7 residency proof** — `nvidia-smi` filtered to GPU 7's UUID, sampled from inside the run
-(the training PID is the only compute app on that GPU):
+**GPU residency check** — `nvidia-smi` filtered to the target GPU's UUID, sampled from inside
+the run (the training PID is the only compute app on that GPU):
 
 ```
--- 04:21:15 GPU7[12343 MiB, 56%] :: PID 1589951, GPU-9eb34eec-...-e995e95239, 12334 MiB
--- 04:21:26 GPU7[12915 MiB,  5%] :: PID 1589951, GPU-9eb34eec-...-e995e95239, 12906 MiB
+GPU[12343 MiB, 56%] :: PID <pid>, <gpu-uuid>, 12334 MiB
+GPU[12915 MiB,  5%] :: PID <pid>, <gpu-uuid>, 12906 MiB
 ```
 
 Peak ~13 GB VRAM for this encoder at `batch_size 2` / `group 4` — trivial against the 80 GB
 card (vs 288 GB on MI355X); no OOM pressure and lots of headroom to raise `--batch_size`.
 Saved output: `config.json`, `model.safetensors` (2.27 GB), `sentencepiece.bpe.model`,
-tokenizer files, `checkpoint-100/` (or `-300/`), `training_args.bin`, `runs/`. Large
-checkpoints were deleted after evidence capture (outputs lived on `/dev/shm`).
+tokenizer files, `checkpoint-100/` (or `-300/`), `training_args.bin`, `runs/`.
 
 **flash-attn on the encoder path is moot:** `bge-reranker-v2-m3` is XLM-RoBERTa, whose HF
 attention is SDPA regardless. `utils.resolve_attn()` returns `flash_attention_2` on CUDA only if
 `import flash_attn` succeeds (not installed here → sdpa); it matters for the `llm`/`llm_layerwise`
 decoder paths. To exercise flash-attn, `pip install flash-attn` (prebuilt CUDA wheel) and run an
-`llm` smoke with `Qwen/Qwen3-0.6B` (cached) — not needed for the encoder verdict.
+`llm` smoke with `Qwen/Qwen3-0.6B` (cached) — not needed for the encoder result.
 
-**Multi-GPU (deferred).** Only single-GPU was in scope for this wave (GPUs 0–3 were running a
-co-tenant production job). A 2- or 8-GPU pass would reuse the MI355X recipe verbatim — bump
-`--nproc_per_node`, keep `--gc_use_reentrant False` under DDP if `--gradient_checkpointing` is
-on, and pick a free `--master_port` (29500 and the low-2965x ports collide on this shared host;
-29658/29659 were free). DDP scales samples-per-step, not wall-clock, on a 100-row toy set.
+**Multi-GPU (not exercised on H100).** Only single-GPU was in scope (the node's other GPUs were
+running a co-tenant production job). A 2- or 8-GPU pass would reuse the MI355X recipe verbatim —
+bump `--nproc_per_node`, keep `--gc_use_reentrant False` under DDP if `--gradient_checkpointing`
+is on, and pick a free `--master_port` (29500 and the low-2965x ports often collide on a shared
+box; 29658/29659 were free). DDP scales samples-per-step, not wall-clock, on a 100-row toy set.
 
-### Tested on AMD Instinct MI355X — ROCm 7.2 (verified 2026-08-20)
+### Platform notes — AMD Instinct MI355X (ROCm 7.2)
 
-**Verdict: works, with a pinned `transformers<5` and one compat shim.** All three of
-single-GPU encoder, single-GPU LLM, and 2-GPU LLM training completed with `rc=0`, decreasing
+This path works with a pinned `transformers<5` and one compat shim. All three of
+single-GPU encoder, single-GPU LLM, and 2-GPU LLM training complete with `rc=0`, decreasing
 loss, and a saved model/adapter. Versions: Python 3.12.3, ROCm 7.2.4, `torch 2.11.0+rocm7.2`
 (HIP 7.2.26015), `FlagEmbedding 1.4.0`, `transformers 4.57.1`, `accelerate 1.14.0`,
 `datasets 5.0.1`, `peft 0.20.0`, `sentence-transformers 5.7.0`.
@@ -193,10 +199,10 @@ Nothing failed for a ROCm reason. The blockers were library-version issues (see 
 **1. Encoder cross-encoder, single GPU** (`BAAI/bge-reranker-base`, shipped sample, 50 steps):
 
 ```bash
-source /mnt/data_450g/envs/.env_train_flagembedding/bin/activate
-export HIP_VISIBLE_DEVICES=0,1 CUDA_VISIBLE_DEVICES=0,1 HF_HOME=/mnt/data_1.5t/hf_cache
+source $DATA_DIR/envs/.env_flagembedding/bin/activate
+export HIP_VISIBLE_DEVICES=0,1 CUDA_VISIBLE_DEVICES=0,1
 torchrun --nproc_per_node=1 --master_port=29811 train_reranker_flagembedding.py \
-  --output_dir /mnt/data_450g/outputs/train_reranker_flagembedding/smoke1gpu_enc --epochs 1
+  --output_dir $OUTPUT_DIR/train_reranker_flagembedding/smoke1gpu_enc --epochs 1
 ```
 
 ```
@@ -216,7 +222,7 @@ the real BAAI model, `BAAI/bge-reranker-v2-gemma` (2.5B gemma, LoRA):
 ```bash
 torchrun --nproc_per_node=2 --master_port=29811 train_reranker_flagembedding.py \
   --reranker_type llm --model_name_or_path BAAI/bge-reranker-v2-gemma \
-  --output_dir /mnt/data_450g/outputs/train_reranker_flagembedding/smoke2gpu_gemma \
+  --output_dir $OUTPUT_DIR/train_reranker_flagembedding/smoke2gpu_gemma \
   --epochs 1 --batch_size 1 --train_group_size 4 --max_len 512 \
   --gradient_checkpointing --logging_steps 10 \
   --query_instruction "A: " --passage_instruction "B: "
@@ -230,7 +236,7 @@ trainable params: 7,372,800          # LoRA only, on both ranks
 {'train_runtime': 13.05, 'train_samples_per_second': 7.663, 'train_steps_per_second': 3.832, 'train_loss': 0.3652, 'epoch': 1.0}
 ```
 
-`rocm-smi` during that run: `07:40:43 use% 91 90` — both assigned GPUs busy together.
+`rocm-smi` during that run: `use% 91 90` — both assigned GPUs busy together.
 Saved: `adapter_config.json`, `adapter_model.safetensors`, tokenizer files, `checkpoint-50/`.
 
 **3. LLM reranker, longer 2-GPU run** (`Qwen/Qwen3-0.6B`, 6 epochs, 300 steps) — loss falls
@@ -239,7 +245,7 @@ monotonically, which is the real convergence evidence:
 ```bash
 torchrun --nproc_per_node=2 --master_port=29811 train_reranker_flagembedding.py \
   --reranker_type llm --model_name_or_path Qwen/Qwen3-0.6B \
-  --output_dir /mnt/data_450g/outputs/train_reranker_flagembedding/smoke2gpu_llm \
+  --output_dir $OUTPUT_DIR/train_reranker_flagembedding/smoke2gpu_llm \
   --epochs 6 --batch_size 1 --train_group_size 4 --max_len 512 \
   --gradient_checkpointing --logging_steps 25
 ```
@@ -255,10 +261,10 @@ torchrun --nproc_per_node=2 --master_port=29811 train_reranker_flagembedding.py 
 `rocm-smi` sampled every 4 s across the run, both GPUs loaded together:
 
 ```
--- 07:38:13 use% 94 94
--- 07:38:25 use% 93 97
--- 07:38:34 use% 94 96
--- 07:38:46 use% 86 92
+use% 94 94
+use% 93 97
+use% 94 96
+use% 86 92
 ```
 
 Single vs 2 GPU on the same config: 1 GPU did 100 steps in 21.2 s (4.72 steps/s), 2 GPUs did
@@ -268,8 +274,8 @@ DDP is scaling the work, not the wall clock. Do not read a speedup number off a 
 **Not verified: `llm_layerwise`.** It fails on any non-MiniCPM base with
 `AttributeError: 'Qwen3Config' object has no attribute 'scale_depth'` — FlagEmbedding's
 layerwise modeling code is hardwired to the MiniCPM architecture. It needs
-`BAAI/bge-reranker-v2-minicpm-layerwise` (or a MiniCPM base); that model was not downloaded
-here. The flag is wired up and the failure is a base-model requirement, not a ROCm problem.
+`BAAI/bge-reranker-v2-minicpm-layerwise` (or a MiniCPM base), which was not available in the
+local cache. The flag is wired up and the failure is a base-model requirement, not a ROCm problem.
 
 ## Environment & secrets
 
@@ -277,10 +283,10 @@ here. The flag is wired up and the failure is a base-model requirement, not a RO
 `load_dotenv("dev.env")`. It supplies `HF_TOKEN` for gated models. The BGE and Qwen defaults
 used here are ungated. Never print or commit the token.
 
-Point `HF_HOME` at the shared cache so the 5 GB gemma weights are not re-downloaded:
+Point `HF_HOME` at a shared cache so the 5 GB gemma weights are not re-downloaded:
 
 ```bash
-export HF_HOME=/mnt/data_1.5t/hf_cache
+export HF_HOME=/path/to/hf_cache
 ```
 
 or pass `--hf_home`.
@@ -316,7 +322,7 @@ so the folder runs with no arguments. The source file's extra `answer` column is
 Smoke test (encoder, single GPU, shipped sample):
 
 ```bash
-export HIP_VISIBLE_DEVICES=0,1 CUDA_VISIBLE_DEVICES=0,1 HF_HOME=/mnt/data_1.5t/hf_cache
+export HIP_VISIBLE_DEVICES=0,1 CUDA_VISIBLE_DEVICES=0,1
 torchrun --nproc_per_node=1 --master_port=29811 train_reranker_flagembedding.py --epochs 1
 ```
 
@@ -334,7 +340,7 @@ Full run:
 nohup torchrun --nproc_per_node=2 --master_port=29811 train_reranker_flagembedding.py \
   --reranker_type llm --model_name_or_path BAAI/bge-reranker-v2-gemma \
   --train_data /path/to/your_train.jsonl \
-  --output_dir /mnt/data_450g/outputs/train_reranker_flagembedding/run1 \
+  --output_dir $OUTPUT_DIR/train_reranker_flagembedding/run1 \
   --batch_size 4 --train_group_size 8 --epochs 2 --lr 1e-5 --max_len 1024 \
   --gradient_checkpointing --save_merged_lora_model True \
   > train_reranker_flagembedding.log 2>&1 &
@@ -409,17 +415,18 @@ entrypoints.
 ## Hardware support & evidence
 
 - **AMD: tested** — 1× and 2× MI355X (gfx950, 288 GB), ROCm 7.2.4, `torch 2.11.0+rocm7.2`,
-  Python 3.12.3, verified 2026-08-20. Encoder on 1 GPU (50 steps, `rc=0`, model saved); LLM
+  Python 3.12.3. Encoder on 1 GPU (50 steps, `rc=0`, model saved); LLM
   reranker `bge-reranker-v2-gemma` on 2 GPUs (50 steps, `rc=0`, adapter saved, GPUs at 90–91%);
   LLM reranker `Qwen3-0.6B` on 2 GPUs (300 steps, loss 1.73 → 0.73, GPUs at 86–97%). No
   ROCm-specific code change was needed.
-- **NVIDIA:** untested here. `--attn_implementation auto` picks `flash_attention_2` when a CUDA
+- **NVIDIA: tested** — 1× H100 80GB (CUDA 13.0), single-GPU encoder reranker; see the H100
+  section above. `--attn_implementation auto` picks `flash_attention_2` when a CUDA
   torch and `flash_attn` are present; the `tf32` guard is a no-op on CUDA.
 - **Other hardware (upstream claims — not verified here):** none. FlagEmbedding's own docs
   claim nothing beyond CUDA-class GPUs (its trainer is plain PyTorch + HF Transformers, so
   other torch backends are possible in principle, but no MPS/TPU/NPU support is claimed
   upstream).
-- Only GPUs 0 and 1 were assigned on this host, so 4/8-GPU scaling is unverified.
+- Only 2 GPUs were assigned for these runs, so 4/8-GPU scaling is unverified.
 - `llm_layerwise` unverified — needs a MiniCPM-architecture base (see above).
 
 ## Notes
@@ -442,18 +449,18 @@ entrypoints.
   (`--gc_use_reentrant False`, the default). Flip it only on a single GPU.
 - `tf32` is forced to `None` when `torch.version.cuda is None` — setting it on ROCm raises.
 - No `flash-attn`: `--use_flash_attn` stays `False` on ROCm and the model uses SDPA.
-- Default master port is **29811** here (29500 collides on this host). Port 29810 was used by
-  the FlagEmbedding embedding folder removed in the 2026-08 reorg, so it is free again.
+- Default master port is **29811** (29500 often collides on a shared box).
 - **Batch geometry.** `steps/epoch = floor(rows / (--batch_size × world_size × --grad_accum))`.
   The 100-row sample at `--batch_size 2` gives 50 steps on 1 GPU. Push `--batch_size` too high
   on a small dataset and the step count silently collapses toward zero — the same trap
   documented in the sentence-transformers siblings.
-- The `VRAM%` reported by `rocm-smi` on this host sits at 46–48% before any of these jobs start
-  (shared machine), so per-GPU VRAM from `rocm-smi` is not attributable to a single run.
+- On a shared machine the `VRAM%` reported by `rocm-smi` can already sit high (46–48% on the
+  test node) before any of these jobs start, so per-GPU VRAM from `rocm-smi` is not
+  attributable to a single run.
 - Harmless warnings: `destroy_process_group() was not called before program exit`,
   `expandable_segments not supported on this platform`, and the `Trainer.tokenizer is now
   deprecated` line from the shim.
-- Outputs went to `/mnt/data_450g/outputs/...` because `/` is at 94%; large checkpoints were
-  deleted after the evidence was captured.
+- Point `--output_dir` at a volume with room for checkpoints (`$OUTPUT_DIR` above); the LLM
+  reranker checkpoints are multi-GB.
 - The shipped OTel sample is for pipeline validation only — 100 rows will not produce a useful
   reranker.

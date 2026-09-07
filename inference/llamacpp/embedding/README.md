@@ -27,15 +27,14 @@ handled server-side.
 > **the ggml-org GGUF mirror is not gated and downloaded here with no `HF_TOKEN`.**
 
 > **Tested topology:** 2xAMD Instinct MI355X (gfx950, 288 GB each), physical GPUs 6
-> and 7, ROCm 7.2.4, Ubuntu, Python 3.12.3. Verified **2026-08-20**.
+> and 7, ROCm 7.2.4, Ubuntu, Python 3.12.3.
 
 ## Build — see [`../README.md`](../README.md)
 
 One llama.cpp HIP build serves all three `inference/llamacpp/*` leaves — the full
 ROCm build recipe (prerequisites, cmake flags, the mandatory `-DLLAMA_OPENSSL=ON`,
-NVIDIA variant) lives in [`../README.md`](../README.md). The campaign's build tree
-was removed with the venvs in the 2026-08 reorg; the documented 40.6 s cold rebuild
-applies.
+NVIDIA variant) lives in [`../README.md`](../README.md); a cold build takes about
+40.6 s.
 
 Verified at commit **`d59d455fd8ea09e5a2e87ce2a9d668267ffb5ccd`** (Wed Aug 19 2026),
 `llama-server` **0.1.2-dev (build 1)**, ggml **0.20.2**.
@@ -51,13 +50,16 @@ Not required for this model — the GGUF mirror is ungated. Never echo or commit
 `HF_TOKEN`.
 
 ```bash
+# Set these to suit your machine
+export HF_HOME=/path/to/hf_cache             # Hugging Face model cache
+export LLAMA_CACHE=$HF_HOME/llama_cpp        # llama.cpp's own -hf cache
+export OUTPUT_DIR=/path/to/outputs           # inference artifacts
+
 export HIP_VISIBLE_DEVICES=7 CUDA_VISIBLE_DEVICES=7      # this folder's test GPU
-export HF_HOME=/mnt/data_1.5t/hf_cache
-export LLAMA_CACHE=/mnt/data_1.5t/hf_cache/llama_cpp     # llama.cpp's own -hf cache
 ```
 
-`LLAMA_CACHE` is what actually controls where `-hf` writes; weights must land on
-`/mnt`. This model is 319 MB on disk.
+`LLAMA_CACHE` is what actually controls where `-hf` writes; point it at a filesystem
+with room rather than the root filesystem. This model is 319 MB on disk.
 
 > **Never set `CUDA_VISIBLE_DEVICES=""` on ROCm** — an empty string hides every device
 > and the server silently falls back to CPU.
@@ -69,7 +71,7 @@ export LLAMA_CACHE=/mnt/data_1.5t/hf_cache/llama_cpp     # llama.cpp's own -hf c
 ```bash
 cd <your llama.cpp checkout>          # built per ../README.md
 export HIP_VISIBLE_DEVICES=7 CUDA_VISIBLE_DEVICES=7
-export HF_HOME=/mnt/data_1.5t/hf_cache LLAMA_CACHE=/mnt/data_1.5t/hf_cache/llama_cpp
+# HF_HOME / LLAMA_CACHE as exported above
 
 ./build/bin/llama-server \
   -hf ggml-org/embeddinggemma-300M-GGUF:Q8_0 \
@@ -99,15 +101,15 @@ HIP_VISIBLE_DEVICES=7 CUDA_VISIBLE_DEVICES=7 ./build/bin/llama-server \
 
 ## Client / smoke command
 
-One shared venv at the software root serves all three leaves (the per-leaf campaign
-venvs were removed in the 2026-08 reorg; rebuild from `../requirements.txt`):
+One shared venv at the software root serves all three leaves — build it from
+`../requirements.txt`:
 
 ```bash
 cd .. && python3 -m venv .env_llamacpp && .env_llamacpp/bin/pip install -r requirements.txt && cd embedding
 
 ../.env_llamacpp/bin/python inference_embedding_llamacpp.py \
   --port 8201 \
-  --out /mnt/data_1.5t/outputs/inference_embedding_llamacpp/embeddings_single_gpu.json
+  --out $OUTPUT_DIR/inference_embedding_llamacpp/embeddings_single_gpu.json
 ```
 
 Equivalent raw curl:
@@ -121,7 +123,7 @@ curl -s http://127.0.0.1:8201/v1/embeddings \
 
 ## Results — single GPU
 
-Real client output:
+**Expected client output**
 
 ```text
 endpoint   : http://127.0.0.1:8201/v1/embeddings
@@ -209,23 +211,23 @@ card7,309220868096,9601253376     <-- 9.60 GB
 server; the per-card total is dominated by the KV-cache and HIP context allocation
 rather than the 312 MiB of weights.)
 
-## H100 (NVIDIA, CUDA) — verified 2026-08-22
+## H100 (NVIDIA, CUDA)
 
 Mirror of the MI355X run above, on **1x NVIDIA H100 80GB HBM3** (physical GPU 7,
 `CUDA_VISIBLE_DEVICES=7`), driver **580.173.02**, **CUDA 13.0**, Hopper cc 9.0,
 Python 3.12.3. Same binary, same **exact model** (`ggml-org/embeddinggemma-300M-GGUF:Q8_0`
-— it is only 319 MB, so no substitution was needed), same client, same `/v1/embeddings`
-path. Only the backend build flag changed: `-DGGML_CUDA=ON` instead of `-DGGML_HIP=ON`
+— it is only 319 MB, so no substitution is needed), same client, same `/v1/embeddings`
+path. Only the backend build flag changes: `-DGGML_CUDA=ON` instead of `-DGGML_HIP=ON`
 (full recipe in [`../README.md`](../README.md); `-DLLAMA_OPENSSL=ON` is kept — it is
 vendor-neutral and required for the `-hf` HTTPS pull). Verified `llama-server`
 **0.2.0-dev (build 1, commit `70adb1b`)**, ggml **0.21.0**.
 
 ```bash
-cd /dev/shm/h100/out/llamacpp/llama.cpp          # CUDA build per ../README.md
+cd /dev/shm/llamacpp/llama.cpp                   # CUDA build per ../README.md
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy   # HF pull
 export CUDA_VISIBLE_DEVICES=7
-export HF_HOME=/mnt/gsma/gsma/gsma/models
-export LLAMA_CACHE=/dev/shm/h100/out/llamacpp/model_cache
+# HF_HOME as exported above
+export LLAMA_CACHE=/dev/shm/llamacpp/model_cache   # tmpfs, see quirks below
 
 ./build/bin/llama-server \
   -hf ggml-org/embeddinggemma-300M-GGUF:Q8_0 \
@@ -256,10 +258,10 @@ attributed by PID:
 ```text
 $ nvidia-smi -i 7 --query-compute-apps=pid,process_name,used_memory --format=csv
 pid, process_name, used_gpu_memory [MiB]
-1702586, ./build/bin/llama-server, 912 MiB
+<pid>, ./build/bin/llama-server, 912 MiB
 ```
 
-**Real, meaningful embeddings** — client output:
+**Meaningful embeddings** — client output:
 
 ```text
 n_vectors  : 3      dim : 768      norm[0] : 1.0000      latency_s : 0.174
@@ -273,15 +275,15 @@ matching MI355X (0.2931 / 0.1026) to two decimals, confirming pooling+normalisat
 behave identically on CUDA.
 
 **Quirks:** the `n_batch (2048) > n_ubatch (512)` clamp warning appears exactly as on
-MI355X. New for this box: no GGUF was cached (this one is ungated, pulled with no
-`HF_TOKEN`), and cmake/ninja were absent — installed into a throwaway venv (see
-`../README.md`); weights pulled to a tmpfs `LLAMA_CACHE`.
+MI355X. This GGUF is ungated and pulls with no `HF_TOKEN`. If the host has no
+cmake/ninja, install them into a throwaway venv (see `../README.md`) and pull the
+weights to a tmpfs `LLAMA_CACHE`.
 
-**Multi-GPU (deferred):** only GPU 7 was used (GPUs 0–3 were a co-tenant production job).
-As on MI355X, do **not** split a 312 MiB model — run one instance per GPU behind a load
-balancer; the CUDA build supports the same two-instance pattern.
+**Multi-GPU:** only GPU 7 is used in this single-GPU smoke. As on MI355X, do **not**
+split a 312 MiB model — run one instance per GPU behind a load balancer; the CUDA build
+supports the same two-instance pattern.
 
-**H100 verdict: PASS.** All 25/25 layers on the H100 (CUDA0 buffer + `nvidia-smi` by
+**On H100 this path works.** All 25/25 layers on the H100 (CUDA0 buffer + `nvidia-smi` by
 PID), 768-d L2-normalised vectors with correct semantic geometry, ~0.17 s for a 3-text
 batch.
 
@@ -314,7 +316,8 @@ batch.
 
 ## Output
 
-Artifacts go to `/mnt/data_1.5t/outputs/inference_embedding_llamacpp/`, never to `/`:
+Artifacts go to `$OUTPUT_DIR/inference_embedding_llamacpp/`, never to the root
+filesystem:
 
 ```text
 server_single_gpu_verbose.log  offload summary + load trace, GPU 7
@@ -324,7 +327,7 @@ client_single_gpu.txt          client stdout
 rocm_smi_two_instances.csv     per-card VRAM with both instances live
 ```
 
-Model weights (319 MB) live in `/mnt/data_1.5t/hf_cache/llama_cpp/`, never on `/`.
+Model weights (319 MB) live in `$LLAMA_CACHE/`, never on the root filesystem.
 
 ## Hardware support & evidence
 
@@ -367,9 +370,9 @@ Model weights (319 MB) live in `/mnt/data_1.5t/hf_cache/llama_cpp/`, never on `/
 7. **Do not split this model across GPUs.** Run one instance per GPU instead — see
    "Results — multi-GPU".
 
-## VERDICT
+## Summary
 
-**PASS — fully working on MI355X (gfx950).**
+**Fully working on MI355X (gfx950).**
 
 The ROCm/HIP build serves `ggml-org/embeddinggemma-300M-GGUF:Q8_0` with **all 25/25
 layers on the GPU** (311.97 MiB ROCm0 buffer, 1.92 GB VRAM in `rocm-smi`), returning
@@ -378,10 +381,10 @@ layers on the GPU** (311.97 MiB ROCm0 buffer, 1.92 GB VRAM in `rocm-smi`), retur
 
 Multi-GPU splitting is **deliberately not used** — a 312 MiB model on a 288 GB card
 gains nothing from a layer split and would only add transfer latency. The scale-out
-pattern demonstrated instead is **two concurrent single-GPU instances**, which produced
+pattern demonstrated instead is **two concurrent single-GPU instances**, which produce
 **bit-identical vectors** on both GPUs.
 
-The only real gotcha is the build-time one shared by all three folders:
+The main gotcha is the build-time one shared by all three folders:
 **`-DLLAMA_OPENSSL=ON` + `libssl-dev`** are required for the `-hf` downloader.
 
 ## Follow-ups

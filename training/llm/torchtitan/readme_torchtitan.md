@@ -27,12 +27,12 @@ Files in this folder:
 - `readme_torchtitan.md` — this file.
 
 > **Tested topology:** the NVIDIA 8x H100 path this folder was written against is still
-> **unrun**. The folder itself **has now been run end-to-end on AMD** — first 2x Instinct
+> **unrun**. The folder itself **has been run end-to-end on AMD** — first 2x Instinct
 > MI355X (gfx950) under ROCm 7.2, FSDP2 across both GPUs, then the **full 8x MI355X node**
-> with both `dp_shard=8` and a 2-D `dp_shard=4 x tp=2` mesh, all on **2026-08-19**: see
+> with both `dp_shard=8` and a 2-D `dp_shard=4 x tp=2` mesh: see
 > [§7.1 Verified on AMD MI355X](#71-verified-on-amd-mi355x-rocm-72) and
-> [§7.2 8-GPU run](#8-gpu-run-8x-mi355x-rocm-724--tested-august-2026). It was written against
-> the torchtitan `main` branch documentation and source as of **August 2026** and targets
+> [§7.2 8-GPU run](#8-gpu-run-8x-mi355x-rocm-724). It was written against
+> the torchtitan `main` branch documentation and source for the pinned versions below, and targets
 > the house default of a single node with 8x H100 80GB, launched with `torchrun`.
 > torchtitan is explicitly "under extensive development" upstream and its config surface
 > changed recently (see the note below); treat every config key as something to re-check
@@ -78,8 +78,8 @@ pip install -r requirements_torchtitan.txt
 
 torchtitan runs on ROCm — the upstream README's own install instructions say the nightly
 CUDA index can be swapped for an AMD one (e.g. `rocm6.3`), and AMD builds on torchtitan
-directly. **This is the path that was actually tested here** (2x MI355X / ROCm 7.2,
-2026-08-19 — full transcript in [§7.1](#71-verified-on-amd-mi355x-rocm-72)):
+directly. **This is the path that was actually tested here** (2x MI355X / ROCm 7.2 —
+details in [§7.1](#71-verified-on-amd-mi355x-rocm-72)):
 
 ```bash
 # PyTorch nightly for ROCm instead of CUDA (step 1 above); the rest is identical.
@@ -223,6 +223,14 @@ python train_llm_torchtitan.py --mode convert-to-hf --titan-repo ../torchtitan \
 Run from inside `training/llm/torchtitan/` (so `dev.env` and `recipe_torchtitan.py` resolve).
 Start with the smoke recipe against the shipped sample, then the real one.
 
+Some commands below use two placeholders — set them once to suit your machine:
+
+```bash
+# Set these to suit your machine
+export OUTPUT_DIR=/path/to/outputs     # checkpoints, TensorBoard, run logs
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+```
+
 ```bash
 # 20-step smoke test on the shipped sample, foreground, fails fast if anything is wrong
 python train_llm_torchtitan.py --titan-repo ../torchtitan \
@@ -330,16 +338,16 @@ $TITAN_OUT/
 **Other hardware (upstream claims — not verified here):** none claimed beyond NVIDIA/AMD — pure-PyTorch stack; follows torch device support.
 
 
-| Platform | Status | Evidence (checked August 2026) |
+| Platform | Status | Evidence |
 |---|---|---|
 | NVIDIA CUDA | First-class upstream | [torchtitan README](https://github.com/pytorch/torchtitan) — CI on 8-GPU NVIDIA runners; MXFP8 targets Blackwell. |
-| AMD ROCm | **Works — measured here at 2 and 8 GPUs**, and actively invested in by AMD | **This folder ran on 2x Instinct MI355X (gfx950) / ROCm 7.2.4 on 2026-08-19 (§7.1), then on all 8x MI355X the same day — 8-way FSDP2 at 13.25% MFU and a composable FSDP2(4) x TP(2) mesh, both clean, no code changes (§7.2).** Upstream context: [torchtitan README, Nightly builds](https://github.com/pytorch/torchtitan#nightly-builds) — replace the CUDA index with an AMD one (e.g. `rocm6.3`); upstream CI has a `torchtitan-rocm-ubuntu-22.04-clang12` docker target (`.ci/docker/build.sh`); README news 2025/11 — AMD's optimized fork [AMD-AGI/torchtitan-amd](https://github.com/AMD-AGI/torchtitan-amd); [AMD-AGI/Primus](https://github.com/AMD-AGI/Primus) lists TorchTitan as a training backend shipped in `rocm/primus` images. torchtitan is pure-PyTorch (FSDP2/DTensor/DCP/SDPA), so portability comes from torch itself — **the upstream fork was not needed**. Stable ROCm wheels exist on the [`rocm7.2` index](https://download.pytorch.org/whl/rocm7.2) (2.13.0 / 2.12.1 / 2.12.0 / 2.11.0) but are **not new enough for torchtitan `main`** — see §7.1. |
+| AMD ROCm | **Works — measured here at 2 and 8 GPUs**, and actively invested in by AMD | **This folder ran on 2x Instinct MI355X (gfx950) / ROCm 7.2.4 (§7.1), then on all 8x MI355X — 8-way FSDP2 at 13.25% MFU and a composable FSDP2(4) x TP(2) mesh, both clean, no code changes (§7.2).** Upstream context: [torchtitan README, Nightly builds](https://github.com/pytorch/torchtitan#nightly-builds) — replace the CUDA index with an AMD one (e.g. `rocm6.3`); upstream CI has a `torchtitan-rocm-ubuntu-22.04-clang12` docker target (`.ci/docker/build.sh`); README news 2025/11 — AMD's optimized fork [AMD-AGI/torchtitan-amd](https://github.com/AMD-AGI/torchtitan-amd); [AMD-AGI/Primus](https://github.com/AMD-AGI/Primus) lists TorchTitan as a training backend shipped in `rocm/primus` images. torchtitan is pure-PyTorch (FSDP2/DTensor/DCP/SDPA), so portability comes from torch itself — **the upstream fork was not needed**. Stable ROCm wheels exist on the [`rocm7.2` index](https://download.pytorch.org/whl/rocm7.2) (2.13.0 / 2.12.1 / 2.12.0 / 2.11.0) but are **not new enough for torchtitan `main`** — see §7.1. |
 | Intel XPU / Apple | No supported path documented | Not mentioned by upstream. |
 
 ### 7.1 Verified on AMD MI355X (ROCm 7.2)
 
-**Verdict: WORKS — unmodified upstream torchtitan, stock PyTorch ROCm nightly, no AMD fork,
-no source patches.** Two additions were made in this folder: a tiny bring-up config
+**This path works on MI355X — unmodified upstream torchtitan, stock PyTorch ROCm nightly,
+no AMD fork, no source patches.** Two additions were made in this folder: a tiny bring-up config
 (`cpt_debugmodel_smoke` in `recipe_torchtitan.py`) and this section. Both the tiny config
 and the folder's own shipped `cpt_qwen3_8b_smoke` recipe trained with finite, falling loss
 on 2 GPUs with FSDP2.
@@ -352,27 +360,27 @@ Only physical GPUs 0 and 1 were used (`HIP_VISIBLE_DEVICES=0,1 CUDA_VISIBLE_DEVI
 `tokenizers 0.22.2`, `safetensors 0.8.0`, `tyro 1.0.15`, `einops 0.8.2`,
 `spmd_types 0.2.3`, `tensorboard 2.21.0`, torchtitan source at commit `03be241`.
 
-#### Install, exactly as run
+#### Install
 
 ```bash
 cd training/llm/torchtitan
-python3.12 -m venv .env_train_llm_torchtitan
-source .env_train_llm_torchtitan/bin/activate
+python3.12 -m venv .env_torchtitan
+source .env_torchtitan/bin/activate
 
 # 1. PyTorch ROCm NIGHTLY (see "why the nightly" below — a stable ROCm wheel does not work).
 pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/rocm7.2
 
 # 2. torchtitan from source. Kept INSIDE the git-ignored venv dir so `git status`
 #    in this repo stays clean; any path works, it is passed as --titan-repo.
-git clone https://github.com/pytorch/torchtitan .env_train_llm_torchtitan/torchtitan_src
-pip install -r .env_train_llm_torchtitan/torchtitan_src/requirements.txt
+git clone https://github.com/pytorch/torchtitan .env_torchtitan/torchtitan_src
+pip install -r .env_torchtitan/torchtitan_src/requirements.txt
 pip install --pre torchdata --index-url https://download.pytorch.org/whl/nightly/cpu
 
 # 3. This folder's extras.
 pip install -r requirements_torchtitan.txt
 
 # Sanity check (run from the clone, which is where the launcher runs commands):
-cd .env_train_llm_torchtitan/torchtitan_src
+cd .env_torchtitan/torchtitan_src
 python -c "import torch, torchtitan.train; print(torch.__version__, torch.cuda.device_count(), 'GPUs')"
 # -> 2.15.0.dev20260818+rocm7.2 2 GPUs
 ```
@@ -401,31 +409,31 @@ newer FSDP2 in the nightly. So the nightly requirement in this folder's docs is 
 not caution — it is a torchtitan-vs-torch API constraint, not an AMD one. Pin an older
 torchtitan release if you must run a stable wheel.
 
-#### Launch command, exactly as run
+#### Launch command
 
 ```bash
 cd training/llm/torchtitan
-source .env_train_llm_torchtitan/bin/activate   # exports HIP/CUDA_VISIBLE_DEVICES=0,1
-export TITAN_OUT=/mnt/data_1.5t/outputs/train_llm_torchtitan
+source .env_torchtitan/bin/activate   # export HIP/CUDA_VISIBLE_DEVICES=0,1 if not already set
+export TITAN_OUT=$OUTPUT_DIR/torchtitan
 
 # A. tiny bring-up smoke: random-init qwen3 debugmodel, no weight download, no checkpoints
 python train_llm_torchtitan.py \
-  --titan-repo .env_train_llm_torchtitan/torchtitan_src \
+  --titan-repo .env_torchtitan/torchtitan_src \
   --config cpt_debugmodel_smoke --ngpu 2
 
-# B. the folder's own shipped 8B smoke, cut to 5 steps (random init: no HF weights on this
-#    box, so TITAN_HF_ASSETS points at a tokenizer-only dir)
+# B. the folder's own shipped 8B smoke, cut to 5 steps (random init: with no HF weights
+#    cached, TITAN_HF_ASSETS points at a tokenizer-only dir)
 export TITAN_HF_ASSETS=/path/to/a/qwen3/tokenizer/dir
 python train_llm_torchtitan.py \
-  --titan-repo .env_train_llm_torchtitan/torchtitan_src \
+  --titan-repo .env_torchtitan/torchtitan_src \
   --config cpt_qwen3_8b_smoke --ngpu 2 --extra --training.steps 5
 ```
 
 `--ngpu 2` matches `dp_shard=2`; no `MASTER_ADDR`/`MASTER_PORT` is needed because the
 launcher uses `--rdzv_endpoint localhost:0`, so torchrun picks a free port itself (the
-usual 29500 collision with other jobs on this box cannot happen).
+usual 29500 collision with other jobs on a shared box cannot happen).
 
-#### Evidence
+#### Expected output
 
 Run A — `cpt_debugmodel_smoke`, 8 steps, seq 512, local batch 2:
 
@@ -449,7 +457,7 @@ used to hold the GPUs busy long enough to sample `rocm-smi`:
 $ rocm-smi --showuse    # sampled mid-run
 GPU[0] : GPU use (%): 85
 GPU[1] : GPU use (%): 90
-GPU[2..7] : GPU use (%): 0      <- only the two assigned GPUs are working
+GPU[2..7] : GPU use (%): 0      <- only the two assigned GPUs should be working
 ```
 
 Run B — the folder's shipped `cpt_qwen3_8b_smoke` at 8.19B parameters, 5 steps, seq 4096,
@@ -485,7 +493,7 @@ falling loss on both ranks are the proof that collectives worked.
   It compiles and runs correctly on gfx950; later runs reuse the cache.
 - Do **not** set `CUDA_VISIBLE_DEVICES=""` on ROCm — it hides every GPU rather than none.
 - torchtitan writes DCP checkpoints that are large by default (a 5-step 8B run left a 31GB
-  `checkpoint/step-10/` here when enabled). Keep `TITAN_OUT` off the small volume, and set
+  `checkpoint/step-10/` when enabled). Keep `TITAN_OUT` off a small volume, and set
   `checkpoint.enable = False` for smoke tests — the runs above wrote ~20MB total
   (TensorBoard + structured JSONL logs).
 
@@ -494,16 +502,16 @@ falling loss on both ranks are the proof that collectives worked.
 Cold-starting from real HF safetensors (`initial_load_in_hf`), the `convert-from-hf` /
 `convert-to-hf` paths, the SFT recipe (`sft_qwen3_8b`), multi-node, PP/CP degrees > 1,
 `torch.compile`, and float8/MXFP8/NVFP4 (NVIDIA-hardware features). No HF checkpoint was
-downloaded on this box, so both smoke runs above are random-init.
+downloaded for these runs, so both smoke runs above are random-init.
 (**TP degree > 1 is no longer untested** — `tensor_parallel_degree=2` was exercised on 8 GPUs
 in §7.2 below.)
 
-### 8-GPU run (8x MI355X, ROCm 7.2.4) — tested August 2026
+### 8-GPU run (8x MI355X, ROCm 7.2.4)
 
-**Verdict: WORKS — no changes at all.** The 2-GPU recipe scaled straight to all 8 MI355X with
+**This path works with no changes at all.** The 2-GPU recipe scaled straight to all 8 MI355X with
 **zero edits to `recipe_torchtitan.py`, `train_llm_torchtitan.py`, or
 `requirements_torchtitan.txt`** — only `--ngpu 8` plus the frozen `--parallelism.*` CLI
-overrides. Two parallelism layouts were run back to back on 2026-08-19, **both exited 0 with
+overrides. Two parallelism layouts were run back to back, **both exited 0 with
 finite, monotonically falling loss on all 8 ranks**:
 
 | Stage | Parallelism | Loss (step 1 → 250) | tok/s/GPU | TFLOP/s | MFU | Peak mem/GPU | rc |
@@ -518,7 +526,7 @@ random-init (`checkpoint.enable` is still `False`, see §7.1), so the loss curve
 
 #### Which parallelism to use, and why
 
-**Use pure FSDP2 (`dp_shard=8`) on this box.** Stage B is **2.2x faster per GPU** than Stage A
+**Use pure FSDP2 (`dp_shard=8`) on this hardware.** Stage B is **2.2x faster per GPU** than Stage A
 (6,292 vs 2,861 tok/s) — TP is *functional* on gfx950 but not *preferable* here. The reason is
 visible in the log rather than guessed: an 8B model needs only ~27 GiB of a **288 GiB** HBM
 stack, so TP buys memory headroom that is not needed, while adding per-layer collectives on the
@@ -536,31 +544,30 @@ it is worth recording that **the 2-D mesh really did build and train on ROCm** �
 paper feature here. Reach for `tp>1` only when a model genuinely will not fit (32B+ / long
 context), which is the same advice §8 already gives.
 
-#### Launch command, exactly as run
+#### Launch command
 
 ```bash
 cd training/llm/torchtitan
-source .env_train_llm_torchtitan/bin/activate
-# CRITICAL: activate ends with a stale 2-GPU pin from the §7.1 session. Override it AFTER
+source .env_torchtitan/bin/activate
+# CRITICAL: if activate ends with a stale 2-GPU pin, override it AFTER
 # sourcing, or you silently train on 2 GPUs and think you tested 8.
 export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export HF_HOME=/mnt/data_1.5t/hf_cache
-export TITAN_OUT=/mnt/data_1.5t/outputs/train_llm_torchtitan/gpu8
-export TITAN_HF_ASSETS=/mnt/data_1.5t/hf_cache/hub/models--Qwen--Qwen3-0.6B/snapshots/c1899de289a04d12100db370d81485cdf75e47ca
+export TITAN_OUT=$OUTPUT_DIR/torchtitan/gpu8
+export TITAN_HF_ASSETS=$HF_HOME/hub/models--Qwen--Qwen3-0.6B/snapshots/<snapshot-hash>
 
 # assert all 8 are really visible before burning an hour on a 2-GPU run
 python -c "import torch,sys; n=torch.cuda.device_count(); print(n); sys.exit(n!=8)"
 
 # A — composable 2-D: FSDP2(4) x TP(2)
-python train_llm_torchtitan.py --titan-repo .env_train_llm_torchtitan/torchtitan_src \
+python train_llm_torchtitan.py --titan-repo .env_torchtitan/torchtitan_src \
   --module recipe_torchtitan --config cpt_qwen3_8b_smoke --ngpu 8 --log-rank 0 \
   --extra --training.steps 250 \
           --parallelism.data_parallel_shard_degree 4 \
           --parallelism.tensor_parallel_degree 2
 
 # B — pure FSDP2 across all 8 (the recommended layout)
-python train_llm_torchtitan.py --titan-repo .env_train_llm_torchtitan/torchtitan_src \
+python train_llm_torchtitan.py --titan-repo .env_torchtitan/torchtitan_src \
   --module recipe_torchtitan --config cpt_qwen3_8b_smoke --ngpu 8 --log-rank 0 \
   --extra --training.steps 250 \
           --parallelism.data_parallel_shard_degree 8 \
@@ -579,14 +586,13 @@ Python 3.12.3, ROCm 7.2.4. Stable `torch 2.13.0+rocm7.2` still fails in `fully_s
 torchrun picks a free ephemeral port and `--master_port` is neither accepted nor needed; this is
 what makes concurrent jobs on one box collision-proof.
 
-#### Evidence — all 8 GPUs, captured mid-run
+#### What a healthy 8-GPU run looks like
 
-`rocm-smi` sampled **from inside the running job** (full capture:
-`$TITAN_OUT/rocm_smi_8gpu.txt`, driving log `run.log`):
+`rocm-smi` sampled **from inside the running job**:
 
 ```
 [assert] torch=2.15.0.dev20260818+rocm7.2 hip=7.2.53211 device_count=8
-[assert]   GPU0..GPU7: AMD Instinct MI355X            <- all 8, not the stale 0,1 pin
+[assert]   GPU0..GPU7: AMD Instinct MI355X            <- all 8, not a stale 0,1 pin
 
 [titan] Building device mesh with parallelism: pp=1, dp_replicate=1, dp_shard=4, cp=1, tp=2, ep=1
 [titan] Successfully created meshes with active dimensions: ['batch', 'loss', 'tp', 'dp', 'dp_shard']
@@ -599,10 +605,10 @@ $ rocm-smi --showmemuse
 GPU[0..7] : GPU Memory Allocated (VRAM%): 12
 
 $ rocm-smi --showpids         # 8 ranks, ~40 GB VRAM each, PIDs owned by this run
-3231958 python3  1  39531040768      3231962 python3  1  39919009792
-3231959 python3  1  39977734144      3231963 python3  1  39826735104
-3231960 python3  1  39984021504      3231964 python3  1  39845613568
-3231961 python3  1  39971438592      3231965 python3  1  39835127808
+<pid> python3  1  39531040768      <pid> python3  1  39919009792
+<pid> python3  1  39977734144      <pid> python3  1  39826735104
+<pid> python3  1  39984021504      <pid> python3  1  39845613568
+<pid> python3  1  39971438592      <pid> python3  1  39835127808
 ```
 
 Step lines (Stage B, pure FSDP2 over 8 ranks):
@@ -641,7 +647,7 @@ plainly: the 2-GPU figure is from **step 5 of a 5-step run** and was still rampi
   RCCL/NCCL tuning variables, no `HSA_*`/`NCCL_*` overrides, no batch-size reduction, no OOM,
   no hang, no deadlock. RCCL was picked up as the `nccl` backend with zero configuration across
   all 8 ranks exactly as it was across 2.
-- **The stale `CUDA_VISIBLE_DEVICES=0,1` in `.env_train_llm_torchtitan/bin/activate`** is the
+- **A stale `CUDA_VISIBLE_DEVICES=0,1` left in `.env_torchtitan/bin/activate`** is the
   one real trap. Sourcing the venv silently caps you at 2 GPUs; the `device_count()==8`
   assertion above is what catches it. Consider deleting those two lines from `activate`.
 - **`--parallelism.*` frozen CLI flags work** and are the clean way to re-shape the mesh without
@@ -654,16 +660,16 @@ plainly: the 2-GPU figure is from **step 5 of a 5-step run** and was still rampi
   overridden to 3 based on job config` — torchtitan setting its own collective error handling.
 - **Async-TP was not exercised** (it requires `torch.compile`); only plain TP. Note that
   `--ngpu` must still equal the product of the degrees — torchtitan does not infer it.
-- **Disk:** with `checkpoint.enable=False` the whole 8-GPU campaign wrote **66 MB**, all logs and
+- **Disk:** with `checkpoint.enable=False` the whole 8-GPU test sequence wrote **66 MB**, all logs and
   TensorBoard — **zero weight files**, nothing to clean up.
 
-### 7.3 Verified on NVIDIA H100 (CUDA 13.0) — single GPU, tested August 2026
+### 7.3 Verified on NVIDIA H100 (CUDA 13.0) — single GPU
 
-**Verdict: WORKS — unmodified upstream torchtitan (same commit `03be241` as the AMD run),
+**This path works — unmodified upstream torchtitan (same commit `03be241` as the AMD run),
 stock PyTorch CUDA nightly, no source patches.** The `cpt_debugmodel_smoke` bring-up config
 from §7.1 ran end-to-end on one H100 with finite, monotonically falling loss, a saved DCP
 checkpoint, and GPU-5 residency confirmed by PID. This is a **single-GPU smoke** — multi-GPU
-(FSDP2 across 2/8) is deferred here (the box was shared; GPUs 0–3 were a co-tenant job). The
+(FSDP2 across 2/8) was not exercised on this hardware (the box was shared; GPUs 0–3 were a co-tenant job). The
 AMD §7.1/§7.2 evidence already covers the 2- and 8-GPU FSDP2/TP behaviour; nothing in that is
 device-specific and it is expected to reproduce on H100 unchanged (see "What multi-GPU needs").
 
@@ -679,7 +685,7 @@ rocm7.2.**
 
 #### The nightly is mandatory on CUDA too — verified, not assumed
 
-`pip install torch numpy` on this box installs **stable `torch 2.13.0+cu130`** (native CUDA 13,
+`pip install torch numpy` installs **stable `torch 2.13.0+cu130`** (native CUDA 13,
 real bf16 matmul). Against torchtitan `03be241` that stable wheel gets **further than the AMD
 stable wheel did** — it builds the device mesh, applies FSDP2, prepares the dataset, and even
 runs **step 1** (`loss: 7.72586`) — but then dies at the end of the first step:
@@ -696,15 +702,15 @@ required" rule in §1 is a **torchtitan-main-vs-torch API gap on CUDA as well** 
 missing symbol than the AMD `fully_shard`/`dp_mesh_dims` one, but the same conclusion). Fix: the
 folder's documented NVIDIA path.
 
-#### Install, exactly as run
+#### Install
 
 ```bash
 cd training/llm/torchtitan
-python3.12 -m venv .env_torchtitan            # here: venv on tmpfs, .env_torchtitan -> /dev/shm/...
+python3.12 -m venv .env_torchtitan            # a tmpfs-backed symlink also works
 source .env_torchtitan/bin/activate
 
 # 1. PyTorch CUDA NIGHTLY (stable 2.13.0+cu130 fails at set_pg_timeouts, see above).
-#    download.pytorch.org is proxy-blocked on this box -> unset the proxy for THIS install:
+#    if download.pytorch.org is proxy-blocked, unset the proxy for THIS install:
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu130
 #    -> torch 2.15.0.dev20260822+cu130
@@ -724,7 +730,7 @@ python -c "import torch; print(torch.__version__, torch.version.cuda, torch.vers
 ```
 
 `grain`, `datasets`, `torchtitan/requirements.txt`, and the folder extras all install from
-**pypi.org (proxy-allowlisted)** — only the torch nightly needs the proxy off. torch survived
+**pypi.org** — behind a proxy allowlist, only the torch nightly needs the proxy off. torch survived
 every subsequent `pip install` here (verified `torch.version.hip is None` after each). No
 `flash-attn`, no `pip install -e .` of torchtitan — the launcher runs with the clone as CWD.
 
@@ -736,15 +742,14 @@ swallows the ImportError and reports "Cannot import module 'recipe_torchtitan'".
 "re-check every config key against your checked-out commit" warning at the top of this file,
 now with a concrete failure.
 
-#### Launch command, exactly as run
+#### Launch command
 
 ```bash
 cd training/llm/torchtitan
 source .env_torchtitan/bin/activate
-export CUDA_VISIBLE_DEVICES=5                       # the ONE assigned free GPU on a shared node
-export HF_HOME=/mnt/gsma/gsma/gsma/models
-export HF_DATASETS_CACHE=/dev/shm/h100/dscache_torchtitan
-export TITAN_OUT=/dev/shm/h100/out/torchtitan
+export CUDA_VISIBLE_DEVICES=5                       # one assigned free GPU on a shared node
+export HF_DATASETS_CACHE=/dev/shm/dscache_torchtitan
+export TITAN_OUT=$OUTPUT_DIR/torchtitan
 
 # A. bring-up smoke: random-init qwen3 debugmodel (~32M), no weight download, 30 steps
 python train_llm_torchtitan.py \
@@ -765,10 +770,10 @@ python train_llm_torchtitan.py --titan-repo .env_torchtitan/torchtitan_src \
 
 `--ngpu 1` matches `dp_shard=1` (torchtitan builds a 1-rank FSDP2 mesh — a degenerate but valid
 exercise of the wrap/shard/checkpoint path). No `MASTER_PORT` needed: the launcher uses
-`--rdzv_endpoint localhost:0`, so torchrun picks a free ephemeral port (collision-proof with the
-co-tenant job — the assigned port 29645 was reserved but never contended).
+`--rdzv_endpoint localhost:0`, so torchrun picks a free ephemeral port (collision-proof with any
+co-tenant job).
 
-#### Evidence
+#### Expected output
 
 Run A — `cpt_debugmodel_smoke`, 30 steps, seq 512, local batch 2, **loss falls the whole way**:
 
@@ -781,7 +786,7 @@ Run A — `cpt_debugmodel_smoke`, 30 steps, seq 512, local batch 2, **loss falls
 [titan] step: 30  loss:  5.95356  grad_norm:  3.4653  memory: 0.72GiB(0.91%)  tps: 80,422  tflops: 23.53  mfu: 2.38%
 [titan] Training completed
 [titan] Process group destroyed
-2026-... - INFO - training/llm/torchtitan - command completed successfully
+INFO - training/llm/torchtitan - command completed successfully
 ```
 
 Run B — 400 steps, **GPU-5 residency + sustained utilisation sampled from inside the run**
@@ -790,7 +795,7 @@ Run B — 400 steps, **GPU-5 residency + sustained utilisation sampled from insi
 ```
 $ nvidia-smi -i 5 --query-compute-apps=pid,process_name,used_memory --format=csv
 pid, process_name, used_gpu_memory [MiB]
-1545153, /dev/shm/h100/venv_torchtitan/bin/python3, 3940 MiB      <- our PID, sole process on GPU 5
+<pid>, .../.env_torchtitan/bin/python3, 3940 MiB      <- the job's own PID, sole process on GPU 5
 
 $ nvidia-smi -i 5 --query-gpu=index,utilization.gpu,memory.used --format=csv,noheader
 5, 63 %, 3949 MiB        # three samples over 6 s: 63% / 60% / 70% busy
@@ -826,10 +831,9 @@ $ find .../ckpt_run/checkpoint -type f
 .../checkpoint/step-10/.metadata    .../checkpoint/step-10/__0_0.distcp    (model-only bf16, ~63 MB)
 ```
 
-The DCP dirs (433 MB total) were **deleted after capturing this evidence** per the shared-node
-disk rule; the file listing above is retained at
-`/dev/shm/h100/out/torchtitan/checkpoint_tree_listing.txt`. Smoke runs A/B (`checkpoint.enable`
-left at its default `False`) wrote only logs + TensorBoard (~5 MB).
+The DCP dirs are 433 MB total for this tiny model — delete them after verifying if you are on a
+shared node. Smoke runs A/B (`checkpoint.enable` left at its default `False`) write only logs +
+TensorBoard (~5 MB).
 
 #### Quirks found on H100 / CUDA (reversing the ROCm workarounds)
 
@@ -853,21 +857,21 @@ left at its default `False`) wrote only logs + TensorBoard (~5 MB).
   peaked 74 GiB on *2* MI355X ranks; a single 80 GB H100 has no headroom for optimizer+grads at
   seq 4096) — hence the debugmodel was the right single-GPU smoke.
 
-#### What multi-GPU (2, then 8) would need on this box — DEFERRED
+#### What multi-GPU (2, then 8) would need on H100 — not exercised
 
-Not run here (GPUs 0–3 were a co-tenant production job; only GPU 5 was assigned). To run it once
-GPUs free up: exactly the §7.1/§7.2 commands with `CUDA_VISIBLE_DEVICES=0,1` (then `0..7`) and
+Not run beyond 2 GPUs here (a co-tenant job held GPUs 0–3; only GPU 5 was assigned for the
+single-GPU smoke). To run it: exactly the §7.1/§7.2 commands with `CUDA_VISIBLE_DEVICES=0,1` (then `0..7`) and
 `--ngpu 2` (then `8`), no code changes expected — torchtitan is pure PyTorch and NCCL is the
 native backend on H100 (RCCL was the drop-in on AMD). For the real 8B `cpt_qwen3_8b`/`_smoke`,
 FSDP2 across ≥2 ranks is *required* on 80 GB cards (see VRAM note). `--ngpu` must equal the
 product of the parallelism degrees. Cold-start from real HF safetensors (`checkpoint.enable=True`
 + `initial_load_in_hf`) was not exercised on either vendor.
 
-### 2-GPU run (2× H100) — real FSDP2 sharding, tested August 2026
+### 2-GPU run (2× H100) — real FSDP2 sharding
 
-**Verdict: WORKS — real 2-rank FSDP2 (`dp_shard=2`) proven on H100, unmodified upstream
-torchtitan `03be241`, no source patches.** This supersedes the *2-GPU* half of the "DEFERRED"
-note above (the 8-GPU half stays projected — see the closing note). torchtitan is *built* for
+**This path works — real 2-rank FSDP2 (`dp_shard=2`) proven on H100, unmodified upstream
+torchtitan `03be241`, no source patches.** This supersedes the *2-GPU* half of the
+"not exercised" note above (the 8-GPU half stays projected — see the closing note). torchtitan is *built* for
 this: the shipped `cpt_debugmodel_smoke` recipe already sets `data_parallel_shard_degree=-1`
 (§`_base_config`), so `--nproc_per_node 2` builds a 2-way FSDP2 mesh with **zero** code change;
 the explicit `--parallelism.data_parallel_shard_degree 2` override below just pins it for the log.
@@ -876,27 +880,26 @@ busy by PID, finite decreasing loss over 30 and 400 steps, and a **sharded DCP c
 `.distcp` shard file per rank)**.
 
 **Host / GPUs:** same 8× H100 80GB HBM3 box, driver **580.173.02**, **CUDA 13.0**, Python 3.12.3.
-Only **physical GPUs 6 AND 7** used (`CUDA_VISIBLE_DEVICES=6,7`; GPUs 0–3 were the co-tenant
-production job, 4/5 other agents). `torch.cuda.device_count()==2` under that mask. Same venv,
+Only **physical GPUs 6 AND 7** used (`CUDA_VISIBLE_DEVICES=6,7`; GPUs 0–5 were held by other
+jobs). `torch.cuda.device_count()==2` under that mask. Same venv,
 torch, and commit as §7.3 single-GPU: `torch 2.15.0.dev20260822+cu130`, torchtitan `03be241`.
 **`torchao==0.10.0`** must be pip-installed into the venv (it was missing on reuse — installs from
 pypi.org with the proxy left on; re-verify `torch.version.hip is None` after, it does not clobber torch).
 
-#### Launch command, exactly as run
+#### Launch command
 
-Run directly with `torchrun` (not the `train_llm_torchtitan.py` wrapper) to honour the assigned
-`--master_port 29672` on this shared node — the wrapper hard-codes `--rdzv_endpoint localhost:0`
+Run directly with `torchrun` (not the `train_llm_torchtitan.py` wrapper) when you need to pin a
+specific `--master_port` on a shared node — the wrapper hard-codes `--rdzv_endpoint localhost:0`
 (ephemeral). Set `PYTHONPATH` to this folder + the torchtitan clone (what the wrapper's `build_env`
 does) so `--module recipe_torchtitan` resolves, and export `PYTORCH_ALLOC_CONF=expandable_segments:True`.
 
 ```bash
 cd .env_torchtitan/torchtitan_src                 # torchrun runs with the clone as CWD
-source ../../.env_torchtitan/bin/activate         # here: venv on /dev/shm
+source ../../.env_torchtitan/bin/activate
 export CUDA_VISIBLE_DEVICES=6,7                    # ONLY the two assigned free GPUs
-export HF_HOME=/mnt/gsma/gsma/gsma/models
 export PYTORCH_ALLOC_CONF=expandable_segments:True
 export PYTHONPATH="<repo>/training/llm/torchtitan:$PWD"
-export TITAN_OUT=/dev/shm/h100/out/torchtitan_2gpu
+export TITAN_OUT=$OUTPUT_DIR/torchtitan_2gpu
 
 # A. 2-GPU FSDP2 smoke, 30 steps, + a sharded checkpoint at interval 15 and at the last step
 torchrun --nproc_per_node=2 --master_port=29672 --local-ranks-filter 0,1 --role rank --tee 3 \
@@ -917,7 +920,7 @@ shows **both** ranks' stdout (the single-GPU section only had rank 0). TP was no
 (real FSDP2 optimizer/gradient sharding) was the primary goal and it succeeded; a `tensor_parallel_degree=2`
 variant would be the same command with that override and `dp_shard` left at 1.
 
-#### Evidence — the 2-rank FSDP2 mesh, on both ranks (Run A)
+#### Expected output — the 2-rank FSDP2 mesh, on both ranks (Run A)
 
 ```
 [rank1]:[titan] Building device mesh with parallelism: pp=1, dp_replicate=1, dp_shard=2, cp=1, tp=1, ep=1
@@ -939,22 +942,22 @@ Both ranks print the identical `dp_shard=2` mesh and `Applied FSDP to the model`
 `structured_logs/training.global_rank_0.*.jsonl` **and** `...global_rank_1.*.jsonl` — the
 independent check that *both* ranks reached the end, not rank 0 alone.
 
-#### Evidence — both physical GPUs 6 AND 7 busy, by PID, sampled from inside Run B
+#### Checking both physical GPUs 6 AND 7 are busy, by PID, sampled from inside Run B
 
-Run B (400 steps) held ~2 min; `nvidia-smi -i 6,7` (the two assigned GPUs only, filtered by PID)
-sampled live shows **two distinct ranks, one on each physical GPU**:
+Run B (400 steps) holds ~2 min; `nvidia-smi -i 6,7` (the two assigned GPUs only, filtered by PID)
+sampled live should show **two distinct ranks, one on each physical GPU**:
 
 ```
 $ nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory --format=csv,noheader -i 6,7
-GPU-e4fe48bc-...-759f964bf823, 1740693, /dev/shm/h100/venv_torchtitan/bin/python3, 4038 MiB   # GPU 6, rank 0
-GPU-9eb34eec-...-d1e995e95239, 1740694, /dev/shm/h100/venv_torchtitan/bin/python3, 4036 MiB   # GPU 7, rank 1
+<gpu-uuid>, <pid>, .../.env_torchtitan/bin/python3, 4038 MiB   # GPU 6, rank 0
+<gpu-uuid>, <pid>, .../.env_torchtitan/bin/python3, 4036 MiB   # GPU 7, rank 1
 
 $ nvidia-smi --query-gpu=index,utilization.gpu,memory.used --format=csv,noheader -i 6,7
 6,  93 %, 4047 MiB      # three samples over ~8 s, both GPUs sustained busy:
 7, 100 %, 4045 MiB      #   GPU 6: 93/79/85 %   GPU 7: 100/76/83 %
 ```
 
-Two **different** GPU UUIDs (index 6 and 7), two **different** PIDs (1740693 / 1740694) — real
+Two **different** GPU UUIDs (index 6 and 7) and two **different** PIDs — real
 2-process, 2-GPU parallelism, not one process on two contexts. Sustained ~188k tok/s aggregate,
 ~112 TFLOP/s and MFU ~11.3% **per rank** at seq 2048 / local batch 16 (steady-state, in the same
 ballpark as the §7.3 single-GPU hold), loss falling the whole way:
@@ -971,10 +974,10 @@ model, sharded). Per-GPU resident memory 2.41 GiB at this shape (vs 0.5 GiB in t
 real activation memory, still trivial for the 32M debugmodel on 80 GB cards.
 
 **Shared-node safety, verified:** throughout both runs `nvidia-smi -i 0,1,2,3` showed **only** the
-co-tenant PIDs 1273508–11 — nothing of this run leaked onto the production GPUs. `CUDA_VISIBLE_DEVICES=6,7`
+co-tenant's own PIDs — nothing of this run leaked onto the other GPUs. `CUDA_VISIBLE_DEVICES=6,7`
 is the entire pinning story on NVIDIA; torchrun only ever saw the two assigned GPUs.
 
-#### Evidence — the sharded DCP checkpoint (one shard per rank)
+#### The sharded DCP checkpoint (one shard per rank)
 
 `--checkpoint.enable` flipped the recipe's default-off block on (Run A). DCP `torch_dist` format
 writes **one `.distcp` shard file per rank** — the direct proof the checkpoint is sharded across
@@ -992,18 +995,18 @@ $ find .../torchtitan_2gpu/checkpoint -type f
 
 `__0_0.distcp` = rank 0's shard, `__1_0.distcp` = rank 1's shard — two files, one per rank, at
 both the interval (step-15, full DCP) and the last-step (step-30, `last_save_model_only` bf16)
-checkpoints. Total 433 MB, **deleted after capturing this evidence** per the shared-node disk rule
+checkpoints. Total 433 MB — delete them after verifying if you are on a shared node
 (Run B ran with checkpointing off — logs only).
 
 #### 8-GPU on H100: projected, NOT measured
 
-Not run: the co-tenant production job holds GPUs 0–3, so a full-node 8-way pass was impossible in
-this window. Projection rests on two solid legs: (1) torchtitan's single-GPU H100 result (§7.3) and
+Not run: a co-tenant job held GPUs 0–3, so a full-node 8-way pass was not possible.
+Projection rests on two solid legs: (1) torchtitan's single-GPU H100 result (§7.3) and
 this 2-GPU result both show **pure `dp_shard` FSDP2 scales cleanly** with no code, dep, or env
 change — the mesh degree is just `nproc_per_node`; and (2) the AMD §7.2 8-GPU FSDP2 run measured
 per-GPU throughput going *up* (1.34×) at 8-way because FSDP2 shards optimizer+grads 8 ways, freeing
 per-GPU memory. Nothing in that is device-specific; on H100 replace `CUDA_VISIBLE_DEVICES=0..7` with
-`--nproc_per_node 8 --parallelism.data_parallel_shard_degree 8` once the node frees. For the real 8B
+`--nproc_per_node 8 --parallelism.data_parallel_shard_degree 8` on a free node. For the real 8B
 `cpt_qwen3_8b`, FSDP2 across ≥2 ranks is *required* on 80 GB cards anyway (§ VRAM note).
 
 #### Deviations / notes specific to the 2-GPU run
@@ -1022,7 +1025,7 @@ per-GPU memory. Nothing in that is device-specific; on H100 replace `CUDA_VISIBL
 
 #### Not tested here
 
-Everything in §7.1's "Not tested" list, plus: any multi-GPU layout on H100 (deferred, above), the
+Everything in §7.1's "Not tested" list, plus: 8-GPU layouts on H100 (see above), the
 8B/Llama/SFT configs on H100, `torch.compile`, and float8/MXFP8/NVFP4 (NVIDIA-hardware features —
 these are the *one* area where H100 could eventually show something AMD cannot, but none are
 wired into this recipe).
@@ -1064,7 +1067,7 @@ upstream `main` (`run_train.sh`, `torchtitan/config/README.md`, `torchtitan/trai
 `config_registry.py` files, `docs/checkpoint.md`, `docs/datasets.md`, and the
 `scripts/checkpoint_conversion/` scripts). Two things are less certain:
 
-1. ~~**The local-dataset registration**~~ **RESOLVED (2026-08-19, commit `03be241`).** The
+1. ~~**The local-dataset registration**~~ **RESOLVED at commit `03be241`.** The
    `DatasetConfig` + `DATASETS` registration in `recipe_torchtitan.py` imports and works as
    written: `from torchtitan.hf_datasets.text_datasets import DatasetConfig, DATASETS` is
    valid (`text_datasets` re-exports `DatasetConfig` from `torchtitan.hf_datasets`), and the

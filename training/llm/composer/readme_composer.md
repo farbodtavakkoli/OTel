@@ -19,7 +19,8 @@ Files in this folder:
 
 > **Tested topology:** Written against the Composer upstream README,
 > `docs/source/notes/distributed_training.rst`, and the `HuggingFaceModel` /
-> `composer.algorithms` / `composer.optim` sources on the `dev` branch as of August 2026.
+> `composer.algorithms` / `composer.optim` sources on the `dev` branch, for the pinned
+> versions below.
 > Targets a single node of 8x H100 80GB (NVIDIA, CUDA).
 >
 > **NVIDIA H100 (CUDA 13.0, driver 580): TESTED AND WORKING** on **1x H100 80GB single
@@ -80,7 +81,7 @@ pip install torch --index-url https://download.pytorch.org/whl/cu128
 pip install -r requirements_composer.txt
 ```
 
-**H100 (CUDA 13.0, driver 580) — TESTED, WORKS, no override needed (2026-08-22).** On a
+**H100 (CUDA 13.0, driver 580) — tested, works, no override needed.** On a
 box where the `download.pytorch.org` index is unreachable, the `--index-url .../cu128`
 line above cannot fetch a wheel — but you do not need it. Just let `mosaicml` resolve
 torch from the default index. Composer's `torch<2.7.1` pin lands on **torch 2.7.0+cu126**,
@@ -107,8 +108,8 @@ print(type(get_device(None)).__name__)"
 If you instead WANT torch 2.13.0+cu130 (the box's native-CUDA-13 stable), reinstall it
 *after* mosaicml with `pip install --force-reinstall --no-deps torch==2.13.0` (the CUDA
 analog of the ROCm dance below); `pip check` will then report the `torch<2.7.1` pin as
-violated — expected, and Composer 0.32.1 runs fine against it. **We did not need this on
-H100** — 2.7.0+cu126 worked out of the box, so the simpler no-override path is
+violated — expected, and Composer 0.32.1 runs fine against it. **This is not needed on
+H100** — 2.7.0+cu126 works out of the box, so the simpler no-override path is
 recommended. Watch the same **triton trap** noted below: torch 2.7.0 ships CUDA `triton`
 3.3.0; do not blind-uninstall it.
 
@@ -119,9 +120,9 @@ environment, and that advice is sound if you want flash-attn without a build ste
 ### AMD / ROCm — TESTED, WORKS (MI355X / gfx950, ROCm 7.2.4)
 
 Upstream still lists AMD as unsupported ("System with CUDA-compatible GPUs (AMD + RoCM
-coming soon!)") and ships no ROCm install path, image or CI. **We ran it anyway and it
-works.** Composer is a thin layer over PyTorch, and every device call it makes goes
-through `torch.cuda.*`, which ROCm implements. Verified 2026-08-19 on 1x AMD Instinct
+coming soon!)") and ships no ROCm install path, image or CI. **It works anyway.**
+Composer is a thin layer over PyTorch, and every device call it makes goes
+through `torch.cuda.*`, which ROCm implements. Verified on 1x AMD Instinct
 MI355X, ROCm 7.2.4, Python 3.12.3.
 
 The one real obstacle is packaging, not code: **`mosaicml` pins `torch<2.7.1`, and the
@@ -182,10 +183,14 @@ If you would rather stay on a supported path, LLM Foundry (which sits on Compose
 documented beta AMD path — see `../llmfoundry/` — or use a PyTorch-native folder
 such as `../fsdp/`.
 
-> **Venv note:** the tested transcripts below reference the campaign venv
-> (`.env_train_llm_composer`) and the pre-reorg `../dev.env` path verbatim. Those venvs
-> were removed during the 2026-08 reorg — rebuild from `requirements_composer.txt`
-> (new convention: `.env_composer`); the repo-root `dev.env` is now at `../../../dev.env`.
+The run commands below refer to an output directory and the Hugging Face cache by
+environment variable — set them to suit your machine:
+
+```bash
+# Set these to suit your machine
+export OUTPUT_DIR=/path/to/outputs     # checkpoints and generated training data
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+```
 
 ## 3. Environment & secrets
 
@@ -365,15 +370,15 @@ those elsewhere.
 - **AMD / ROCm — unsupported upstream, but VERIFIED WORKING here.** The same README
   sentence continues "(AMD + RoCM coming soon!)", and upstream still documents no ROCm
   install path, image or CI. That claim describes upstream's *support commitment*, not a
-  technical limitation: we ran Composer 0.32.1 end-to-end on an MI355X. See the
+  technical limitation: Composer 0.32.1 runs end-to-end on an MI355X. See the
   MI355X subsection below for commands and evidence.
 - **Other hardware (upstream claims — not verified here):** none claimed beyond
   NVIDIA/AMD — the upstream README's hardware requirement is "CUDA-compatible GPUs",
-  with CPU runs possible for debugging only (checked August 2026).
+  with CPU runs possible for debugging only.
 
-### NVIDIA H100 (CUDA 13.0, driver 580) — tested 2026-08-22
+### NVIDIA H100 (CUDA 13.0, driver 580)
 
-**Verdict: WORKS.** No packaging override, no source changes. The documented `pip install
+**This path works as documented on H100.** No packaging override, no source changes. The documented `pip install
 mosaicml` path resolves Composer's `torch<2.7.1` pin to **torch 2.7.0+cu126**, which runs
 unchanged on this CUDA-13.0 / driver-580.173.02 host (driver backward-compatibility), so
 `pip check` stays clean. Single-GPU smoke (`--no_fsdp`, DDP degenerate at world size 1)
@@ -407,8 +412,8 @@ auto-enables to `True` on import. (`kernels` was not pulled, so the transformers
 Exact smoke command (offline env, GPU 7, master port 29648):
 
 ```bash
-export HF_HOME=/mnt/gsma/gsma/gsma/models HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
-export HF_DATASETS_CACHE=/dev/shm/h100/dscache_composer   # datasets .arrow writes fail on /mnt/gsma
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1            # HF_HOME points at the model cache (set above)
+export HF_DATASETS_CACHE=/dev/shm/h100/dscache_composer   # datasets .arrow writes can fail on a network model-cache mount
 export CUDA_VISIBLE_DEVICES=7                             # plain CUDA_VISIBLE_DEVICES; no HIP_* on NVIDIA
 
 composer -n 1 --master_port 29648 train_llm_composer.py \
@@ -423,7 +428,7 @@ composer -n 1 --master_port 29648 train_llm_composer.py \
 
 Step count: 9 usable rows (1 of 10 dropped for exceeding `--max_seq_len 2048`),
 `global_train_batch_size 2` / world 1 / microbatch 1 → 3 batches/epoch, `40ba` =
-**40 optimizer steps over ~4.4 epochs** (non-trivial). Real log lines:
+**40 optimizer steps over ~4.4 epochs** (non-trivial). Expected output:
 
 ```
 - INFO - __main__ - Loaded 9 rows from data/OTel_LLM_sample_10.jsonl (dropped 1 over 2048 tokens, 0 with no supervised tokens)
@@ -463,9 +468,9 @@ PURE` for the FSDP variant. The FSDP wrap path (`tag_blocks_for_fsdp`) keys on L
 FSDP is bypassed (`use_fsdp` requires world size > 1), which is why the smoke uses
 `--no_fsdp`.
 
-### AMD MI355X (ROCm 7.2) — tested 2026-08-19
+### AMD MI355X (ROCm 7.2)
 
-**Verdict: WORKS WITH CHANGES.** The only change is a packaging override (Composer's
+**This path works on MI355X with one change.** That change is a packaging override (Composer's
 `torch<2.7.1` pin is unsatisfiable on the ROCm 7.2 wheel index). **Zero source changes to
 `train_llm_composer.py` were needed for ROCm** — no tf32 hardcode, no FlashAttention-2
 hardcode, no device-string assumptions.
@@ -480,24 +485,24 @@ hardcode, no device-string assumptions.
 | triton-rocm | `3.7.1` |
 | Python | 3.12.3 |
 
-Install: see section 2 "AMD / ROCm". Smoke run actually executed (single GPU, no
-sharding, small model, few batches):
+Install: see section 2 "AMD / ROCm". Smoke run (single GPU, no sharding, small model, few
+batches):
 
 ```bash
-source .env_train_llm_composer/bin/activate
+source .env_composer/bin/activate
 export HIP_VISIBLE_DEVICES=3 CUDA_VISIBLE_DEVICES=3      # never leave these empty on ROCm
-export $(grep -v '^#' ../dev.env | xargs)                # HF_TOKEN
+export $(grep -v '^#' dev.env | xargs)                   # HF_TOKEN
 
 composer -n 1 --master_port 29710 train_llm_composer.py \
   --model_name Qwen/Qwen3-0.6B \
   --max_samples 8 --max_duration 40ba \
   --global_train_batch_size 2 --device_train_microbatch_size 1 \
   --max_seq_len 2048 --no_fsdp \
-  --save_folder /mnt/data_1.5t/outputs/train_llm_composer/composer_run \
+  --save_folder $OUTPUT_DIR/composer/composer_run \
   --save_interval 1000ba
 ```
 
-Evidence — log lines from the run:
+Expected output:
 
 ```
 INFO - __main__ - Loaded 8 rows from data/OTel_LLM_sample_10.jsonl (dropped 0 over 2048 tokens, 0 with no supervised tokens)
@@ -556,32 +561,32 @@ that caveat applies equally on ROCm, so pin an integer for long unattended runs.
    "no supervised tokens". `build_example()` now passes `return_dict=False`. The
    `dropped ... 0 with no supervised tokens` line above is the fix confirming itself.
 
-### 8-GPU run (8x MI355X, ROCm 7.2.4) — tested August 2026
+### 8-GPU run (8x MI355X, ROCm 7.2.4)
 
-**Verdict: WORKS — unchanged.** The exact same recipe that passed on 1 GPU scales to all
+**Works unchanged.** The same recipe that passes on 1 GPU scales to all
 8 MI355X of the node with **zero source changes, zero new packages and zero new pins**:
-only the launcher's `-n` and the batch geometry changed. Both **DDP** (`--no_fsdp`) and
-**FSDP `FULL_SHARD`** completed 50 batches at world size 8 with **exit code 0**, all 8
-ranks finishing and no teardown hang. RCCL (reported as "NCCL") worked out of the box.
+only the launcher's `-n` and the batch geometry change. Both **DDP** (`--no_fsdp`) and
+**FSDP `FULL_SHARD`** complete 50 batches at world size 8 with exit code 0, all 8
+ranks finishing and no teardown hang. RCCL (reported as "NCCL") works out of the box.
 
-Launch — exactly as run (both runs inside one flock-serialised session):
+Launch (run both variants inside one `flock`-serialised session so the job owns all 8 GPUs):
 
 ```bash
-source .env_train_llm_composer/bin/activate
-# CRITICAL: this venv's bin/activate pins HIP/CUDA_VISIBLE_DEVICES=3 (a leftover from the
-# 1-GPU run). Override it AFTER sourcing or you silently train on one GPU.
+source .env_composer/bin/activate
+# CRITICAL: if the venv's bin/activate pins HIP/CUDA_VISIBLE_DEVICES to a single GPU (an
+# easy leftover from a 1-GPU run), override it AFTER sourcing or you silently train on one GPU.
 export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 python -c "import torch,sys; sys.exit(torch.cuda.device_count()!=8)" || exit 1   # assert
 
 # 1) DDP (priority run)
 composer -n 8 --master_port 29740 train_llm_composer.py \
-  --train_file /mnt/data_1.5t/outputs/train_llm_composer/gpu8/data/OTel_sample_x64_640.jsonl \
+  --train_file $OUTPUT_DIR/composer/gpu8/data/OTel_sample_x64_640.jsonl \
   --model_name Qwen/Qwen3-0.6B \
   --max_seq_len 2048 --max_duration 50ba \
   --global_train_batch_size 64 --device_train_microbatch_size 2 \
   --learning_rate 1e-5 --run_name composer-gpu8-ddp \
-  --save_folder /mnt/data_1.5t/outputs/train_llm_composer/gpu8/ckpt_ddp --save_interval 1000ba \
+  --save_folder $OUTPUT_DIR/composer/gpu8/ckpt_ddp --save_interval 1000ba \
   --no_fsdp
 
 # 2) FSDP FULL_SHARD (bonus run) — same command minus --no_fsdp, plus:
@@ -602,7 +607,7 @@ dataloader):
 
 **Data — this is a pipeline proof, not a learning result.** The shipped 10-row sample
 cannot feed 8 ranks meaningfully, so the 10 rows were replicated 64x to 640 rows written
-**outside the repo** (`/mnt/data_1.5t/outputs/train_llm_composer/gpu8/data/`). Report the
+**outside the repo** (`$OUTPUT_DIR/composer/gpu8/data/`). Report the
 survivors, not the input count — at `--max_seq_len 2048` the loader drops one of the ten
 distinct rows (2242 tokens) and therefore **576 of 640 rows survived**:
 
@@ -614,7 +619,7 @@ INFO - __main__ - Starting training: 50ba, fsdp=False, algorithms=['GradientClip
 The loss falls smoothly and finitely, but on 64 copies of 9 conversations that is
 **memorisation, not generalisation**. Use it as proof the 8-rank pipeline is correct.
 
-Real log lines — DDP (rank 0 console, `console_log_interval=10ba`):
+Expected output — DDP (rank 0 console, `console_log_interval=10ba`):
 
 ```
 [batch=1/50]:  Train loss/train/total: 1.6896  LanguageCrossEntropy: 1.6547  LanguagePerplexity: 5.2316
@@ -686,9 +691,9 @@ it will happily photograph someone else's job.
 **What differed from the 1-GPU run:**
 
 1. `-n 1` → `-n 8`, `--master_port 29710` → `29740`, and `--no_fsdp` dropped for the FSDP run.
-2. **The stale `HIP_VISIBLE_DEVICES=3` / `CUDA_VISIBLE_DEVICES=3` exports at lines 71-72 of
-   `.env_train_llm_composer/bin/activate` must be overridden after sourcing.** They are a
-   leftover from the 1-GPU run; leave them and `composer` autodetects **one** device and you
+2. **Any stale `HIP_VISIBLE_DEVICES=3` / `CUDA_VISIBLE_DEVICES=3` exports inside
+   `.env_composer/bin/activate` must be overridden after sourcing.** They are an easy
+   leftover from a 1-GPU run; leave them and `composer` autodetects **one** device and you
    report an 8-GPU pass that never happened. Assert `torch.cuda.device_count() == 8`.
 3. Batch geometry: global 2 → 64, microbatch pinned 1 → 2 (`auto` was deliberately avoided —
    OOM-catching is not something you want racing on 8 ranks).
@@ -706,10 +711,7 @@ it will happily photograph someone else's job.
 `--device_train_microbatch_size auto` at world size 8, models larger than 0.6B, and any
 NVIDIA path.
 
-Raw logs and evidence kept at `/mnt/data_1.5t/outputs/train_llm_composer/gpu8/`
-(`run.log`, `rocm_smi_inband.txt`, `EVIDENCE.txt`); the `.pt` checkpoints were deleted.
-
-**Not tested at the time of the 1-GPU run (now covered by the 8-GPU section above):**
+**Not covered by the 1-GPU run (now covered by the 8-GPU section above):**
 multi-GPU FSDP sharding on ROCm — the 1-GPU run used `--no_fsdp` throughout and owned a
 single GPU. Still untested anywhere here: `SeqLengthWarmup`, `LowPrecisionLayerNorm`,
 checkpoint resume, and any NVIDIA path.
@@ -719,7 +721,7 @@ checkpoint resume, and any NVIDIA path.
   cadence continues) but development has visibly slowed and the README steers users toward
   Databricks Mosaic AI Training. Its headline speedup results date from the pre-LLM era.
 
-Sources: Composer README (`README.md`, `dev` branch, fetched August 2026);
+Sources: Composer README (`README.md`, `dev` branch);
 `docs/source/notes/distributed_training.rst`; Docker Hub `mosaicml` org.
 
 ## 9. Notes

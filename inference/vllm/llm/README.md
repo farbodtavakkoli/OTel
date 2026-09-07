@@ -26,7 +26,7 @@ control.
 ## Install
 
 **There is no ROCm vLLM wheel — this is the single most important fact in this folder.**
-Verified 2026-08-20:
+Verified against the pinned versions below:
 
 - PyPI `vllm==0.27.1` publishes exactly two binary wheels
   (`manylinux_2_28_x86_64`, `manylinux_2_28_aarch64`), both **CUDA-only**. Its
@@ -38,40 +38,43 @@ Verified 2026-08-20:
 - Building vLLM from source for `gfx950` works but is an hours-long compile.
 
 So the pip/venv route that would normally be preferred is genuinely unavailable, and the
-verified route is a **container**. This host already had
-`rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2` on disk, which ships a
-working ROCm vLLM — zero pull cost, no `docker pull`, no disk spent:
+verified route is a **container**. The validated runs used
+`rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2`, which ships a
+working ROCm vLLM:
 
 ```bash
+# Set these to suit your machine
+export HF_HOME=/path/to/hf_cache        # Hugging Face model cache
+export OUTPUT_DIR=/path/to/outputs      # server logs and client transcripts
+
 docker run -d --name vllm_bringup \
   --device /dev/kfd --device /dev/dri/renderD128 --device /dev/dri/renderD136 \
   --group-add "$(getent group video | cut -d: -f3)" \
   --group-add "$(getent group render | cut -d: -f3)" \
   --ipc=host --cap-add=SYS_PTRACE --security-opt seccomp=unconfined --shm-size 64G \
   --network host \
-  -v "$PWD":/workspace/repo -v /mnt/data_1.5t:/mnt/data_1.5t \
-  -e HF_HOME=/mnt/data_1.5t/hf_cache -w /workspace/repo \
+  -v "$PWD":/workspace/repo -v "$HF_HOME":"$HF_HOME" \
+  -e HF_HOME="$HF_HOME" -w /workspace/repo \
   rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2 sleep infinity
 ```
 
 Two gotchas in that command, both learned the hard way:
 
 - The image has **no `render` group**, so the canonical `--group-add render` fails with
-  `unable to find group render`. Pass the host's **numeric** GIDs instead (`video`=44,
-  `render`=993 on this host) — that is what the `getent` substitutions above do.
-- Pinning GPUs by **render node** (`renderD128` = physical GPU0, `renderD136` = GPU1)
+  `unable to find group render`. Pass the host's **numeric** GIDs instead (typically
+  `video`=44, `render`=993) — that is what the `getent` substitutions above do.
+- Pinning GPUs by **render node** (`renderD128` = the first GPU, `renderD136` = the second)
   rather than by `HIP_VISIBLE_DEVICES` means `torch.cuda.device_count()` is `2` inside the
-  container no matter what any tool does to the environment. Confirmed: the container sees
-  exactly two `gfx950` devices and cannot touch a sibling's GPUs 2–7.
+  container no matter what any tool does to the environment: the container sees
+  exactly two `gfx950` devices and cannot touch any other card on the box.
 
-**A newer image was considered and proved unnecessary.** The working assumption was that
+**A newer image is not needed.** The obvious assumption is that
 0.20.2 predates upstream's Qwen3.8 ROCm enablement and that
 `vllm/vllm-openai-rocm:nightly` (~11.5 GB compressed, 25–30 GB on disk) would be required.
 That assumption is **false** — this build already contains
-`Qwen3_5ForConditionalGeneration` and loads the checkpoint without complaint, so the pull
-was skipped and `/` kept its free space. Anyone reaching for a newer image to fix garbage
-output should set `VLLM_ROCM_USE_AITER=0` first; the bug is in an AITER kernel, and a
-newer image is not obviously the fix.
+`Qwen3_5ForConditionalGeneration` and loads the checkpoint without complaint. Anyone
+reaching for a newer image to fix garbage output should set `VLLM_ROCM_USE_AITER=0` first;
+the bug is in an AITER kernel, and a newer image is not obviously the fix.
 
 Verified versions inside that image:
 
@@ -102,10 +105,10 @@ HF_TOKEN=hf_xxxxxxxxxxxxxxxx
 ```
 
 Loaded by `load_dotenv("dev.env")` in the client, and exported into the serving shell.
-Never echo it. Model weights are kept off `/`'s root partition with
-`HF_HOME=/mnt/data_1.5t/hf_cache`.
+Never echo it. Model weights are kept off `/`'s root partition by pointing `HF_HOME` at a
+data volume.
 
-GPU pinning for this agent's two cards:
+GPU pinning for the two cards in use:
 
 ```bash
 export HIP_VISIBLE_DEVICES=0,1 CUDA_VISIBLE_DEVICES=0,1
@@ -134,7 +137,7 @@ quirks*.
 Single GPU — the verified command (run inside the container):
 
 ```bash
-export HF_HOME=/mnt/data_1.5t/hf_cache HIP_VISIBLE_DEVICES=0
+export HF_HOME=/path/to/hf_cache HIP_VISIBLE_DEVICES=0
 export VLLM_ROCM_USE_AITER=1
 vllm serve Qwen/Qwen3-4B \
   --host 0.0.0.0 \
@@ -147,7 +150,7 @@ vllm serve Qwen/Qwen3-4B \
 Two GPUs, tensor parallel — the verified TP=2 command:
 
 ```bash
-export HF_HOME=/mnt/data_1.5t/hf_cache HIP_VISIBLE_DEVICES=0,1
+export HF_HOME=/path/to/hf_cache HIP_VISIBLE_DEVICES=0,1
 export VLLM_ROCM_USE_AITER=1
 vllm serve Qwen/Qwen3-4B \
   --tensor-parallel-size 2 \
@@ -158,14 +161,14 @@ vllm serve Qwen/Qwen3-4B \
   --served-model-name qwen3-4b
 ```
 
-### `Qwen/Qwen3.8-27B-FP8` — the real target model (VERIFIED)
+### `Qwen/Qwen3.8-27B-FP8` — the real target model
 
 **`VLLM_ROCM_USE_AITER=0` is mandatory for this checkpoint.** With AITER on (the gfx950
 default) the server is healthy but every completion is token salad — see *The FP8 27B
 result* below. Single GPU:
 
 ```bash
-export HF_HOME=/mnt/data_1.5t/hf_cache
+export HF_HOME=/path/to/hf_cache
 export VLLM_ROCM_USE_AITER=0          # REQUIRED — see Notes & quirks
 vllm serve Qwen/Qwen3.8-27B-FP8 \
   --trust-remote-code \
@@ -176,10 +179,10 @@ vllm serve Qwen/Qwen3.8-27B-FP8 \
   --served-model-name qwen38-27b-fp8
 ```
 
-Two GPUs, tensor parallel — the verified 27B TP=2 command:
+Two GPUs, tensor parallel — the 27B TP=2 command:
 
 ```bash
-export HF_HOME=/mnt/data_1.5t/hf_cache
+export HF_HOME=/path/to/hf_cache
 export VLLM_ROCM_USE_AITER=0
 vllm serve Qwen/Qwen3.8-27B-FP8 \
   --trust-remote-code \
@@ -225,7 +228,7 @@ curl -s http://localhost:8000/v1/chat/completions -H 'Content-Type: application/
 
 ## Single-GPU results
 
-**Verdict: `Qwen/Qwen3.8-27B-FP8` works on one MI355X — with one mandatory env var
+**`Qwen/Qwen3.8-27B-FP8` works on one MI355X — with one mandatory env var
 (`VLLM_ROCM_USE_AITER=0`).** That is the headline result of this folder and it is covered
 in *The FP8 27B result* immediately below. The `Qwen/Qwen3-4B` numbers that follow are
 retained as the smaller-model datapoint and as the control that proves AITER itself is
@@ -424,8 +427,8 @@ generated text as part of ROCm bring-up; a green `/health` proves nothing about 
 
 ### `Qwen3.8-27B-FP8` at TP=2 — the headline multi-GPU result
 
-**Verdict: works.** `--tensor-parallel-size 2` shards the FP8 27B across physical GPUs 0
-and 1 with no flag beyond `--tensor-parallel-size 2` and the mandatory
+**This works.** `--tensor-parallel-size 2` shards the FP8 27B across both GPUs
+with no flag beyond `--tensor-parallel-size 2` and the mandatory
 `VLLM_ROCM_USE_AITER=0`. No RCCL tuning, no `--distributed-executor-backend` override.
 
 | Measurement | 27B TP=1 | 27B TP=2 | Effect |
@@ -436,7 +439,7 @@ and 1 with no flag beyond `--tensor-parallel-size 2` and the mandatory
 | **GPU KV cache size** | 1,451,258 tok | **3,334,326 tok** | **2.3×** context capacity |
 | Graph capture | 10 s / 0.73 GiB | 9 s / 0.64 GiB | — |
 | `init engine` (warm caches) | 61.06 s (compile 47.96 s) | 101.75 s (compile 87.74 s) | 2 ranks compile |
-| Cold start (launch → `Application startup complete`) | ~90 s | **~162 s** | 03:11:47 → 03:14:29 |
+| Cold start (launch → `Application startup complete`) | ~90 s | **~162 s** | two ranks to bring up |
 | FP8 GEMM kernel selected | `TritonFp8BlockScaledMMKernel` | `TritonFp8BlockScaledMMKernel` | same |
 | Decode rate (single stream) | 38.6 tok/s | **52.4 tok/s** | **+36%** — TP pays off at 27B |
 
@@ -455,14 +458,14 @@ background loop during the client call):
 device,GPU use (%),VRAM Total Memory (B),VRAM Total Used Memory (B)
 card0,100,309220868096,142181068800     <- TP rank 0, 142.18 GB, 100% busy
 card1,100,309220868096,142184337408     <- TP rank 1, 142.18 GB, 100% busy
-card2,0,309220868096,230080622592       <- idle, belongs to a sibling agent
+card2,0,309220868096,230080622592       <- idle, another job's card
 ```
 
-Both of this agent's GPUs are at **100% utilisation in the same sample** with VRAM
-footprints differing by 3.3 MB out of 142 GB, while the sibling's card2 sits at 0%. That
-is a real 2-GPU collective, and it stays inside this agent's GPU allocation.
+Both serving GPUs are at **100% utilisation in the same sample** with VRAM
+footprints differing by 3.3 MB out of 142 GB, while the unrelated card2 sits at 0%. That
+is a real 2-GPU collective, confined to the two selected cards.
 
-Real generated text from the 27B TP=2 server (`--max_tokens 220 --seed 42`, captured live):
+Generated text from the 27B TP=2 server (`--max_tokens 220 --seed 42`):
 
 ```
 endpoint      : http://localhost:8000/v1/chat/completions
@@ -512,13 +515,13 @@ on. `rocm-smi` in the same window, both ranks resident at 142.66 GB:
 device,GPU use (%),VRAM Total Memory (B),VRAM Total Used Memory (B)
 card0,3,309220868096,142663155712
 card1,3,309220868096,142663372800
-card2,0,309220868096,231937077248     <- sibling agent's GPU, untouched
+card2,0,309220868096,231937077248     <- another job's GPU, untouched
 ```
 
 ### `Qwen3-4B` at TP=2 — the smaller-model datapoint
 
-**Verdict: works, unmodified.** `--tensor-parallel-size 2` sharded `Qwen/Qwen3-4B` across
-physical GPUs 0 and 1 and produced text that matches the single-GPU run. Nothing beyond
+**Works, unmodified.** `--tensor-parallel-size 2` shards `Qwen/Qwen3-4B` across
+both GPUs and produces text that matches the single-GPU run. Nothing beyond
 the flag was needed — no NCCL/RCCL tuning, no `--distributed-executor-backend` override.
 
 | Measurement | TP=1 | TP=2 | Effect |
@@ -534,21 +537,21 @@ the flag was needed — no NCCL/RCCL tuning, no `--distributed-executor-backend`
 The weights halving (7.56 → 3.82 GiB per rank) and the KV doubling (869K → 1.75M tokens)
 together are the proof that TP=2 is really sharding rather than replicating.
 
-`rocm-smi` sampled **while the TP=2 server was serving** — both of this agent's GPUs
-loaded, near-identical footprints, sibling GPUs untouched:
+`rocm-smi` sampled **while the TP=2 server was serving** — both serving GPUs
+loaded, near-identical footprints, other cards untouched:
 
 ```
 device,GPU Memory Allocated (VRAM%),GPU Memory R/W Activity (%),VRAM Total (B),VRAM Used (B)
 card0,46,7,309220868096,142244859904      <- TP rank 0  (142.2 GB)
 card1,46,6,309220868096,142244335616      <- TP rank 1  (142.2 GB)
-card2,66,0,309220868096,206072328192      <- idle, belongs to a sibling agent
+card2,66,0,309220868096,206072328192      <- idle, another job's card
 ```
 
 The two ranks differ by 524,288 bytes out of 142 GB, and both show live read/write
 activity (7% / 6%) during decode — this is a real 2-GPU collective, not one GPU doing the
 work.
 
-Real TP=2 generated text (same prompt and `--seed 42` as the single-GPU run):
+TP=2 generated text (same prompt and `--seed 42` as the single-GPU run):
 
 ```
 endpoint      : http://localhost:8000/v1/chat/completions
@@ -592,8 +595,8 @@ enough to benefit from sharding, so all TP adds at batch 1 is a per-layer all-re
 pays off for models that do not fit on one GPU, or under heavy concurrency. **For a 7.56
 GiB model on MI355X the right multi-GPU pattern is replication** — one independent server
 per GPU behind a load balancer — exactly as recommended in the sibling embedding and
-reranker folders. TP=2 is verified working here because the task called for it; it is not
-what you would deploy at this model size.
+reranker folders. TP=2 is documented here as verified working; it is not what you would
+deploy at this model size.
 
 ## Arguments / flags
 
@@ -632,7 +635,7 @@ Serve-side flags used here:
 The client prints the endpoint, resolved model name, finish reason, wall-clock latency,
 decode rate, token usage, an optional `reasoning_content` block, and the generated text.
 
-Real captured run of `python infer_llm_vllm.py --port 8000 --model qwen3-4b --seed 42`:
+**Expected output** for `python infer_llm_vllm.py --port 8000 --model qwen3-4b --seed 42`:
 
 ```
 endpoint      : http://localhost:8000/v1/chat/completions
@@ -648,8 +651,8 @@ Okay, the user wants me to explain what vLLM is in two sentences and mention the
 vendors it supports. ...
 ```
 
-Server logs go to `/mnt/data_1.5t/outputs/inference_llm_vllm/` and captured client
-transcripts to `/mnt/data_450g/outputs/inference_llm_vllm/`. Nothing large is written into
+Redirect server logs and captured client transcripts to a data volume, e.g.
+`$OUTPUT_DIR/inference_llm_vllm/`. Nothing large is written into
 the repo, and nothing is written to `/`'s root partition.
 
 ## Hardware support & evidence
@@ -662,19 +665,19 @@ the repo, and nothing is written to `/`'s root partition.
 - **The FP8 format matters and it is already right.** The checkpoint is OCP **E4M3**
   (`quantization_config.fmt: "e4m3"`), which is exactly what gfx950 implements natively —
   **not** the FNUZ variant older AMD hardware needs. No conversion, no `--quantization fp8`.
-- **The model-support gap that was expected does not exist.** vLLM 0.20.2 already ships
+- **The model-support gap that might be expected does not exist.** vLLM 0.20.2 already ships
   `Qwen3_5ForConditionalGeneration` and resolves `model_type: qwen3_5` without complaint,
-  so **no newer image was required** — `vllm/vllm-openai-rocm:nightly` was *not* pulled and
-  no disk was spent on it. See *Notes & quirks*.
-- **The GGUF fallback was never needed.** `unsloth/Qwen3.8-27B-GGUF:Q8_0` is cached on this
-  host but was not used: the FP8 safetensors path works, and it is the better path (vLLM's
-  GGUF support is limited and would not have exercised the FP8 hardware at all).
-- **NVIDIA: not tested here** (no NVIDIA GPU on this host). The same `vllm serve` command
-  applies with `vllm/vllm-openai:latest`; on CUDA the pip wheel route also works.
+  so **no newer image is required** — `vllm/vllm-openai-rocm:nightly` is not needed. See
+  *Notes & quirks*.
+- **The GGUF fallback is not needed.** `unsloth/Qwen3.8-27B-GGUF:Q8_0` exists but the FP8
+  safetensors path works and is the better path (vLLM's GGUF support is limited and would
+  not exercise the FP8 hardware at all).
+- **NVIDIA: verified via the pip wheel** — see the H100 section below. The same `vllm serve`
+  command also applies with the `vllm/vllm-openai:latest` container.
 
-## H100 (NVIDIA) — verified 2026-08-22
+## H100 (NVIDIA)
 
-**Verdict: ✅ PASS.** vLLM `0.27.1` (pip / CUDA 13.0) serves the real
+vLLM `0.27.1` (pip / CUDA 13.0) serves the real
 `Qwen/Qwen3.8-27B-FP8` correctly on **one** H100 80GB — coherent, correct text on every
 prompt. The headline finding is the **architecture-support answer**: this checkpoint is a
 `Qwen3_5ForConditionalGeneration` **vision-language + Mamba/GDN-hybrid** model
@@ -683,7 +686,7 @@ prompt. The headline finding is the **architecture-support answer**: this checkp
 ### Install (pip route — no container needed)
 
 The ROCm story above is container-only; on **NVIDIA the pip wheel is native and works**.
-In a tmpfs venv (`unset HTTP_PROXY HTTPS_PROXY ...` first — pypi.nvidia.com is proxy-blocked):
+Unset the proxy first (`unset HTTP_PROXY HTTPS_PROXY ...` — pypi.nvidia.com is proxy-blocked):
 
 ```bash
 python3 -m venv .env_vllm && source .env_vllm/bin/activate
@@ -730,11 +733,11 @@ Fix: pass **`--max-num-seqs 256`** (well under 694). This is a real single-80GB-
 adjustment, not a defect — MI355X's 288GB cards would not hit it. Do **not** pass
 `--quantization fp8` (the checkpoint is already E4M3 FP8; vLLM selects it automatically).
 
-### Serve (the verified H100 command)
+### Serve (the H100 command)
 
 ```bash
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
-export HF_HOME=/mnt/gsma/gsma/gsma/models CUDA_VISIBLE_DEVICES=5
+export HF_HOME=/path/to/hf_cache CUDA_VISIBLE_DEVICES=<free-gpu>
 vllm serve Qwen/Qwen3.8-27B-FP8 \
   --trust-remote-code \
   --host 0.0.0.0 --port 8500 \
@@ -750,7 +753,7 @@ Client (same script as ROCm):
 python infer_llm_vllm.py --port 8500 --model qwen38-27b-fp8 --max_tokens 200 --seed 42
 ```
 
-### Real log lines (H100)
+### Expected output — server log (H100)
 
 ```
 [model.py:645] Resolved architecture: Qwen3_5ForConditionalGeneration
@@ -763,7 +766,7 @@ python infer_llm_vllm.py --port 8500 --model qwen38-27b-fp8 --max_tokens 200 --s
 INFO:     Application startup complete.
 ```
 
-### Real generated text (H100 — coherent and correct, no garbage)
+### Expected generated text (H100 — coherent and correct, no garbage)
 
 ```
 prompt : "What is the capital of France? Answer in one word."  (temperature 0)
@@ -791,18 +794,15 @@ Every prompt yields **real, on-topic, correct** text — none of the AITER token
 on gfx950 (that AITER FP8-GEMM path is ROCm-only and does not apply here; the CUDA
 `FlashInferFp8DeepGEMMDynamicBlockScaledKernel` path is numerically correct).
 
-### GPU-5 residency (sampled from inside serving)
+### GPU residency check (sampled while serving)
 
-```
-$ nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory --format=csv,noheader | grep <GPU5-UUID>
-1702852, GPU-e71a0833-4f61-11c9-6eff-10c149e752e4, 72990 MiB
-
-$ nvidia-smi --query-gpu=index,memory.used,utilization.gpu --format=csv,noheader -i 5   # during decode
-5, 72999 MiB, 88 %
+```bash
+nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory --format=csv,noheader
+nvidia-smi --query-gpu=index,memory.used,utilization.gpu --format=csv,noheader   # during decode
 ```
 
-72.99 GB resident on **physical GPU 5 only** (KV cache is the bulk), 88% util during
-decode — the co-tenant GPUs 0–3 were never touched.
+Expect ~73 GB resident on the single selected GPU (KV cache is the bulk) and ~88% util
+during decode. No other card is touched.
 
 ### H100 metrics
 
@@ -812,30 +812,29 @@ decode — the co-tenant GPUs 0–3 were never touched.
 | Model-load VRAM | **28.54 GiB** (matches the 29.38 GiB seen on gfx950) |
 | GPU KV cache size | **485,083 tokens** (@ `--gpu-memory-utilization 0.90`, 8192 ctx) |
 | Max concurrency @ 8192 ctx | 59.21× |
-| Total process VRAM (GPU 5) | **~73.0 GB** |
+| Total process VRAM (single GPU) | **~73.0 GB** |
 | FP8 GEMM kernel | `FlashInferFp8DeepGEMMDynamicBlockScaledKernel` (CUDA) |
 | Decode rate (single stream) | **68–73 tok/s** |
 
 ### Accuracy vs the transformers baseline
 
-The sibling transformers reference
-(`/dev/shm/h100/out/transformers/llm/reference_llm_lfm2.5-350m_1gpu.json`) used a
-**different** model (`LiquidAI/LFM2.5-350M`), so there is no token-level diff to run here.
-Its "capital of France → Paris" answer matches this server's output, and every prompt here
-returns correct, coherent text — which is the accuracy bar for a different model.
+The sibling transformers reference used a **different** model (`LiquidAI/LFM2.5-350M`), so
+there is no token-level diff to run here. Its "capital of France → Paris" answer matches
+this server's output, and every prompt here returns correct, coherent text — which is the
+accuracy bar for a different model.
 
-### Multi-GPU (deferred)
+### Multi-GPU (not covered)
 
-Single-GPU smoke only this wave (GPUs 0–3 are a co-tenant production job). A TP pass would
-add `--tensor-parallel-size N`; the `qwen3_5` text backbone's head/GDN divisibility by N
-must be checked before launching. Not run here.
+The H100 notes above are a single-GPU smoke test. A TP pass would add
+`--tensor-parallel-size N`; the `qwen3_5` text backbone's head/GDN divisibility by N must
+be checked before launching.
 
-### H100 verdict
+### H100 summary
 
-✅ **PASS — vLLM 0.27.1 (pip / cu130) serves `Qwen/Qwen3.8-27B-FP8` correctly on one H100**,
+vLLM 0.27.1 (pip / cu130) serves `Qwen/Qwen3.8-27B-FP8` correctly on one H100,
 with `--max-num-seqs 256` for the Mamba/GDN cache. The pip route is native on NVIDIA (no
 container). **Arch-support headline: vLLM recognises and serves the `qwen3_5` VL/hybrid
-checkpoint that TRT-LLM 1.2.1 could not.** No fallback to `Qwen/Qwen3-0.6B` was needed.
+checkpoint that TRT-LLM 1.2.1 could not.** No fallback to a smaller model is needed.
 
 ## Notes & quirks
 
@@ -848,7 +847,7 @@ checkpoint that TRT-LLM 1.2.1 could not.** No fallback to `Qwen/Qwen3-0.6B` was 
 - **A green `/health` proves nothing about numerics.** The broken configuration returns
   HTTP 200, lists the model on `/v1/models`, reports normal metrics, and decodes *faster*
   than the correct one (58.1 vs 38.1 tok/s). Only reading generated text catches it. Make
-  eyeballing real output a required step of every ROCm bring-up.
+  eyeballing generated output a required step of every ROCm bring-up.
 - **AITER is not broken in general.** The same build serves dense `Qwen/Qwen3-4B` correctly
   *with AITER enabled*. Only the FP8 block-scaled GEMM path is affected.
 - **Do not pass `--quantization fp8`.** The checkpoint is already FP8; vLLM reads
@@ -865,14 +864,14 @@ checkpoint that TRT-LLM 1.2.1 could not.** No fallback to `Qwen/Qwen3-0.6B` was 
   is non-fatal and unrelated. Do not chase it.
 - **Do not set `CUDA_VISIBLE_DEVICES=""` on ROCm** — an empty string hides all GPUs.
 
-## Verdict
+## Summary
 
-✅ **PASS — vLLM serves the real `Qwen/Qwen3.8-27B-FP8` on MI355X/gfx950, at TP=1 and
+**vLLM serves the real `Qwen/Qwen3.8-27B-FP8` on MI355X/gfx950, at TP=1 and
 TP=2, with no code changes and no image upgrade — but only with `VLLM_ROCM_USE_AITER=0`.**
 
 The interesting finding is not that it works; it is *how* it fails when it fails. The
-expected failure mode was a model-support gap in vLLM 0.20.2, and that turned out to be
-wrong — the engine recognises `Qwen3_5ForConditionalGeneration`, loads the E4M3 FP8
+expected failure mode was a model-support gap in vLLM 0.20.2, and that is wrong — the
+engine recognises `Qwen3_5ForConditionalGeneration`, loads the E4M3 FP8
 weights in 7.9 s, and reports 29.38 GiB. The actual defect is a **silent numerical one**:
 AITER's FP8 block-scaled GEMM produces corrupted output while every health signal stays
 green and throughput actually improves. A dashboard-driven bring-up would have shipped

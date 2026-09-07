@@ -71,25 +71,22 @@ devices and the `nccl` backend (mapped to RCCL) work unchanged. Skip `flash-attn
 (CUDA-only build here); the script auto-detects its absence and falls back to
 `attn_implementation="sdpa"`.
 
-#### Tested on MI355X (ROCm 7.2) — verdict: works with changes
+#### Platform notes — MI355X (ROCm 7.2)
 
-Verified 2026-08-19 on 1× AMD Instinct MI355X (gfx950, 288GB), ROCm 7.2.4,
-Python 3.12.3 — default model `Qwen/Qwen3-Reranker-0.6B`, shipped OTel sample.
+This path works on MI355X with the changes below. Verified on 1× AMD Instinct MI355X
+(gfx950, 288GB), ROCm 7.2.4, Python 3.12.3 — default model
+`Qwen/Qwen3-Reranker-0.6B`, shipped OTel sample.
 
 Exact install that worked (venv inside this folder):
 
 ```bash
 cd training/reranker/sentence_transformers
-python3 -m venv .env_train_reranker_standalone
-source .env_train_reranker_standalone/bin/activate
+python3 -m venv .env_sentence_transformers
+source .env_sentence_transformers/bin/activate
 pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2   # -> torch 2.11.0+rocm7.2
 pip install -r requirements_reranker.txt                                         # all pins install unchanged
 ln -sf ../../../dev.env dev.env                                                  # HF_TOKEN for the Hub
 ```
-
-> Note: the campaign venvs (including `.env_train_reranker_standalone`) were removed in
-> the 2026-08 repo reorg — to reproduce, recreate one as `python3 -m venv
-> .env_sentence_transformers` and run the same installs.
 
 Exact smoke command that worked (single GPU — see the launcher quirk below):
 
@@ -97,7 +94,7 @@ Exact smoke command that worked (single GPU — see the launcher quirk below):
 torchrun --nproc_per_node=1 train_reranker_standalone.py --test_mode --epochs 1 --batch 16
 ```
 
-Observed log lines (single MI355X, ~2.3 steps/s, GPU at 99% use, ~12.7GB VRAM):
+**Expected output** (single MI355X, ~2.3 steps/s, GPU at 99% use, ~12.7GB VRAM):
 
 ```
 Baseline Results: {'reranking_map': 1.0, 'reranking_mrr@10': 1.0, 'reranking_ndcg@10': 1.0}
@@ -125,12 +122,12 @@ Changes needed on ROCm (all applied here):
 - Harmless warning: `expandable_segments not supported on this platform` — the
   `PYTORCH_CUDA_ALLOC_CONF` setting is ignored by the HIP allocator.
 
-#### Tested on H100 (CUDA 13.0) — verdict: WORKS
+#### Platform notes — H100 (CUDA 13.0)
 
-Verified 2026-08-22 on 1× NVIDIA H100 80GB HBM3 (Hopper cc 9.0), driver
-**580.173.02**, **CUDA 13.0**, Python 3.12.3 — default model
+This path works as documented on H100. Verified on 1× NVIDIA H100 80GB HBM3 (Hopper
+cc 9.0), driver **580.173.02**, **CUDA 13.0**, Python 3.12.3 — default model
 `Qwen/Qwen3-Reranker-0.6B` (cached), shipped OTel sample. Single-GPU smoke only
-(multi-GPU deferred — see note below). **No code change was needed.**
+(multi-GPU not exercised — see note below). **No code change was needed.**
 
 Key versions: `torch 2.13.0+cu130`, sentence-transformers 5.7.0, transformers
 5.5.0, accelerate 1.14.0, datasets 4.3.0, numpy 2.5.1.
@@ -162,7 +159,7 @@ torchrun --nproc_per_node=1 --master_port 29648 train_reranker_standalone.py \
   --test_mode --epochs 3 --batch 16 --eval_frac 0.05 --max_len 512 --out <out>
 ```
 
-Real log lines (single H100; loss decays 2.279 → ~0.17; 54 optimizer steps over 3 epochs):
+**Expected output** (single H100; loss decays 2.279 → ~0.17; 54 optimizer steps over 3 epochs):
 
 ```
 Baseline Results: {'reranking_map': 1.0, 'reranking_mrr@10': 1.0, 'reranking_ndcg@10': 1.0}
@@ -173,11 +170,11 @@ Baseline Results: {'reranking_map': 1.0, 'reranking_mrr@10': 1.0, 'reranking_ndc
 Training complete. Best model loaded and saved to <out>/final
 ```
 
-GPU-7 residency (`nvidia-smi --id=7 --query-compute-apps` sampled from inside the
-run — my venv's python was the *only* compute-app on GPU 7):
+GPU residency (`nvidia-smi --id=<gpu> --query-compute-apps` sampled from inside the
+run — the training venv's python is the *only* compute-app on that GPU):
 
 ```
-1556132, /dev/shm/.../venv_rerank_st/bin/python, 7724 MiB     # my PID, sole process on GPU 7
+<pid>, .../.env_sentence_transformers/bin/python, 7724 MiB   # sole process on the GPU
 92 %, 7729 MiB      # utilization.gpu, memory.used  (peaks 86–92%; ~7.7 GB VRAM)
 ```
 
@@ -199,7 +196,7 @@ Differences vs the MI355X recipe:
 - **flash-attn:** `flash_attention_2` was attempted but **no prebuilt wheel** is
   published for torch 2.13/cu130/py3.12 on PyPI (`pip install --only-binary :all:
   flash-attn` → "No matching distribution"). A source build (nvcc 13.0 *is*
-  present at `/usr/local/cuda`) was skipped to stay in the time-box. The script's
+  present at `/usr/local/cuda`) was skipped. The script's
   `try: import flash_attn / except ImportError: attn_impl = "sdpa"` fallback
   engages automatically, so **sdpa was used, no edit needed** (identical to ROCm).
   To use FA2 on H100, build flash-attn from source and it will be picked up.
@@ -233,8 +230,8 @@ implementation (e.g. the generative yes/no scorer in `inference/*/reranker/`),
 **diff the RANKINGS, not the absolute scores** — the scale is template/head
 dependent.
 
-**Multi-GPU (deferred):** not run this wave (GPUs 0–3 held by a co-tenant
-production job). A 2- or 8-GPU pass would use the same
+**Multi-GPU (not exercised on H100):** the node's other GPUs were held by a co-tenant
+production job. A 2- or 8-GPU pass would use the same
 `torchrun --nproc_per_node=N --master_port <free>` shape (single-node DDP, model
 replicated not sharded), but see the "8-GPU run (8x MI355X)" section below: the
 shipped `--batch 64` silently degenerates to a **single optimizer step** on this
@@ -244,9 +241,9 @@ step count before launching multi-GPU.
 
 ### 8-GPU run (8x MI355X, ROCm 7.2.4)
 
-Verified 2026-08-19 on 8× AMD Instinct MI355X (gfx950, 288GB each), ROCm 7.2.4,
-`torch 2.11.0+rocm7.2` (HIP 7.2.26015), Python 3.12.3 — verdict: **works, no code
-change needed; the shipped `--batch` default must be lowered.**
+Verified on 8× AMD Instinct MI355X (gfx950, 288GB each), ROCm 7.2.4,
+`torch 2.11.0+rocm7.2` (HIP 7.2.26015), Python 3.12.3. This path **works with no code
+change; the shipped `--batch` default must be lowered.**
 
 Exact working command (from inside the folder, venv active):
 
@@ -436,7 +433,7 @@ loaded at the end and saved to `<out>/final`.
   `torch==2.11.0+rocm7.2` from
   [download.pytorch.org/whl/rocm7.2](https://download.pytorch.org/whl/rocm7.2/torch/),
   Python 3.12. Smoke training on the shipped sample converges (see the
-  "Tested on MI355X" section above). Only the flash-attn → sdpa switch is needed
+  "Platform notes — MI355X" section above). Only the flash-attn → sdpa switch is needed
   (now automatic), plus `torchrun` instead of `accelerate launch` for
   single-GPU runs. 8-GPU DDP works unmodified at 96% utilization, but the default
   `--batch 64` silently degenerates to a single optimizer step on a small dataset —

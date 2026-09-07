@@ -38,7 +38,7 @@ pip install -r requirements_unsloth.txt
 Upstream Unsloth officially supports AMD (https://unsloth.ai/docs/basics/amd lists CDNA 4 / Instinct MI350 series / gfx950 as **Full** support, Linux only), and this folder has now been **validated on an AMD Instinct MI355X (gfx950, 288 GB, ROCm 7.2.4, Python 3.12)**. Do **not** install the CUDA-13 pins from `requirements_unsloth.txt` verbatim — the torch/triton/xformers wheels there are CUDA builds. The exact sequence that worked:
 
 ```bash
-python3 -m venv .env_train_llm_unsloth && source .env_train_llm_unsloth/bin/activate
+python3 -m venv .env_unsloth && source .env_unsloth/bin/activate
 # 1) ROCm PyTorch FIRST (brings triton-rocm 3.6.0 as the `triton` module):
 pip install torch==2.11.0 torchvision --index-url https://download.pytorch.org/whl/rocm7.2
 # 2) Unsloth via upstream's official AMD extra, plus this folder's HF-stack pins:
@@ -196,14 +196,14 @@ Checkpoints land in `experiment_root/<RUN_ID>/<output_subdir>/` (or `--output_di
 
 ## Hardware support & evidence
 
-**Other hardware (upstream claims — not verified here):** upstream claims CPU, Apple (macOS training + MLX/GGUF inference), Intel GPUs, and Vulkan GGUF inference, alongside NVIDIA/AMD (Unsloth requirements docs, 2026).
+**Other hardware (upstream claims — not verified here):** upstream claims CPU, Apple (macOS training + MLX/GGUF inference), Intel GPUs, and Vulkan GGUF inference, alongside NVIDIA/AMD (Unsloth requirements docs).
 
 
 - **NVIDIA** — validated in this folder on 8×H100 80GB (CUDA 13 wheels in `requirements_unsloth.txt`).
 - **AMD/ROCm** — **validated in this folder on 1× and 8× AMD Instinct MI355X** (gfx950, ROCm 7.2.4); 8-GPU LoRA SFT runs as plain DDP via `torchrun` with no code changes. See the AMD install section above and the MI355X tested + 8-GPU sections below. Upstream lists Instinct MI350-series (gfx950) as fully supported on Linux (https://unsloth.ai/docs/basics/amd).
 - Unsloth OSS is DDP-only (no FSDP/ZeRO) — one full replica per GPU regardless of node count.
 
-## ✅ Tested on AMD MI355X (ROCm 7.2) — 2026-08-19
+## Platform notes — AMD MI355X (ROCm 7.2)
 
 Validated single-GPU on 1× MI355X (gfx950, 288 GB VRAM), ROCm 7.2.4, Python 3.12.3, with the install sequence from the AMD (ROCm) section above (torch 2.11.0+rocm7.2, unsloth 2026.8.9 via `unsloth[amd]`, triton-rocm 3.6.0, bitsandbytes 0.50.0). Model: `google/gemma-4-E4B-it` (8B; Unsloth transparently remaps to its `unsloth/gemma-4-E4B-it` mirror) — same gemma-4 family/chat template as the folder's default 31B, sized for a fast smoke.
 
@@ -220,7 +220,7 @@ python train_llm_unsloth.py \
   --experiment_root experiments --output_subdir smoke_1gpu
 ```
 
-Evidence (bf16 LoRA run; the `--load_in_4bit` QLoRA rerun matched within noise, 3.618 → 2.386):
+Expected output (bf16 LoRA run; the `--load_in_4bit` QLoRA rerun matched within noise, 3.618 → 2.386):
 
 ```
 ==((====))==  Unsloth 2026.8.9: Fast Gemma4 patching. Transformers: 5.5.0.
@@ -230,7 +230,7 @@ Evidence (bf16 LoRA run; the `--load_in_4bit` QLoRA rerun matched within noise, 
 {'train_runtime': '26.73', ...} → Saved adapter + tokenizer to .../final_model
 ```
 
-**Verdict: works** (LoRA SFT and QLoRA 4-bit out of the box; GRPO works with one env var — see below).
+This path works on MI355X (LoRA SFT and QLoRA 4-bit out of the box; GRPO works with one env var — see below).
 
 Status by tier, single MI355X:
 
@@ -247,18 +247,18 @@ MI355X quirks (in addition to the install notes above):
 - **What Unsloth patched/compiled on ROCm:** import-time patching works exactly as on CUDA ("Fast Gemma4 patching"); Triton kernels compile via `triton-rocm` 3.6.0; a `unsloth_compiled_cache/` directory appears next to the script on first run (safe to delete).
 - First GRPO step is slow (~30 s) while Triton autotunes/compiles the generation path; subsequent steps are fast.
 
-### 8-GPU run (8× MI355X, ROCm 7.2.4) — tested August 2026
+### 8-GPU run (8× MI355X, ROCm 7.2.4)
 
-**Verdict: WORKS.** LoRA SFT scales to all 8 MI355X cards as plain DDP (one full replica per GPU) with **no code, flag, or dependency change** vs the 1-GPU run — only the launcher differs (`torchrun` instead of `python`). Despite Unsloth OSS's reputation for gating multi-GPU, the installed build (unsloth 2026.8.9 / unsloth_zoo 2026.8.6) did **not** refuse, and it did **not** silently fall back to one GPU: all 8 cards held ~24 GB of VRAM under our own PIDs for the whole run.
+**This path works as documented.** LoRA SFT scales to all 8 MI355X cards as plain DDP (one full replica per GPU) with **no code, flag, or dependency change** vs the 1-GPU run — only the launcher differs (`torchrun` instead of `python`). Despite Unsloth OSS's reputation for gating multi-GPU, the installed build (unsloth 2026.8.9 / unsloth_zoo 2026.8.6) did **not** refuse, and it did **not** silently fall back to one GPU: all 8 cards held ~24 GB of VRAM under the job's own PIDs for the whole run.
 
-Exact launch (world size 8; run under a machine-wide lock since the box is shared):
+Launch (world size 8; run under a machine-wide `flock` so the job owns all 8 GPUs on a shared box):
 
 ```bash
-cd training/llm/unsloth && source .env_train_llm_unsloth/bin/activate
-# MUST override — bin/activate carries a stale 1-GPU pin from the single-GPU session
+cd training/llm/unsloth && source .env_unsloth/bin/activate
+# MUST override if bin/activate carries a stale 1-GPU pin from an earlier session
 export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export HF_HOME=/mnt/data_1.5t/hf_cache
+export HF_HOME=/path/to/hf_cache
 export RUN_ID=$(date -u +%Y%m%d_%H%M%S)   # shared by all ranks
 
 torchrun --nproc_per_node=8 --master_port 29680 train_llm_unsloth.py \
@@ -273,7 +273,7 @@ torchrun --nproc_per_node=8 --master_port 29680 train_llm_unsloth.py \
 
 **Parallelism:** DDP (RCCL backend), world size 8, one full replica per rank — no FSDP/ZeRO, no sharding (Unsloth OSS is DDP-only). Batch geometry `2 × 1 × 8 = 16`. Each rank is pinned by the script to `cuda:LOCAL_RANK` via `device_map={"": f"cuda:{local_rank}"}`; 73.4 M LoRA params trainable of 8.07 B.
 
-Real log lines (15/15 steps, exit 0):
+What a healthy run looks like (15/15 steps, exit 0):
 
 ```
 ASSERT device_count = 8
@@ -288,11 +288,11 @@ O^O/ \_/ \    Batch size per device = 2 | Gradient accumulation steps = 1
 === torchrun exit code: 0 ===
 ```
 
-GPU evidence — `rocm-smi` sampled **in-band** (from inside the training script, while the run was live), cross-checked against our own PIDs so a co-tenant's job cannot be mistaken for ours:
+GPU residency check — sample `rocm-smi` **in-band** (from inside the training script, while the run is live) and cross-check against the job's own PIDs so a co-tenant's job cannot be mistaken for yours:
 
 ```
 --- pgrep -f train_llm_unsloth.py ---
-259845 260004 260005 260006 260007 260008 260009 260010 260011   # 1 torchrun + 8 ranks
+<pid> <pid> ... <pid>                             # 1 torchrun + 8 ranks
 
 --- rocm-smi --showmeminfo vram --csv (card, total_B, used_B) ---
 card0,309220868096,32087703552     card4,309220868096,24091340800
@@ -302,23 +302,23 @@ card3,309220868096,24466399232     card7,309220868096,24141996032
 
 --- rocm-smi --showpids ---
 PID     PROCESS NAME  GPU(s)  VRAM USED
-260004  python3       1       25879388160
-260005  python3       2       24716886016
-260007  python3       2       25054515200
-260008  python3       2       25543204864
-260009  python3       2       24333090816
-260010  python3       2       24582651904
-260011  python3       2       25769684992
-259845  pt_elastic    0       0
+<pid>   python3       1       25879388160
+<pid>   python3       2       24716886016
+<pid>   python3       2       25054515200
+<pid>   python3       2       25543204864
+<pid>   python3       2       24333090816
+<pid>   python3       2       24582651904
+<pid>   python3       2       25769684992
+<pid>   pt_elastic    0       0
 ```
 
-All 8 cards carry ~24 GB (card0 ~32 GB — rank 0 also holds the torchrun/NCCL overhead), and every VRAM-holding PID is one of our own 8 ranks. That is a genuine 8-way run, not a rank-0-only fallback.
+All 8 cards carry ~24 GB (card0 ~32 GB — rank 0 also holds the torchrun/NCCL overhead), and every VRAM-holding PID should be one of the job's own 8 ranks. That is a genuine 8-way run, not a rank-0-only fallback.
 
 **What differed from the 1-GPU run:**
 
 - **Launcher only** — `torchrun --nproc_per_node=8 --master_port 29680` instead of `python`. Same model, same dataset, same LoRA/optimizer flags, same `requirements_unsloth.txt` (no new package or pin needed).
 - **`export RUN_ID=...` is mandatory**, not optional: all ranks must agree on the output dir (the script reads `RUN_ID` from the environment).
-- **The venv's `bin/activate` carries a stale `export HIP_VISIBLE_DEVICES=4` / `CUDA_VISIBLE_DEVICES=4`** (appended during the 1-GPU session, ~line 72). Sourcing it and launching would pin every rank to a single card and quietly produce a fake "8-GPU" result. Always re-export the full device list after activating, and assert `torch.cuda.device_count() == 8` before training.
+- **A venv `bin/activate` that carries a stale `export HIP_VISIBLE_DEVICES=4` / `CUDA_VISIBLE_DEVICES=4`** (appended during an earlier 1-GPU session) is a real trap. Sourcing it and launching would pin every rank to a single card and quietly produce a fake "8-GPU" result. Always re-export the full device list after activating, and assert `torch.cuda.device_count() == 8` before training.
 - `--save_strategy no` for the smoke run (the script still writes the final adapter from rank 0 — ~311 MB — regardless; there is no `load_best_model_at_end`, so nothing else is forced).
 - Effective batch is `world_size ×` larger, so with the tiny 9-row sample file one step ≈ one epoch; loss values are not comparable step-for-step with the 1-GPU smoke.
 
@@ -326,11 +326,11 @@ All 8 cards carry ~24 GB (card0 ~32 GB — rank 0 also holds the torchrun/NCCL o
 
 **About Unsloth's multi-GPU guard (why this could have failed):** the installed package *does* still ship the block — `unsloth/tokenizer_utils.py` (~line 1703) injects into `SFTTrainer.train`, for hosts where `nvidia-smi` is absent (i.e. every ROCm box), `if torch.cuda.device_count() > 1: raise RuntimeError('Unsloth currently does not support multi GPU setups - but we are working on it!')`, and `unsloth/_gpu_init.py:120` still reads "Multi-GPU is not yet supported (beta available on request)". On this stack that guard **never lands**: the patcher rebuilds `train` from `getsource(trl.trainer.sft_trainer.SFTTrainer.train)`, and with **trl 0.24.0** that patch path bails out, so the runtime `SFTTrainer.train` contains no such check (verified by inspecting the patched source: `'does not support multi GPU' in inspect.getsource(...)` → `False`). Relatedly, `unsloth/models/_utils.py:2729` only forces `DistributedType.NO` when `DEVICE_COUNT == 1 and WORLD_SIZE <= 1`, so `WORLD_SIZE=8` leaves real DDP intact. **Caveat: this is version-luck, not a supported guarantee** — a trl/unsloth upgrade that restores the patch could re-enable the refusal. If a future upgrade starts raising that RuntimeError, pin back to trl 0.24.0 + unsloth 2026.8.9, and re-run the one-liner check above before trusting a multi-GPU run.
 
-Not retested at 8 GPUs (time-boxed): QLoRA `--load_in_4bit` and GRPO. GRPO's TRL trainer is not in Unsloth's patch list at all, so the guard is a non-issue there, but its `batch_size × grad_acc_steps × world_size % num_generations == 0` invariant does bind at world size 8.
+Not retested at 8 GPUs: QLoRA `--load_in_4bit` and GRPO. GRPO's TRL trainer is not in Unsloth's patch list at all, so the guard is a non-issue there, but its `batch_size × grad_acc_steps × world_size % num_generations == 0` invariant does bind at world size 8.
 
-## ✅ Tested on NVIDIA H100 80GB (CUDA 13.0) — 2026-08-22
+## Platform notes — NVIDIA H100 80GB (CUDA 13.0)
 
-Validated **single-GPU** on 1× NVIDIA H100 80GB HBM3 (Hopper cc 9.0, driver 580.173.02, **CUDA 13.0**, Python 3.12.3) on a shared 8-GPU node (this run pinned to physical GPU 4 via `CUDA_VISIBLE_DEVICES=4`; GPUs 0–3 were a co-tenant job and untouched). Model: **`unsloth/gemma-4-31b-it-unsloth-bnb-4bit`** — the folder's pre-quantized 4-bit default (QLoRA), which fits comfortably in 80 GB (~24 GB peak). This mirrors the folder's documented 1-GPU smoke exactly, run in 4-bit.
+Validated **single-GPU** on 1× NVIDIA H100 80GB HBM3 (Hopper cc 9.0, driver 580.173.02, **CUDA 13.0**, Python 3.12.3) on a shared 8-GPU node (pinned to physical GPU 4 via `CUDA_VISIBLE_DEVICES=4`; GPUs 0–3 were a co-tenant job and untouched). Model: **`unsloth/gemma-4-31b-it-unsloth-bnb-4bit`** — the folder's pre-quantized 4-bit default (QLoRA), which fits comfortably in 80 GB (~24 GB peak). This mirrors the folder's documented 1-GPU smoke exactly, run in 4-bit.
 
 ### NVIDIA install that worked (CUDA 13)
 
@@ -342,7 +342,7 @@ pip install torch numpy                       # baseline: torch 2.13.0+cu130 (sa
 pip install -r requirements_unsloth.txt        # pulls torch 2.11.0+cu130, triton 3.6.0, xformers 0.0.35
 ```
 
-- **Torch-clobber check (do this — the brief flags it):** `pip install unsloth==2026.8.9 …` (or `-r requirements_unsloth.txt`) **downgraded torch 2.13.0+cu130 → 2.11.0+cu130** to honor the pin. Crucially it stayed **`+cu130`** (CUDA 13), NOT an older-CUDA or CPU/ROCm build — so no recovery was needed. Re-verify after install: `python -c "import torch;print(torch.__version__, torch.version.cuda)"` → `2.11.0 13.0`.
+- **Torch-clobber check (do this):** `pip install unsloth==2026.8.9 …` (or `-r requirements_unsloth.txt`) **downgraded torch 2.13.0+cu130 → 2.11.0+cu130** to honor the pin. Crucially it stayed **`+cu130`** (CUDA 13), NOT an older-CUDA or CPU/ROCm build — so no recovery was needed. Re-verify after install: `python -c "import torch;print(torch.__version__, torch.version.cuda)"` → `2.11.0 13.0`.
 - **bitsandbytes 0.50.0 stock wheel works on CUDA out of the box** — `Linear4bit` forward is finite on H100; `--load_in_4bit` (QLoRA) and `adamw_8bit` work with no special build (QLoRA is easier on NVIDIA than ROCm).
 - **flash-attn: not installed, not needed.** Unsloth manages attention internally. For this **gemma-4 4-bit** path its runtime banner reports `Xformers = None. FA2 = False` (i.e. it uses **SDPA** internally for gemma-4 even though `xformers==0.0.35` is importable) — training is correct. Installing `flash-attn` is unnecessary for this model; leave it out.
 - **tf32:** `torch.backends.cuda.matmul.allow_tf32` reads `False` by default here; the trainer runs **bf16** (`bf16=True` in `SFTConfig`, banner `Bfloat16 = TRUE`), so tf32 is not on the matmul path for training anyway.
@@ -357,7 +357,7 @@ CUDA_VISIBLE_DEVICES=4 python -c "from unsloth import FastModel; import torch, t
 ### Smoke command (LoRA/QLoRA SFT — the folder's 1-GPU smoke, 4-bit, steps bumped to 15 for a visible loss curve)
 
 ```bash
-CUDA_VISIBLE_DEVICES=4 RUN_ID=$(date -u +%Y%m%d_%H%M%S) HF_HOME=/mnt/gsma/gsma/gsma/models \
+CUDA_VISIBLE_DEVICES=4 RUN_ID=$(date -u +%Y%m%d_%H%M%S) HF_HOME=/path/to/hf_cache \
 python train_llm_unsloth.py \
   --model_name unsloth/gemma-4-31b-it-unsloth-bnb-4bit \
   --load_in_4bit \
@@ -371,7 +371,7 @@ python train_llm_unsloth.py \
 
 **Step count:** 9 train rows (10-row sample, 1 held out for eval), `batch_size 2 × grad_acc 1 × world 1 = 2` → `Total steps = 15` over 3 epochs. Non-trivial (15 real optimizer steps).
 
-### Evidence (real log lines — QLoRA 4-bit, 15/15 steps, exit 0)
+### Expected output (QLoRA 4-bit, 15/15 steps, exit 0)
 
 ```
 ==((====))==  Unsloth 2026.8.9: Fast Gemma4 patching. Transformers: 5.5.0.
@@ -390,29 +390,29 @@ O^O/ \_/ \    Torch: 2.11.0+cu130. CUDA: 9.0. CUDA Toolkit: 13.0. Triton: 3.6.0
 
 Loss falls **9.091 → 1.063** (finite `grad_norm` throughout; the transient bumps at steps 5/12 are the benign bf16-QLoRA logging artifact the README already notes — the trend is clearly down).
 
-GPU residency — `nvidia-smi` VRAM-by-PID sampled **in-band** (a background loop inside the run script, live during training), filtered to physical **GPU 4's UUID** and **our own PID** so the co-tenant on GPUs 0–3 cannot be mistaken for ours:
+GPU residency check — sample `nvidia-smi` VRAM-by-PID **in-band** (a background loop inside the run script, live during training), filtered to physical **GPU 4's UUID** and **the job's own PID** so a co-tenant on GPUs 0–3 cannot be mistaken for yours:
 
 ```
-# our training PID = 1518988 ; physical GPU 4 UUID = GPU-e13d18b6-ccfb-6676-668a-cd489ad01b55
---- nvidia-smi --query-compute-apps=pid,used_memory,gpu_uuid (grep GPU-4 UUID & our PID) ---
-1518988, 18646 MiB, GPU-e13d18b6-ccfb-6676-668a-cd489ad01b55   # during load
-1518988, 23819 MiB, GPU-e13d18b6-ccfb-6676-668a-cd489ad01b55   # peak, mid-training
+# resolve your training PID and physical GPU 4's UUID first
+--- nvidia-smi --query-compute-apps=pid,used_memory,gpu_uuid (grep the GPU-4 UUID & your PID) ---
+<pid>, 18646 MiB, <gpu-uuid>   # during load
+<pid>, 23819 MiB, <gpu-uuid>   # peak, mid-training
 --- nvidia-smi --id=4 --query-gpu=memory.used,utilization.gpu ---
 4, 23819 MiB, 12 %      # GPUs 0-3 (co-tenant) never touched
 ```
 
-The only VRAM-holding PID on GPU 4 is our own training process — a genuine GPU-4 run, ~24 GB peak (well under 80 GB).
+The only VRAM-holding PID on GPU 4 should be your own training process — a genuine GPU-4 run, ~24 GB peak (well under 80 GB).
 
-**Verdict: WORKS.** QLoRA (4-bit) LoRA SFT runs on H100/CUDA-13 out of the box with the pinned `requirements_unsloth.txt` verbatim — no code change, no torch recovery, no flash-attn build. Single-GPU validated.
+**This path works as documented on H100.** QLoRA (4-bit) LoRA SFT runs on H100/CUDA-13 out of the box with the pinned `requirements_unsloth.txt` verbatim — no code change, no torch recovery, no flash-attn build. Single-GPU validated.
 
 Status by tier, single H100:
 
 | Tier | Status | Notes |
 |---|---|---|
 | QLoRA (`--load_in_4bit`, pre-quant 4-bit base) | ✅ pass | 15/15 steps, loss 9.09→1.06, finite grad_norm, 935 MB adapter saved, ~24 GB peak. |
-| LoRA SFT (bf16 base) | ⚪ not run (time-box) | bf16 31B base ≈ 60+ GB — fits 80 GB but tight; QLoRA is the folder's default and was the smoke. |
-| GRPO | ⚪ not run (time-box) | On-device path expected to work as on MI355X; on CUDA the ROCm `UNSLOTH_GRPO_SEQ_PACKING=0` workaround should NOT be needed (that bug was ROCm-specific). |
-| DDP / multi-GPU (2, then 8) | ⚪ **deferred** | Node is shared (GPUs 0–3 busy). See below. |
+| LoRA SFT (bf16 base) | ⚪ not run | bf16 31B base ≈ 60+ GB — fits 80 GB but tight; QLoRA is the folder's default and was the smoke. |
+| GRPO | ⚪ not run | On-device path expected to work as on MI355X; on CUDA the ROCm `UNSLOTH_GRPO_SEQ_PACKING=0` workaround should NOT be needed (that bug was ROCm-specific). |
+| DDP / multi-GPU (2, then 8) | ⚪ **not run** | Node was shared (GPUs 0–3 busy). See below. |
 
 **What differed from the MI355X recipe:**
 
@@ -422,7 +422,7 @@ Status by tier, single H100:
 - **VRAM ceiling is 80 GB vs 288 GB on MI355X** — QLoRA 31B (~24 GB peak) is comfortable; bf16 full-precision 31B base (~60+ GB) would be tight but should fit. No OOM hit in this smoke.
 - **Device flags:** plain `CUDA_VISIBLE_DEVICES=4`; no `HIP_VISIBLE_DEVICES` / `RAY_EXPERIMENTAL_NOSET_HIP_VISIBLE_DEVICES`.
 
-**Multi-GPU (deferred — NOT run this wave):** the node's GPUs 0–3 were a co-tenant production job, so only 1 free GPU was used. To run multi-GPU on H100, use the existing 8-GPU recipe (the "8-GPU run" section above) with `torchrun --nproc_per_node=N`, an explicit shared `RUN_ID`, and `CUDA_VISIBLE_DEVICES` listing the free cards. On CUDA the multi-GPU guard analysis still applies (trl 0.24.0 makes the refusal path bail out), but here it is even less likely to bite since `nvidia-smi` *is* present. This was not exercised on H100 — verify `torch.cuda.device_count()` matches your device list and confirm per-GPU residency with `nvidia-smi` before trusting a multi-GPU H100 run.
+**Multi-GPU on H100 — NOT run here:** the node's GPUs 0–3 were a co-tenant job, so only 1 free GPU was used. To run multi-GPU on H100, use the existing 8-GPU recipe (the "8-GPU run" section above) with `torchrun --nproc_per_node=N`, an explicit shared `RUN_ID`, and `CUDA_VISIBLE_DEVICES` listing the free cards. On CUDA the multi-GPU guard analysis still applies (trl 0.24.0 makes the refusal path bail out), but here it is even less likely to bite since `nvidia-smi` *is* present. This was not exercised on H100 — verify `torch.cuda.device_count()` matches your device list and confirm per-GPU residency with `nvidia-smi` before trusting a multi-GPU H100 run.
 
 ## Quantization (4-bit / 8-bit / 16-bit)
 

@@ -83,7 +83,7 @@ python -c "import torch, deepspeed, trl, transformers, peft, datasets; print('im
 ### AMD / ROCm
 
 **Tested on 2×MI355X (gfx950), ROCm 7.2.4 — see "MI355X (ROCm 7.2) — tested" below for
-the verified commands and per-algorithm verdicts.** The differences from the NVIDIA
+the verified commands and per-algorithm results.** The differences from the NVIDIA
 install:
 
 - **PyTorch** — install from the ROCm wheel index instead of PyPI, **before** the rest
@@ -120,8 +120,8 @@ HF_TOKEN=hf_xxxxxxxxxxxxxxxx
 The script loads it via `load_dotenv("dev.env")` — run the script from inside
 `training/llm/deepspeed/` so the relative path resolves. `dev.env` is git-ignored at the
 repo root; never commit a token. The script also sets `HF_HOME` (`--hf_home`), NCCL env
-vars, and clears proxy vars automatically (a proxy that 403s huggingface.co was seen on
-the tested cluster).
+vars, and clears proxy vars automatically (a proxy that 403s huggingface.co has been seen
+on some clusters).
 
 Launch with `accelerate launch --use_deepspeed`. The only accelerate-config fields that
 matter are `distributed_type: DEEPSPEED` and `zero3_init_flag` — a minimal
@@ -161,15 +161,22 @@ pipelines. This trainer is immune: it only reads the `messages` column and
 own loader for this data, ignore or drop the extra columns rather than relying on their
 inferred dtype.
 
-To swap in real data, point `--train_file` at your own `messages` JSONL (the tested
-runs used absolute paths like `/mnt/gsma/FTaaS_data/UC524_combined_op_clean_smoke_10k.jsonl`
-— any path works). Any row failing the `messages` contract fails the preflight with the
-row index and reason.
+To swap in real data, point `--train_file` at your own `messages` JSONL (relative or
+absolute — any path works). Any row failing the `messages` contract fails the preflight
+with the row index and reason.
 
 ## Run
 
 Run from inside `training/llm/deepspeed/`. Effective batch =
 `batch_size × grad_acc_steps × num GPUs`.
+
+The commands below use two placeholders — set them once to suit your machine:
+
+```bash
+# Set these to suit your machine
+export OUTPUT_DIR=/path/to/outputs     # training artifacts (checkpoints, adapters, logs)
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+```
 
 **Smoke test against the shipped sample** (1 GPU; the 10-row sample leaves 8 train /
 2 eval rows):
@@ -216,8 +223,7 @@ continue on top of an existing SFT adapter via
 
 ## Arguments
 
-Defaults are the tested values, except paths, which were absolute on the tested cluster
-(old defaults noted in Data / Output).
+Defaults are the tested values.
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -288,10 +294,10 @@ ZeRO stages (`--zero_stage`):
 ## Output
 
 Outputs land in `<experiment_root>/<RUN_ID>/<output_subdir>/` (or `--output_dir`
-verbatim). `RUN_ID` comes from the environment or a UTC timestamp. The tested runs used
-`--experiment_root /mnt/gsma/gsma/gsma/experiments/` and
-`--hf_home /mnt/gsma/gsma/gsma/models/` — the new relative defaults (`experiments/`,
-`hf_cache/`) keep the same layout under the working directory.
+verbatim). `RUN_ID` comes from the environment or a UTC timestamp. `--experiment_root`
+and `--hf_home` accept absolute paths (e.g. `$OUTPUT_DIR/experiments/`, `$HF_HOME`); the
+relative defaults (`experiments/`, `hf_cache/`) keep the same layout under the working
+directory.
 
 - Per-epoch checkpoints (`save_strategy="epoch"`, capped by `--save_total_limit`).
 - `final_model/` — the LoRA adapter (with `--use_lora`) or consolidated 16-bit weights
@@ -309,7 +315,7 @@ verbatim). `RUN_ID` comes from the environment or a UTC timestamp. The tested ru
 | PyTorch | PyPI pins in requirements (`torch 2.11.0+cu130` — the pin resolves natively on CUDA 13, no `--index-url`) | `download.pytorch.org/whl/rocm7.2` (satisfies the pins exactly) |
 | DeepSpeed ops | pure-python install; JIT via `nvcc` only if an op is requested (**none needed** for ZeRO-2 + `adamw_torch` — confirmed on H100) | pure-python install; JIT via `hipcc` only if an op is requested (none needed for ZeRO-2 + `adamw_torch`) |
 
-Verified upstream sources (fetched 2026-08-19):
+Verified upstream sources:
 
 - **DeepSpeed README** (github.com/deepspeedai/DeepSpeed) — lists a ROCm compiler
   (`hipcc`) alongside `nvcc` as a supported requirement; names AMD MI100 and MI200 among
@@ -331,17 +337,16 @@ Verified upstream sources (fetched 2026-08-19):
 **Other hardware (upstream claims — not verified here):** Intel Gaudi/HPU (upstream CI),
 Intel XPU (upstream CI), Intel Xeon CPU (upstream CI), Huawei Ascend NPU (contributor),
 Tecorigin SDAA (contributor) — per the DeepSpeed README's "Contributed HW support"
-accelerator table (checked August 2026). This repo provides setup instructions for
-NVIDIA and AMD only.
+accelerator table. This repo provides setup instructions for NVIDIA and AMD only.
 
 ## MI355X (ROCm 7.2) — tested
 
-Verified 2026-08-19 on 2×AMD Instinct MI355X (gfx950, 288GB), ROCm 7.2.4, Ubuntu,
+Validated on 2×AMD Instinct MI355X (gfx950, 288GB), ROCm 7.2.4, Ubuntu,
 Python 3.12.3, single node. All three algorithms were smoke-tested with LoRA + ZeRO-2,
 bf16, `--flash_attention sdpa`, per-device batch 1, 1 epoch over the shipped 10-row
 sample (`accelerate launch --use_deepspeed`, 2 processes).
 
-**Install (exactly what worked):**
+**Install (validated sequence):**
 
 ```bash
 python3 -m venv .env_deepspeed
@@ -357,11 +362,6 @@ Resolved set: `torch 2.11.0+rocm7.2`, `torchvision 0.26.0+rocm7.2`, all other pi
 unchanged (`deepspeed 0.19.4`, `transformers 5.5.0`, `trl 0.24.0`, `peft 0.20.0`,
 `accelerate 1.14.0`). DeepSpeed installed as a pure-python wheel — no hipcc compile at
 install and no JIT build triggered during any run.
-
-> **Venv note:** transcripts below reference the campaign venv
-> (`.env_train_llm_deepspeed`) verbatim. The campaign venvs were removed during the
-> 2026-08 reorg — rebuild from `requirements_deepspeed.txt` (new convention:
-> `.env_deepspeed`).
 
 **Launch (2 GPUs; pass a non-default port when the box is shared):**
 
@@ -381,9 +381,9 @@ google/gemma-3-1b-it`; for GRPO `--train_mode grpo --grpo_num_generations 2` (th
 global generation batch — `num_processes × batch_size` — must be divisible by
 `--grpo_num_generations`).
 
-**Per-algorithm verdicts:**
+**Per-algorithm results:**
 
-| Mode | Model | Verdict | Evidence (from the run logs) |
+| Mode | Model | Result | Evidence (from the run logs) |
 |---|---|---|---|
 | SFT (LoRA, ZeRO-2) | `google/gemma-4-E4B-it` | **Works, unmodified** | `{'loss': '10.48', 'grad_norm': '37.87', ...}` → `{'loss': '6.555', 'grad_norm': '8.469', ...}` over 4/4 steps; `Saving final LoRA adapter`; `Training Complete.` |
 | DPO (LoRA, ZeRO-2) | `google/gemma-3-1b-it` | **Works with changes** (import fixes + `warnings_issued` shim; gemma-4 blocked — see Notes) | `{'loss': '0.6914', ...}` → `{'loss': '0.05249', 'rewards/margins': '2.172', 'rewards/accuracies': '1', ...}` over 5/5 steps; `Training Complete.` |
@@ -409,7 +409,7 @@ ROCm + DeepSpeed + bf16 detected: setting `communication_data_type='fp32'` to av
   tokenization uses `tokenize=False`, so neither of those transformers-5.x sharp edges
   applies.
 - Default master port 29500 collides with parallel jobs — pass
-  `--main_process_port` (29620 used in the tested runs).
+  `--main_process_port` (29620 in the example above).
 
 **Platform-independent issues found (would also occur on CUDA with these pins):**
 
@@ -432,19 +432,19 @@ ROCm + DeepSpeed + bf16 detected: setting `communication_data_type='fp32'` to av
    therefore needs a text-only model (verified with `google/gemma-3-1b-it`). SFT with
    gemma-4 is unaffected.
 
-### 8-GPU run (8x MI355X, ROCm 7.2.4) — tested August 2026
+### 8-GPU run (8x MI355X, ROCm 7.2.4)
 
-Verified 2026-08-19 on **all 8** MI355X (gfx950, 288GB each), ROCm 7.2.4, single node,
+Validated on **all 8** MI355X (gfx950, 288GB each), ROCm 7.2.4, single node,
 same venv and same pins as the 2-GPU run above. **All three tiers passed at world size 8
 with zero code and zero requirements changes.**
 
-| Tier | Model | Verdict | Steps | Final loss | Wall time |
+| Tier | Model | Result | Steps | Final loss | Wall time |
 |---|---|---|---|---|---|
 | SFT (LoRA, ZeRO-2) | `google/gemma-4-E4B-it` | **WORKS** — unmodified | 32 | `10.58 → 0.02386` (eval 0.01136) | 28.31 s |
 | DPO (LoRA, ZeRO-2) | `google/gemma-3-1b-it` | **WORKS** — unmodified at 8 ranks (still needs the trl import fixes from the section above) | 32 | `0.6914 → 1.188e-24`, margins `60`, accuracies `1` | 18.63 s |
 | GRPO (LoRA, ZeRO-2) | `google/gemma-3-1b-it` | **WORKS** — unmodified at 8 ranks; generation loop scales cleanly | 20 | `0` **by design** (placeholder reward ⇒ `reward: 1`, `reward_std: 0`) | 35.80 s |
 
-**Launch (exactly what ran — all three tiers back to back in one job):**
+**Launch (all three tiers back to back in one job):**
 
 ```bash
 export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7      # see the CUDA_VISIBLE_DEVICES warning below
@@ -474,7 +474,8 @@ GPU, pure data parallel — no TP/PP), bf16, LoRA r=64 α=128 `all-linear`, per-
 GRPO used `num_generations=2` because the global generation batch
 (`num_processes × batch_size` = 8) must be divisible by it.
 
-**Evidence the run really used 8 GPUs** (`rocm-smi` sampled *inside* the job, not after):
+**How to confirm the run really uses 8 GPUs** (`rocm-smi` sampled *inside* the job, not
+after) — what a healthy 8-rank run looks like:
 
 ```
 [assert] torch 2.11.0+rocm7.2 | hip 7.2.26015 | device_count=8
@@ -487,17 +488,16 @@ GRPO used `num_generations=2` because the global generation batch
 ```
 
 ```
-########## 17:08:43 UTC tier=sft
-GPU[0..7]: GPU use (%): 100        # all eight, every sample taken during training
+GPU[0..7]: GPU use (%): 100        # all eight, on every sample taken during training
 ---- rocm-smi --showpids ----      # 8 distinct KFD python3 PIDs, one GPU each
-3502667..3502674  python3  GPU(s) 1  VRAM ~4.3-4.8 GB (early step)
-3501680           pt_elastic
+<pid>..<pid+7>   python3      GPU(s) 1   VRAM ~4.3-4.8 GB (early step)
+<pid>            pt_elastic
 ```
 
-PID cross-check: the `pt_elastic` agent (pid `3501680`) carried the runner's own process
-group id, and the eight KFD PIDs holding VRAM (`3502667`–`3502674`) were exactly its eight
-children — i.e. the VRAM belonged to *this* job, not to another tenant of the box. 32 of 32
-in-training samples showed 8 busy GPUs and exactly 8 KFD PIDs.
+PID cross-check: the `pt_elastic` agent carries the launcher's own process group id, and
+the eight KFD PIDs holding VRAM should be exactly its eight children — i.e. the VRAM
+belongs to *this* job, not to another tenant of the box. All 32 in-training samples showed
+8 busy GPUs and exactly 8 KFD PIDs.
 
 **ZeRO-2 confirmed active at 8 ranks** (not just the flag): every checkpoint contained one
 optimizer shard *per rank* —
@@ -534,8 +534,8 @@ Peak per-GPU VRAM for the other tiers at 8 ranks: DPO **19.54 GiB**, GRPO **12.2
 - **Nothing in the code, requirements, or DeepSpeed config.** Same venv, same pins, same
   `--zero_stage 2`; only `--num_processes` and `--main_process_port` changed. DeepSpeed
   still JIT-compiled nothing (no hipcc invocation, no slow first step).
-- ⚠️ **`.env_train_llm_deepspeed/bin/activate` ends with a stale
-  `export CUDA_VISIBLE_DEVICES=0,1` from the 2-GPU session.** Sourcing the venv silently
+- ⚠️ **A venv `activate` script that ends with a stale `export CUDA_VISIBLE_DEVICES=0,1`
+  (left over from an earlier 2-GPU session) is a real trap.** Sourcing the venv silently
   pins you to 2 GPUs, so an "8-GPU" launch would quietly run on 2. **Always re-export both
   `HIP_VISIBLE_DEVICES` and `CUDA_VISIBLE_DEVICES` after activating**, and assert
   `torch.cuda.device_count() == 8` before training.
@@ -555,7 +555,7 @@ checkpoints for smoke runs (this trainer hard-codes `save_strategy="epoch"`, so 
 run writes one checkpoint plus `final_model` — ~4.9 GB for the gemma-4-E4B LoRA, ~1.6 GB
 for gemma-3-1b), and delete the weights afterwards.
 
-### 4-GPU sharding run — **ZeRO-3 full fine-tune** (4×MI355X, ROCm 7.2.4) — tested August 2026
+### 4-GPU sharding run — **ZeRO-3 full fine-tune** (4×MI355X, ROCm 7.2.4)
 
 > Closes the gap left open by the two sections above: both of them ran **ZeRO-2 with
 > LoRA**, where there is almost nothing to shard. This run is the opposite corner —
@@ -563,21 +563,20 @@ for gemma-3-1b), and delete the weights afterwards.
 > weights plus the `stage3_gather_16bit_weights_on_model_save` collective all-gather on
 > save. Nothing below contradicts the ZeRO-2 results; it extends them.
 
-Verified 2026-08-19 on physical GPUs **4,5,6,7** of the same 8×MI355X node (a sibling job
-owned 0-3), same venv and same pins. **Verdict: ZeRO-3 holds at 4 GPUs — no code, config,
-or requirements changes. Three runs, all rc=0, no hang, no all-gather deadlock.**
+Validated on 4 GPUs (physical **4,5,6,7**) of an 8×MI355X node, same venv and same pins.
+**ZeRO-3 holds at 4 GPUs — no code, config, or requirements changes. Three runs, all
+rc=0, no hang, no all-gather deadlock.**
 
 ```bash
-source .env_train_llm_deepspeed/bin/activate
-export HIP_VISIBLE_DEVICES=4,5,6,7      # MUST re-export: activate pins 0,1 (see warning above)
+source .env_deepspeed/bin/activate
+export HIP_VISIBLE_DEVICES=4,5,6,7      # MUST re-export if activate pins 0,1 (see warning above)
 export CUDA_VISIBLE_DEVICES=4,5,6,7     # renumber to 0-3 inside the process
-export HF_HOME=/mnt/data_1.5t/hf_cache
 
 accelerate launch --num_processes=4 --mixed_precision=bf16 --use_deepspeed \
   --main_process_port 29792 train_llm_deepspeed.py \
   --train_mode sft --model_name google/gemma-4-E4B-it --mask_prompt \
   --train_file <200-row messages jsonl: the shipped 10-row sample tiled ×20> \
-  --output_dir /mnt/data_1.5t/outputs/train_llm_deepspeed_4gpu/zero3_sft \
+  --output_dir $OUTPUT_DIR/deepspeed_4gpu/zero3_sft \
   --flash_attention sdpa --gradient_checkpointing --zero_stage 3 \
   --logging_steps 1 --eval_samples 4 --num_train_epochs 1 \
   --batch_size 1 --grad_acc_steps 1 --save_total_limit 1 --num_proc 4 \
@@ -587,7 +586,7 @@ accelerate launch --num_processes=4 --mixed_precision=bf16 --use_deepspeed \
 Note there is **no `--use_lora`** — this is a full fine-tune of all 8B parameters, which
 is what makes stage 3 meaningful.
 
-**Evidence (from the run logs):**
+**What a healthy run looks like:**
 
 ```
 [rank=0] INFO: Mode=sft | DeepSpeed: ZeRO stage=3, optimizer_offload=none
@@ -605,7 +604,6 @@ Model weights saved in .../final_model/model.safetensors
 `rocm-smi` sampled every 5 s *during* training (all four owned GPUs, mid-run sample):
 
 ```
-=== 20:34:41 ===
 GPU[4]: GPU use (%): 78     VRAM Total Used Memory (B): 80206942208   # 74.7 GiB
 GPU[5]: GPU use (%): 73     VRAM Total Used Memory (B): 85438681088   # 79.6 GiB
 GPU[6]: GPU use (%): 72     VRAM Total Used Memory (B): 80206180352   # 74.7 GiB
@@ -642,7 +640,7 @@ GPU[7]: GPU use (%): 77     VRAM Total Used Memory (B): 83828494336   # 78.1 GiB
 
 ## H100 (CUDA 13.0) — tested
 
-Verified 2026-08-22 on 1×NVIDIA H100 80GB HBM3 (Hopper cc 9.0, native FP8), driver
+Validated on 1×NVIDIA H100 80GB HBM3 (Hopper cc 9.0, native FP8), driver
 **580.173.02**, **CUDA 13.0** toolkit at `/usr/local/cuda-13.0`, Ubuntu, Python 3.12.3,
 single node. SFT was smoke-tested with LoRA + ZeRO-2, bf16, `--flash_attention sdpa`,
 per-device batch 1, 4 epochs over the shipped 10-row sample (8 train / 2 eval) via
@@ -650,7 +648,7 @@ per-device batch 1, 4 epochs over the shipped 10-row sample (8 train / 2 eval) v
 sibling job — this run was pinned to physical **GPU 4** with `CUDA_VISIBLE_DEVICES=4` and
 a non-default `--main_process_port 29641`).
 
-**Install (exactly what worked):**
+**Install (validated sequence):**
 
 ```bash
 python3 -m venv .env_deepspeed
@@ -708,7 +706,7 @@ memorization visible (`mean_token_accuracy` → 1.0 on several late steps, held-
 `eval_loss` bottoming at epoch 2 then ticking up as the tiny set is memorized — exactly
 the behaviour the Overview predicts with `--load_best_model_at_end` off).
 
-**Real log lines (from the run, not paraphrased):**
+**Expected output:**
 
 ```
 [rank=0] INFO: Model weights loaded on all 1 ranks.
@@ -729,7 +727,7 @@ sampled *inside* the job; the launcher's own venv python held the VRAM):
 
 ```
 -- compute-apps on phys GPU4 --   (nvidia-smi --query-compute-apps ... -i 4, mid-run)
-GPU-e13d18b6-...  1446849  .../.env_deepspeed/bin/python   6726 MiB   # rising to ~15.8 GiB peak
+<gpu-uuid>  <pid>  .../.env_deepspeed/bin/python   6726 MiB   # rising to ~15.8 GiB peak
 ```
 
 Peak per-GPU VRAM was **~15.8 GiB** (gemma-4-E4B LoRA, bf16, seq ≤ ~2.3k, gradient
@@ -771,16 +769,16 @@ pattern, one per rank.)
   bother installing flash-attn for this trainer + gemma-4.
 - **`--flash_attention sdpa`, `HIP_*` dropped** — plain `CUDA_VISIBLE_DEVICES` only; no
   `HIP_VISIBLE_DEVICES` / `RAY_EXPERIMENTAL_NOSET_HIP_VISIBLE_DEVICES` needed.
-- **Datasets arrow-cache location matters on some mounts** — on the tested box the shared
-  model-cache filesystem rejected `datasets` arrow-cache writes with `PermissionError:
+- **Datasets arrow-cache location matters on some mounts** — a shared, read-only-ish
+  model-cache filesystem can reject `datasets` arrow-cache writes with `PermissionError:
   Operation not permitted` (the `num_proc` tokenization map hard-crashes the run at
   `cache-*.arrow`). Fix: point `HF_DATASETS_CACHE` at a writable fs (tmpfs here) while
   leaving `--hf_home` on the pre-cached model store. This is an environment/mount quirk, not
   a CUDA issue, but it *will* stop the run cold if the model cache is read-only-ish.
 - Default master port 29500 collides on a shared box — `29641` used here.
 
-**Multi-GPU (2, then 8) is deferred** (GPUs 0–3 were busy with a production job during this
-wave). No code, requirements, or DeepSpeed-config change is expected to scale up — only
+**Multi-GPU (2, then 8) is not covered by this single-GPU section** (the 2-GPU case is
+measured below). No code, requirements, or DeepSpeed-config change is needed to scale up — only
 `--num_processes` and `--main_process_port`. A meaningful N-GPU smoke needs a larger file:
 the eval split is floored at `world_size`, so the 10-row sample leaves too few train rows
 past ~4 ranks; tile the sample to ≥ `world_size × 32` rows (see the MI355X 8-GPU section).
@@ -788,18 +786,18 @@ On 80 GB cards, LoRA + ZeRO-2 replicates the frozen base per rank (per-GPU VRAM 
 you add GPUs — that is correct ZeRO-2 behaviour, see the MI355X 8-GPU note); use
 `--zero_stage 3` or full FT if you need per-GPU memory to fall.
 
-**DPO/GRPO on H100 not run this wave** (SFT was prioritised). They need the same
+**DPO/GRPO on H100 have not been exercised here** (SFT was prioritised). They need the same
 platform-independent trl↔transformers 5.5.0 import fixes the MI355X "Platform-independent
 issues" section documents (mergekit install + `llm_blender`/`weave` stubs +
 `warnings_issued` shim; DPO also needs a text-only model, not gemma-4). Those fixes are
 hardware-neutral and would apply identically on CUDA.
 
-**Verdict: SFT (LoRA, ZeRO-2) WORKS on H100 / CUDA 13.0, unmodified — the requirements pin
-resolves to a native cu130 build with no deviation.** The only adjustment the *box* forced
-was redirecting `HF_DATASETS_CACHE` off a read-only-ish shared mount; nothing in the trainer
-changed. Multi-GPU and DPO/GRPO are deferred, not blocked.
+**In summary: SFT (LoRA, ZeRO-2) works on H100 / CUDA 13.0, unmodified — the requirements
+pin resolves to a native cu130 build with no deviation.** The only environment-forced
+adjustment was redirecting `HF_DATASETS_CACHE` off a read-only-ish shared mount; nothing in
+the trainer changed. Multi-GPU and DPO/GRPO are untested here, not blocked.
 
-### 2-GPU run (2× H100, CUDA 13.0) — tested August 2026
+### 2-GPU run (2× H100, CUDA 13.0)
 
 > Supersedes the "Multi-GPU is deferred" note in the single-GPU section above **for the
 > 2-GPU case**: real 2-rank DeepSpeed ZeRO-2 sharding is now measured on H100, not
@@ -807,43 +805,42 @@ changed. Multi-GPU and DPO/GRPO are deferred, not blocked.
 > — only `--num_processes`, `--main_process_port`, and the GPU pinning changed. The 8-GPU
 > tier remains extrapolated-not-measured (see the note at the end of this subsection).
 
-Verified 2026-08-22 on **physical GPUs 4 and 7** of the same shared 8×H100 80GB node
+Validated on **physical GPUs 4 and 7** of a shared 8×H100 80GB node
 (driver **580.173.02**, CUDA 13.0, Hopper cc 9.0), single node, Python 3.12.3. GPUs 0–3
-were running a co-tenant production job (PIDs 1273508–1273511, one rank per GPU) throughout
+were running a co-tenant job (one rank per GPU) throughout
 — this run never touched them (verified by sampling `nvidia-smi -i 0,1,2,3` before and
 during the run; no foreign PID ever appeared on 0–3). SFT smoke test: LoRA + ZeRO-2, bf16,
 `--flash_attention sdpa`, per-device batch 1, **4 epochs** over the shipped ~10-row sample
 (8 train / 2 eval), `accelerate launch --use_deepspeed`, **2 processes**, port `29670`.
 
-**Model:** `LiquidAI/LFM2.5-350M` (fully cached under `HF_HOME`; the offline-safe default
-for this box — `gemma-4-E4B-it`, used in the single-GPU section above, has no cached
+**Model:** `LiquidAI/LFM2.5-350M` (fully cached under `HF_HOME`; an offline-safe choice —
+`gemma-4-E4B-it`, used in the single-GPU section above, needs a cached
 tokenizer when `HF_HUB_OFFLINE=1`). Its tokenizer ships a ChatML (`<|im_start|>`) chat
 template, so the trainer's chat-template masking works unmodified.
 
 **The DeepSpeed device-0 trap (why the launch looks like this):** the bare
 `deepspeed --num_gpus N` / `--include localhost` launcher can ignore
-`CUDA_VISIBLE_DEVICES` and grab GPU 0 — which here is the co-tenant's production job. Two
+`CUDA_VISIBLE_DEVICES` and grab GPU 0 — which on a shared box may be someone else's job. Two
 safe patterns avoid it: (a) `accelerate launch` with `CUDA_VISIBLE_DEVICES` exported
 (accelerate honors it — used here; `torch.cuda.device_count()` reported **2**, confirming
 only GPUs 4,7 were visible), or (b) `unset CUDA_VISIBLE_DEVICES` then
 `deepspeed --include localhost:4,7 --master_port 29670` (explicit device list).
 
-**Launch (exactly what ran — accelerate pattern, pins to GPUs 4 and 7 only):**
+**Launch (accelerate pattern, pins to GPUs 4 and 7 only):**
 
 ```bash
 source .env_deepspeed/bin/activate
 export CUDA_VISIBLE_DEVICES=4,7                       # accelerate honors this — ONLY 4 and 7
 unset HIP_VISIBLE_DEVICES RAY_EXPERIMENTAL_NOSET_HIP_VISIBLE_DEVICES   # ROCm leftovers, unused on CUDA
-export HF_HOME=/mnt/gsma/gsma/gsma/models             # 1.1 TB pre-cached model store
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1        # offline: use only cached weights
-export HF_DATASETS_CACHE=/dev/shm/h100/dscache_deepspeed2   # writable tmpfs (see arrow-cache quirk)
+export HF_DATASETS_CACHE=/dev/shm/dscache_deepspeed2  # writable tmpfs (see arrow-cache quirk)
 
 accelerate launch --num_processes=2 --mixed_precision=bf16 --use_deepspeed \
   --main_process_port 29670 \
   train_llm_deepspeed.py \
   --train_mode sft --train_file data/OTel_LLM_sample_10.jsonl \
   --model_name LiquidAI/LFM2.5-350M \
-  --hf_home /mnt/gsma/gsma/gsma/models \
+  --hf_home $HF_HOME \
   --flash_attention sdpa --gradient_checkpointing --mask_prompt \
   --use_lora --zero_stage 2 \
   --eval_samples 2 --num_train_epochs 4 --batch_size 1 --grad_acc_steps 1 \
@@ -862,46 +859,46 @@ curve is visible and non-trivial (≥8 steps).
 and decreasing (`1.288 → 0.0074` by step 15, `train_loss 0.8238`), `mean_token_accuracy`
 reaching `1.0` on late steps.
 
-**Real log lines (from the run, not paraphrased):**
+**Expected output:**
 
 ```
-[rank=0] 2026-08-23 05:55:24 INFO: Model weights loaded on all 2 ranks.
-[rank=0] 2026-08-23 05:55:24 INFO: Mode=sft | DeepSpeed: ZeRO stage=2, optimizer_offload=none
-[rank=0] 2026-08-23 05:55:26 INFO: Using 2 samples for evaluation
+[rank=0] INFO: Model weights loaded on all 2 ranks.
+[rank=0] INFO: Mode=sft | DeepSpeed: ZeRO stage=2, optimizer_offload=none
+[rank=0] INFO: Using 2 samples for evaluation
 {'loss': '1.288',    'grad_norm': '6.545', 'mean_token_accuracy': '0.6657', 'epoch': '0.25'}
 {'loss': '1.871',    'grad_norm': '7.659', 'mean_token_accuracy': '0.5859', 'epoch': '1'}
 {'loss': '0.1208',   'grad_norm': '3.852', 'mean_token_accuracy': '0.9672', 'epoch': '2.25'}
 {'loss': '0.007425', 'grad_norm': '0.7237','mean_token_accuracy': '1',      'epoch': '3.75'}
 {'eval_loss': '1.348', ... 'epoch': '1'}  →  {'eval_loss': '1.375', ... 'epoch': '4'}
 {'train_runtime': '9.153', 'train_samples_per_second': '3.496', 'train_steps_per_second': '1.748', 'train_loss': '0.8238', 'epoch': '4'}
-[rank=0] 2026-08-23 05:55:44 INFO: Saving final LoRA adapter to .../sft2/final_model
-[rank=0] 2026-08-23 05:55:45 INFO: Training Complete.        # rc=0
+[rank=0] INFO: Saving final LoRA adapter to .../sft2/final_model
+[rank=0] INFO: Training Complete.        # rc=0
 ```
 
 (Held-out `eval_loss` bottoms early then ticks up as the 8-row set is memorized — the
 `--load_best_model_at_end` off behaviour the Overview predicts.)
 
-**GPU residency proof — this run owned exactly GPUs 4 and 7, one training PID each**
-(`nvidia-smi` sampled *inside* the job every 4 s; UUID→index map confirmed
-`GPU-e13d18b6…` = phys **4**, `GPU-9eb34eec…` = phys **7**):
+**GPU residency check — the run should own exactly GPUs 4 and 7, one training PID each**
+(`nvidia-smi` sampled *inside* the job every 4 s; build a UUID→index map first so each
+compute-app row can be tied back to a physical GPU):
 
 ```
-== 05:55:37 ==                       # index, mem.used, util  (query-gpu -i 4,7)
+                                     # index, mem.used, util  (query-gpu -i 4,7)
 4, 5755 MiB, 10 %
 7, 5929 MiB, 42 %
 -- compute-apps on GPU 4,7 --        # pid, used_memory, gpu_uuid
-1726992, 5746 MiB, GPU-e13d18b6-ccfb-6676-668a-cd489ad01b55   # phys GPU 4
-1726993, 5920 MiB, GPU-9eb34eec-449b-7839-d362-d1e995e95239   # phys GPU 7
+<pid>, 5746 MiB, <gpu-uuid>          # phys GPU 4
+<pid>, 5920 MiB, <gpu-uuid>          # phys GPU 7
 ```
 
-Two distinct training PIDs (`1726992` on GPU 4, `1726993` on GPU 7) held VRAM concurrently
+Two distinct training PIDs (one on GPU 4, one on GPU 7) held VRAM concurrently
 for the whole run (rising ~1.5 → ~7.4 GiB peak, then both back to 0 MiB at teardown). Peak
 per-GPU VRAM was ~**7.4 GiB** (GPU 4) / ~**5.9 GiB** (GPU 7) — LFM2.5-350M is small; both
 well within 80 GB. GPU-utilisation samples read low because the coarse 4 s sampler kept
 landing in the idle gaps between the fast (~0.5 s) steps — `train_runtime` was only 9.15 s
 for 16 steps — so the VRAM-by-PID above is the authoritative residency evidence (same
 caveat as the single-GPU section). **Co-tenant check: `nvidia-smi -i 0,1,2,3` showed only
-PIDs 1273508–1273511 for the entire run — the production job on GPUs 0–3 was never touched.**
+the co-tenant's own PIDs for the entire run — the job on GPUs 0–3 was never touched.**
 
 **ZeRO-2 sharding confirmed active across both ranks** (not just the flag) — the fit-end
 checkpoint carried **one optimizer-state shard per rank**:
@@ -928,20 +925,20 @@ model mount was still required (a prior 2-GPU attempt died at `cache-*.arrow` wi
 `PermissionError: Operation not permitted` — the exact quirk the single-GPU section
 documents).
 
-**8-GPU on H100 is extrapolated, NOT measured.** The co-tenant production job held GPUs 0–3
-for this entire wave, so a world-size-8 run was not possible without risking someone else's
-job. The 2-GPU result plus the MI355X 8-GPU evidence (same code, same pins, ZeRO-2 scales
+**8-GPU on H100 is extrapolated, NOT measured.** A co-tenant job held GPUs 0–3, so a
+world-size-8 run was not possible without risking someone else's job. The 2-GPU result plus
+the MI355X 8-GPU evidence (same code, same pins, ZeRO-2 scales
 1→2→8 with only `--num_processes`/port changing) make an H100 8-GPU pass very likely to work
-unchanged, but it has not been run here. When GPUs 0–3 free up: tile the sample to ≥
+unchanged, but it has not been run here. To run it: tile the sample to ≥
 `world_size × 32` rows (the eval split floors at `world_size`, so the ~10-row sample leaves
 too few train rows past ~4 ranks — see the MI355X 8-GPU section), and re-export
 `CUDA_VISIBLE_DEVICES` for all 8 after activating the venv.
 
-**Verdict: real 2-rank DeepSpeed ZeRO-2 sharding PROVEN on 2× H100 / CUDA 13.0, unmodified**
-— 2-process init, per-rank optimizer shards (`rank_0` + `rank_1`), both GPUs 4 and 7 busy by
-distinct PID, 16 steps, decreasing loss, saved LoRA adapter. Same code/pins/config as the
-single-GPU run; only the launcher's process count, port, and GPU pinning changed. 8-GPU is
-extrapolated, not measured (co-tenant held GPUs 0–3).
+**In summary: real 2-rank DeepSpeed ZeRO-2 sharding works on 2× H100 / CUDA 13.0,
+unmodified** — 2-process init, per-rank optimizer shards (`rank_0` + `rank_1`), both GPUs 4
+and 7 busy by distinct PID, 16 steps, decreasing loss, saved LoRA adapter. Same
+code/pins/config as the single-GPU run; only the launcher's process count, port, and GPU
+pinning changed. 8-GPU is extrapolated, not measured.
 
 ## Notes
 

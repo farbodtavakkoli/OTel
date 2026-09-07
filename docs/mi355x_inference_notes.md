@@ -1,7 +1,7 @@
-# MI355X inference campaign — notes and evidence (August 2026)
+# MI355X inference notes and evidence
 
-Field notes from serving all inference stacks on 8× AMD Instinct MI355X (gfx950, 288 GB),
-ROCm 7.2.4. The per-stack verdict table lives in the top-level [README](../README.md);
+Notes from serving all inference stacks on 8× AMD Instinct MI355X (gfx950, 288 GB),
+ROCm 7.2.4. The per-stack support table lives in the top-level [README](../README.md);
 this file holds the traps and cross-cutting lessons. Folder names refer to the current
 layout (`inference/<software>/<modality>`). Target models: LLM `Qwen/Qwen3.8-27B-FP8`,
 embedding `google/embeddinggemma-300m`, reranker `Qwen/Qwen3-Reranker-0.6B` (GGUF
@@ -24,7 +24,7 @@ a response will pass while the deployment is wrong:
    while retrieval quality quietly degrades. Measured against the Transformers baseline:
    worst |Δcosine| **0.0034 with** the prefixes vs **0.1751 without**.
 
-## What the inference runs taught us
+## Lessons from the inference runs
 
 - **The FP8 checkpoint is fine on gfx950.** Transformers loaded `Qwen3.8-27B-FP8` natively
   (OCP **E4M3FN**, not the gfx942-era FNUZ) and SGLang's container generated from it at TP=1
@@ -45,10 +45,10 @@ a response will pass while the deployment is wrong:
   Lemonade) two GPUs are consistently ~0-2% *slower* than one, because layer split is
   pipeline parallelism — it buys capacity, not speed. A 29 GB model belongs on one 288 GB card.
 - **A clean `pip install` proves nothing about hardware.** `pip install tensorrt-llm`
-  succeeds on this pure-AMD box, installing ~16 GB of CUDA userspace, and only fails at
+  succeeds on a pure-AMD host, installing ~16 GB of CUDA userspace, and only fails at
   `import` with `libcuda.so.1: cannot open shared object file`. Always test the import and a
   real device op, never just the install.
-- **`torch.cuda.is_available()` is not a CUDA check on this box** — ROCm aliases `torch.cuda`
+- **`torch.cuda.is_available()` is not a CUDA check on ROCm** — ROCm aliases `torch.cuda`
   onto HIP, so it returns `True` with no NVIDIA hardware present. Key off `torch.version.cuda`
   vs `torch.version.hip` instead.
 - **Prebuilt ROCm backends can be arch-matched — check before assuming.** Lemonade downloads
@@ -62,13 +62,12 @@ a response will pass while the deployment is wrong:
 
 ## vLLM and the real 27B checkpoint
 
-The real `Qwen/Qwen3.8-27B-FP8` checkpoint **does serve**, at TP=1 and TP=2, on the vLLM
-0.20.2 container that was already on disk — no newer image was needed. The earlier
-assumption that 0.20.2 predates Qwen3.8 ROCm support was wrong: it already ships
-`Qwen3_5ForConditionalGeneration` and auto-detects `quantization=fp8`. TP=2 gives **+36%**
-(38.1 → 52.4 tok/s) and halves per-rank weights to 14.9 GiB. The `Qwen3-4B` run is retained
-in `inference/vllm/llm` as the smaller-model control. The AITER trap above applies to the
-default configuration.
+The full `Qwen/Qwen3.8-27B-FP8` checkpoint **does serve**, at TP=1 and TP=2, on the vLLM
+0.20.2 container — no newer image is needed. Despite its version number, 0.20.2 does not
+predate Qwen3.8 ROCm support: it already ships `Qwen3_5ForConditionalGeneration` and
+auto-detects `quantization=fp8`. TP=2 gives **+36%** (38.1 → 52.4 tok/s) and halves per-rank
+weights to 14.9 GiB. The `Qwen3-4B` run is retained in `inference/vllm/llm` as the
+smaller-model control. The AITER trap above applies to the default configuration.
 
 ## SGLang: pip vs container
 

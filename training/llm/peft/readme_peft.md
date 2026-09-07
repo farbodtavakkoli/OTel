@@ -1,9 +1,9 @@
 # `training/llm/peft` — chat SFT with standalone Hugging Face PEFT
 
-> **Tested topology: single AMD Instinct MI355X (ROCm 7.2) — verified 2026-08-19; see
-> the tested section below.** Originally written against the upstream PEFT and
-> Transformers docs as of **August 2026** targeting a single node with 8x H100 80GB
-> (the CUDA path remains untested on hardware). Unlike the sharded trainers here it is
+> **Tested topology: single AMD Instinct MI355X (ROCm 7.2) — see the platform notes
+> below.** Originally written against the upstream PEFT and
+> Transformers docs for the pinned versions below, targeting a single node with 8x H100 80GB.
+> Unlike the sharded trainers here it is
 > genuinely useful on **one** GPU: QLoRA on a single card is the intended small-scale
 > path. The multi-GPU route is plain DDP (one full model replica per GPU), not sharding.
 
@@ -46,7 +46,7 @@ pip install -r requirements_peft.txt
 ### AMD (ROCm)
 
 torch 2.11.0 ROCm wheels live on the **rocm7.2** index (the older `rocm6.4` index stops
-at torch 2.9.1 — verified against download.pytorch.org, 2026-08):
+at torch 2.9.1 — verified against download.pytorch.org):
 
 ```bash
 python3.12 -m venv ~/.venv-peft && source ~/.venv-peft/bin/activate
@@ -237,18 +237,17 @@ Under `--output_dir`:
 - `runs/` — TensorBoard event files; view with `tensorboard --logdir <output_dir>/runs`.
 - `train_llm_peft.log` — the redirected stdout/stderr of the run, in this folder.
 
-## Tested: AMD Instinct MI355X (ROCm 7.2) — 2026-08-19
+## Platform notes — AMD Instinct MI355X (ROCm 7.2)
 
 Verified end to end on one MI355X (gfx950, 288 GB HBM) of an 8-GPU node — ROCm 7.2.4,
-Ubuntu, Python 3.12.3. **Verdict: works with one change.** The change is a
+Ubuntu, Python 3.12.3. **This path works with one change.** The change is a
 transformers-v5 portability fix (already applied to `train_llm_peft.py`, nothing
 AMD-specific): `apply_chat_template(tokenize=True)` returns a `BatchEncoding` in
 transformers 5.x instead of a flat id list, which made the prompt-masking span diff
 silently mark every row unsupervised (`No usable rows ... unsupervised: 10`). The fix is
 `return_dict=False` on the three `apply_chat_template` calls in `build_example`.
 
-Exact install (the campaign venv `.env_train_llm_peft` was removed during the 2026-08
-repo reorg — rebuild as `.env_peft` from `requirements_peft.txt`):
+Install:
 
 ```bash
 cd training/llm/peft
@@ -257,7 +256,13 @@ pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
 pip install -r requirements_peft.txt   # bitsandbytes 0.50.0 from plain PyPI — no special index needed
 ```
 
-Exact smoke commands run (shipped 10-row sample; note the script has **no
+```bash
+# Set these to suit your machine
+export OUTPUT_DIR=/path/to/outputs     # training artifacts / adapter output
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+```
+
+Smoke commands (shipped 10-row sample; note the script has **no
 `--max_steps`** — control step count via batch/accumulation/epochs; here
 `batch 1 x grad_acc 1 x 1 epoch` = 9 steps, one row exceeds `--max_seq_len 2048` and is
 dropped):
@@ -279,7 +284,7 @@ python merge_adapter.py --adapter ./lora_smoke/final_adapter \
   --output_dir ./lora_smoke/merged_model --device_map auto
 ```
 
-Representative log lines (LoRA run, gemma-4-E4B-it = 8.05 B params, 0.65 % trainable):
+**Expected output** (LoRA run, gemma-4-E4B-it = 8.05 B params, 0.65 % trainable):
 
 ```
 trainable params: 52,318,208 || all params: 8,048,474,656 || trainable%: 0.6500
@@ -288,12 +293,12 @@ trainable params: 52,318,208 || all params: 8,048,474,656 || trainable%: 0.6500
 Saved LoRA adapter to .../lora_smoke/final_adapter (base model: google/gemma-4-E4B-it)
 ```
 
-A 5-epoch (45-step) LoRA run converged loss 8.73 → 1.18 with finite grad norms
-throughout; `rocm-smi` mid-run showed the GPU active with ~17 GB VRAM allocated.
+A 5-epoch (45-step) LoRA run converges loss 8.73 → 1.18 with finite grad norms
+throughout; `rocm-smi` mid-run shows the GPU active with ~17 GB VRAM allocated.
 
 Status on gfx950, tested individually:
 
-| Path | Status | Evidence |
+| Path | Status | Observed |
 |---|---|---|
 | bf16 LoRA (sdpa) | **works** | 9 steps, loss 9.64 → 5.93 |
 | QLoRA (`--load_in_4bit`, nf4, double-quant, `paged_adamw_8bit`) | **works** | 9 steps, finite loss; bnb 0.50.0 PyPI wheel loads `libbitsandbytes_rocm72.so` |
@@ -302,31 +307,31 @@ Status on gfx950, tested individually:
 
 Quirks and notes from the run:
 
-- **bitsandbytes on ROCm is confirmed on this box**: the plain `pip install
-  bitsandbytes` (0.50.0) wheel bundles ROCm binaries alongside the CUDA ones and picked
+- **bitsandbytes on ROCm is confirmed on gfx950**: the plain `pip install
+  bitsandbytes` (0.50.0) wheel bundles ROCm binaries alongside the CUDA ones and picks
   `libbitsandbytes_rocm72.so` for ROCm 7.2.4/gfx950 automatically. `quantize_4bit`/
   `dequantize_4bit` round-trip and full QLoRA training both work. No multi-backend
-  index or source build was needed.
-- Attention stayed on the default `sdpa`; do **not** try `flash_attention_2` here —
+  index or source build is needed.
+- Attention stays on the default `sdpa`; do **not** try `flash_attention_2` here —
   `pip install flash-attn` is a CUDA source build and fails on ROCm.
 - On a multi-GPU node, pin one GPU with `export HIP_VISIBLE_DEVICES=<n>
   CUDA_VISIBLE_DEVICES=<n>` before running; torch then sees it as device 0.
 - A benign transformers warning about PAD/BOS/EOS realignment for gemma-4-E4B-it
   appears at load; it is harmless.
 
-### 8-GPU run (8x MI355X, ROCm 7.2.4) — tested August 2026
+### 8-GPU run (8x MI355X, ROCm 7.2.4)
 
-The same recipe scaled from 1 GPU to all 8 on the same node (torch 2.11.0+rocm7.2,
+The same recipe scales from 1 GPU to all 8 on the same node (torch 2.11.0+rocm7.2,
 transformers 5.5.0, peft 0.20.0, accelerate 1.14.0), same base model
-`google/gemma-4-E4B-it`. **Verdict per variant:**
+`google/gemma-4-E4B-it`. **Status per variant:**
 
-| Variant at world size 8 | Status | Evidence |
+| Variant at world size 8 | Status | Observed |
 |---|---|---|
-| bf16 LoRA (sdpa), DDP | **works with one change** | 36 steps, exit 0, loss 65.88 → 3.544, 23.28 samples/s |
-| QLoRA (`--load_in_4bit`, nf4, `paged_adamw_8bit`), DDP | **works with one change, with a caveat** | 36 steps, exit 0, loss 66.99 → 4.039; but GPU 0 carries 76 % VRAM vs 17-19 % on ranks 1-7 |
-| DoRA (`--use_dora`), DDP | **works with one change** | 36 steps, exit 0, loss 67.29 → 6.396, 15.58 samples/s |
+| bf16 LoRA (sdpa), DDP | **works with one change** | 36 steps, exit code 0, loss 65.88 → 3.544, 23.28 samples/s |
+| QLoRA (`--load_in_4bit`, nf4, `paged_adamw_8bit`), DDP | **works with one change, with a caveat** | 36 steps, exit code 0, loss 66.99 → 4.039; but GPU 0 carries 76 % VRAM vs 17-19 % on ranks 1-7 |
+| DoRA (`--use_dora`), DDP | **works with one change** | 36 steps, exit code 0, loss 67.29 → 6.396, 15.58 samples/s |
 
-**The one change: `--ddp_find_unused_parameters`.** Out of the box every variant died
+**The one change: `--ddp_find_unused_parameters`.** Out of the box every variant dies
 in the first backward pass on all 8 ranks:
 
 ```
@@ -347,12 +352,12 @@ so the 1-GPU runs above never saw it. `train_llm_peft.py` now exposes
 performance are unchanged); pass it whenever `all-linear` meets a multimodal base. The
 alternative fix is to pass an explicit text-only `--lora_target_modules` list.
 
-Exact commands (venv activated first; **note** `.env_train_llm_peft/bin/activate` has a
-stale `export HIP_VISIBLE_DEVICES=3` / `CUDA_VISIBLE_DEVICES=3` appended from the 1-GPU
-session — override it *after* sourcing or you will silently train on one GPU):
+Commands (venv activated first; **note** if `.env_peft/bin/activate` has a
+stale `export HIP_VISIBLE_DEVICES=3` / `CUDA_VISIBLE_DEVICES=3` appended by an earlier 1-GPU
+session, override it *after* sourcing or you will silently train on one GPU):
 
 ```bash
-source .env_train_llm_peft/bin/activate
+source .env_peft/bin/activate
 export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 python -c "import torch; assert torch.cuda.device_count()==8"
 
@@ -371,17 +376,17 @@ torchrun --nproc_per_node=8 --master_port 29690 train_llm_peft.py \
 full 8.05 B base is replicated on each of the 8 GPUs and only the 52,318,208 adapter
 params (0.65 %) are all-reduced. World size 8, per-device batch 2, `grad_acc 1` →
 **global batch 16**, 576 rows → 36 optimizer steps/epoch. `accelerate launch
---num_processes=8` is equivalent; `torchrun` was used to keep the launcher explicit.
+--num_processes=8` is equivalent; `torchrun` keeps the launcher explicit.
 
 **Dataset change, stated plainly.** The shipped `data/OTel_LLM_sample_10.jsonl` has 10
 rows (9 usable), which at world size 8 gives ~1 step/epoch — not enough to prove
-anything. The 8-GPU runs used that same file **replicated 64x** (640 rows, 576 usable
-after the one over-length row is dropped) written **outside the repo** at
-`/mnt/data_1.5t/outputs/train_llm_peft/gpu8/data/otel_sample_x64.jsonl`. This is a
+anything. The 8-GPU runs use that same file **replicated 64x** (640 rows, 576 usable
+after the one over-length row is dropped) written **outside the repo**, e.g. at
+`$OUTPUT_DIR/train_llm_peft/gpu8/data/otel_sample_x64.jsonl`. This is a
 **pipeline proof, not a learning result** — the loss curve is memorization of 9 repeated
 conversations.
 
-Real log lines (bf16 LoRA, 8 GPUs):
+**Expected output** (bf16 LoRA, 8 GPUs):
 
 ```
 ASSERT device_count=8 torch=2.11.0+rocm7.2 / GPU0: AMD Instinct MI355X
@@ -389,31 +394,32 @@ trainable params: 52,318,208 || all params: 8,048,474,656 || trainable%: 0.6500
 {'loss': '65.88', 'grad_norm': '62.87', 'learning_rate': '0.0001983', 'epoch': '0.1389'}
 {'loss': '3.544', 'grad_norm': '17.5',  'learning_rate': '1.703e-06', 'epoch': '0.9722'}
 {'train_runtime': '24.74', 'train_samples_per_second': '23.28', 'train_steps_per_second': '1.455'}
-### VARIANT lora_bf16 EXIT_CODE=0  wall=61s
 ```
 
+The run should finish with exit code 0.
 Grad norms are finite and non-zero at every log point, so the adapter really is training.
 The first logged value is the mean of steps 1-5: `warmup_ratio 0.03` of 36 steps is one
 step, so the LR is already 1.98e-4 at global batch 16 and the loss spikes before falling
 monotonically. The 1-GPU baseline at global batch 2 starts at 8.18 instead — that
 difference is the batch/LR schedule, not a distributed-training bug.
 
-`rocm-smi` sampled **in-band** (from inside the run script, while training) — all 8 GPUs
-busy, and the PIDs holding VRAM are this job's own ranks (cross-checked against `pgrep -f
-train_llm_peft.py` in the same sample; `pt_elastic` is the torchrun launcher):
+Sample `rocm-smi` **in-band** (from inside the run script, while training) to confirm all
+8 GPUs are busy and that the PIDs holding VRAM are this job's own ranks (cross-check
+against `pgrep -f train_llm_peft.py` in the same sample; `pt_elastic` is the torchrun
+launcher). A healthy sample:
 
 ```
 Device  ... PwrCap   VRAM%  GPU%          KFD process information:
-0       ... 1400.0W  28%    98%           PID     NAME      GPU(s)  VRAM USED
-1       ... 1400.0W  30%    99%           327291  python3   1       86513270784
-2       ... 1400.0W  28%    99%           327292  python3   1       93448556544
-3       ... 1400.0W  28%    98%           ...     (8 ranks, 327291-327298)
-4       ... 1400.0W  27%    99%           327298  python3   1       89277317120
-5-7     ... 1400.0W  28-30% 99%           327191  pt_elastic 0      0
+0       ... 1400.0W  28%    98%           NAME       GPU(s)  VRAM USED
+1       ... 1400.0W  30%    99%           python3    1       ~86-93 GB   (8 ranks,
+2       ... 1400.0W  28%    99%           ...                             one per GPU)
+3       ... 1400.0W  28%    98%           pt_elastic 0       0
+4       ... 1400.0W  27%    99%
+5-7     ... 1400.0W  28-30% 99%
 ```
 
 **Throughput vs the 1-GPU run.** Measured back to back in the same lock hold, same
-per-device geometry (1-GPU baseline ran 36 steps over a 1/8 slice of the same data):
+per-device geometry (the 1-GPU baseline runs 36 steps over a 1/8 slice of the same data):
 
 | | 1 GPU | 8 GPUs (DDP) |
 |---|---|---|
@@ -428,7 +434,7 @@ scaling win is throughput, not capacity: this folder still cannot train a base t
 not fit on one card (use `../fsdp` or `../deepspeed` for that).
 
 **QLoRA under DDP — works, but memory is not symmetric.** 4-bit training at world size 8
-completed cleanly (exit 0, 171.1 s, 3.366 samples/s, loss 66.99 → 4.039), so
+completes cleanly (exit code 0, 171.1 s, 3.366 samples/s, loss 66.99 → 4.039), so
 bitsandbytes 0.50.0 on ROCm survives DDP. But the in-band sampler shows a real
 asymmetry: **GPU 0 at 76 % VRAM (~219 GB) while ranks 1-7 sit at 17-19 % (~52 GB)**, and
 `rocm-smi --showpids` reports `GPU(s) = 2` for every non-zero rank (rank 0 reports 1) —
@@ -455,33 +461,32 @@ adamw_torch      : {'train_runtime': '37.68',  'train_samples_per_second': '15.2
 The paged optimizer's unified-memory paging is far more expensive with 8 ranks on one
 node than the memory it saves is worth here, since the 52 M adapter params make optimizer
 state negligible either way. **Use `paged_adamw_8bit` at 1 GPU when memory is tight; drop
-it to `adamw_torch` for multi-GPU QLoRA on this box.** With that swap QLoRA at 8 GPUs is
+it to `adamw_torch` for multi-GPU QLoRA.** With that swap QLoRA at 8 GPUs is
 only ~1.5x slower than bf16 LoRA (15.29 vs 23.28 samples/s), the rest being
 `--gradient_checkpointing` plus per-step dequantization — a cost also present at 1 GPU,
 not a DDP effect.
 
-Everything else that differed from the 1-GPU run: nothing. Same install, same
-`requirements_peft.txt` (no new package or pin was needed), same `sdpa` attention, no
+Everything else that differs from the 1-GPU run: nothing. Same install, same
+`requirements_peft.txt` (no new package or pin is needed), same `sdpa` attention, no
 `flash-attn`, no NCCL/RCCL tuning env vars, no `accelerate config` file. Checkpointing
-was left at the default `save_strategy="epoch"`; the script has no
+stays at the default `save_strategy="epoch"`; the script has no
 `load_best_model_at_end`, so only one adapter checkpoint plus `final_adapter/` is written
-per run (~780 MB with optimizer state) — those were deleted after the evidence was
-captured.
+per run (~780 MB with optimizer state) — delete them after a smoke run.
 
-## Tested: NVIDIA H100 80GB (CUDA 13.0) — 2026-08-22
+## Platform notes — NVIDIA H100 80GB (CUDA 13.0)
 
 Verified single-GPU on one **NVIDIA H100 80GB HBM3** (Hopper cc 9.0) of an 8-GPU node —
 driver **580.173.02**, **CUDA 13.0**, Ubuntu, Python 3.12.3. Pinned to one free card with
-`CUDA_VISIBLE_DEVICES=5` (no `HIP_VISIBLE_DEVICES` — that is ROCm-only). **Verdict: works
+`CUDA_VISIBLE_DEVICES=5` (no `HIP_VISIBLE_DEVICES` — that is ROCm-only). **This path works
 (with the same transformers-v5 fix already in the tree), QLoRA included.** The
-`return_dict=False` masking fix is hardware-neutral and was already applied; nothing else
-in the code changed for CUDA. This wave was **single-GPU only**; multi-GPU (DDP) is
-deferred (see below).
+`return_dict=False` masking fix is hardware-neutral and is already applied; nothing else
+in the code changes for CUDA. Only **single-GPU** was exercised; multi-GPU (DDP) is not
+covered here (see below).
 
-### Exact install (CUDA 13) + torch-clobber note
+### Install (CUDA 13) + torch-clobber note
 
 The `requirements_peft.txt` pin `torch==2.11.0` has **no cu130 wheel**, so on a CUDA-13
-host install torch **unpinned** first (the H100 campaign recipe), which resolves
+host install torch **unpinned** first, which resolves
 `torch 2.13.0+cu130` (native CUDA 13), then the rest of the file:
 
 ```bash
@@ -493,7 +498,7 @@ pip install -r requirements_peft.txt     # skip the torch line; everything else 
 python -c "import torch; print(torch.__version__, torch.version.cuda)"   # 2.13.0+cu130 13.0
 ```
 
-On this box the framework install did **not** clobber torch (still `2.13.0+cu130`).
+In the validated run the framework install did **not** clobber torch (still `2.13.0+cu130`).
 `bitsandbytes` 0.50.0 from plain PyPI ships a `libbitsandbytes_cuda130.so` and auto-selects
 it — **no ROCm `.so` is loaded on CUDA**, and no build step is needed (QLoRA is genuinely
 easier here than on ROCm):
@@ -511,26 +516,26 @@ regardless, so this does not affect the runs.
 
 ### Model deviation (offline cache), stated plainly
 
-The MI355X runs used `google/gemma-4-E4B-it`. On this H100 node that repo is present in
-the shared HF cache (`HF_HOME=/mnt/gsma/gsma/gsma/models`) with **weights + config only —
+The MI355X runs used `google/gemma-4-E4B-it`. On the H100 node that repo is present in
+the shared HF cache (`$HF_HOME`) with **weights + config only —
 its tokenizer files are not cached**, and the node's outbound Hub access is
 proxy-blocked (`httpx.ProxyError: 403 Forbidden`), so the tokenizer cannot be fetched and
 the trainer (which requires a chat template) cannot start on it offline. Rather than
-mutate the shared cache, the H100 smoke used a **fully-cached small instruct model,
+mutate the shared cache, the H100 smoke uses a **fully-cached small instruct model,
 `LiquidAI/LFM2.5-350M`** (360M params, complete tokenizer + chat template), against the
 **same shipped `data/OTel_LLM_sample_10.jsonl`**. This is a pipeline/kernel proof on the
 same code path, not a learning result. To reproduce on gemma-4-E4B-it, first populate its
-tokenizer into the cache (or run on a host with Hub access). Runs used
+tokenizer into the cache (or run on a host with Hub access). The runs set
 `HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1` to force cache-only loads.
 
-### Exact smoke commands run (GPU 5, offline, shipped 10-row sample → 9 usable)
+### Smoke commands (GPU 5, offline, shipped 10-row sample → 9 usable)
 
 The script has **no `--max_steps`** — step count is `rows / (batch × grad_acc)` per epoch.
-9 usable rows at `batch 1 × grad_acc 1` = 9 steps/epoch; epochs were raised to get a
+9 usable rows at `batch 1 × grad_acc 1` = 9 steps/epoch; raise the epoch count to get a
 non-trivial, clearly-decreasing curve.
 
 ```bash
-export HF_HOME=/mnt/gsma/gsma/gsma/models HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1   # HF_HOME as exported above
 
 # bf16 LoRA — PASS (sdpa; 4 epochs = 36 steps)
 CUDA_VISIBLE_DEVICES=5 python train_llm_peft.py --model_name LiquidAI/LFM2.5-350M \
@@ -550,7 +555,7 @@ CUDA_VISIBLE_DEVICES=5 python merge_adapter.py \
   --output_dir /dev/shm/h100/out/peft/merged --device_map cpu
 ```
 
-Representative real log lines (bf16 LoRA, LFM2.5-350M = 360.5M params, 1.66% trainable, 36
+**Expected output** (bf16 LoRA, LFM2.5-350M = 360.5M params, 1.66% trainable, 36
 steps, loss noisy per single-row step but trending to ~0):
 
 ```
@@ -562,34 +567,33 @@ trainable params: 5,996,544 || all params: 360,480,512 || trainable%: 1.6635
 Saved LoRA adapter to .../lora_smoke/final_adapter (base model: LiquidAI/LFM2.5-350M)
 ```
 
-A longer 60-epoch (540-step) bf16 LoRA run drove loss `0.877 → 1.2e-4` with finite,
-shrinking grad norms throughout (train_loss 0.058); QLoRA over the same 540 steps gave
+A longer 60-epoch (540-step) bf16 LoRA run drives loss `0.877 → 1.2e-4` with finite,
+shrinking grad norms throughout (train_loss 0.058); QLoRA over the same 540 steps gives
 `0.972 → 1.2e-4` (train_loss 0.063) — bitsandbytes 4-bit on CUDA trains cleanly.
 
-**GPU-5 residency, sampled in-band** (from the driving script while training, filtered to
-GPU index 5 with `nvidia-smi -i 5` and matched to this job's own worker PID; GPUs 0–3 were
-someone else's production job and were never touched):
+**GPU residency check, sampled in-band** (from the driving script while training, filtered
+to the pinned GPU index with `nvidia-smi -i <n>` and matched to this job's own worker PID):
 
 ```
-# QLoRA worker PID 1328457 on GPU 5:
+# QLoRA worker on GPU 5:
 GPU5 [idx,mem,util]: 5, 887 MiB, 0 %
-GPU5 compute-apps [pid,mem]: 1328457, 880 MiB     # <- our PID holds VRAM on card 5
-# bf16 LoRA worker PID 1330920 on GPU 5:
-HIT#6 GPU5 mem=761MiB util=0% | compute-app(pid,mem)=1330920, 772 MiB
+GPU5 compute-apps [pid,mem]: <pid>, 880 MiB     # <- the training PID holds VRAM on card 5
+# bf16 LoRA worker on GPU 5:
+GPU5 mem=761MiB util=0% | compute-app(pid,mem)=<pid>, 772 MiB
 ```
 
-VRAM on GPU 5 climbs from ~0 to ~0.7–0.9 GB and the compute-apps table names this job's own
-python PID; the other three busy cards belong to the production job and were left alone.
+VRAM on the pinned GPU climbs from ~0 to ~0.7–0.9 GB and the compute-apps table names this
+job's own python PID; on a shared node, leave the other cards alone.
 (`util%` reads 0 in a 0.2 s snapshot because each optimizer step on a 1-row batch of a 360M
-model is sub-millisecond of GPU time — the VRAM-by-PID residency is the proof, not util.)
+model is sub-millisecond of GPU time — the VRAM-by-PID residency is the signal, not util.)
 
 Status on H100 (single GPU), tested individually:
 
-| Path | Status | Evidence |
+| Path | Status | Observed |
 |---|---|---|
 | bf16 LoRA (sdpa) | **works** | 36-step run loss 2.21 → 0.5; 540-step run 0.877 → 1.2e-4; GPU5 PID holds ~0.76 GB |
 | QLoRA (`--load_in_4bit`, nf4, double-quant, `paged_adamw_8bit`, grad-ckpt) | **works** | 36 steps finite loss; bnb 0.50.0 loads `libbitsandbytes_cuda130.so`; GPU5 PID holds ~0.88 GB |
-| `merge_adapter.py` | **works** | 1-shard bf16 safetensors (681 MB standalone model) written, exit 0 |
+| `merge_adapter.py` | **works** | 1-shard bf16 safetensors (681 MB standalone model) written, exit code 0 |
 
 ### Quirks / deviations from the MI355X recipe
 
@@ -598,31 +602,31 @@ Status on H100 (single GPU), tested individually:
   pin installed unchanged. `numpy` came out at 2.5.2 (pin says 2.5.1) via the unpinned
   torch pull — harmless.
 - **bitsandbytes on CUDA needs no thought.** The plain PyPI wheel auto-selects the
-  `cuda130` backend (contrast the MI355X note where it picked `rocm72`). QLoRA "just
-  works" — the brief's expectation held.
+  `cuda130` backend (contrast the MI355X note where it picks `rocm72`). QLoRA "just
+  works".
 - **VRAM: 80 GB here vs 288 GB on MI355X.** Not a factor for a 360M smoke (peaks < 1 GB).
   It *would* matter at the documented QLoRA scale (Llama-3.1-8B) and especially at
   multi-GPU — see below. No OOM occurred; no batch/seq reduction was needed for the smoke.
 - **flash-attn:** the script exposes `--attn_implementation flash_attention_2`, but
-  `pip install flash-attn` is still a from-source nvcc build on CUDA 13 and did not finish
-  inside the time-box, so runs used the default **`sdpa`** (which needs nothing) and
-  passed. Pre-build the FA2 wheel offline if you want it; do not block on it.
+  `pip install flash-attn` is still a from-source nvcc build on CUDA 13, so the runs use
+  the default **`sdpa`** (which needs nothing) and pass. Pre-build the FA2 wheel offline
+  if you want it; do not block on it.
 - **Offline model substitution** (tokenizer-not-cached) is documented above — the *only*
-  reason the documented gemma-4-E4B-it was not the smoke target.
+  reason gemma-4-E4B-it was not the smoke target.
 - Checkpoints (adapter-only here, 40–74 MB since the base is 360M; `save_strategy="epoch"`
-  still writes a fit-end checkpoint even conceptually with `"no"`) were deleted after
-  evidence capture.
+  still writes a fit-end checkpoint even conceptually with `"no"`) can be deleted after a
+  smoke run.
 
-### Multi-GPU on H100 — DEFERRED (not run this wave)
+### Multi-GPU on H100 — not covered here
 
-Only single-GPU was in scope; GPUs 0–3 were running production. A multi-GPU DDP pass would
+Only single-GPU was exercised. A multi-GPU DDP pass would
 mirror the MI355X 8-GPU section and, on 80 GB cards, needs care the 288 GB MI355X hid:
 
 - The **one required flag stands**: `--ddp_find_unused_parameters` whenever
   `--lora_target_modules all-linear` meets a multimodal base (gemma-4's vision/audio
-  towers get no gradient in a text-only batch). Use a distinct `--master_port` (e.g. this
-  agent's 29642), plain `CUDA_VISIBLE_DEVICES=0,1,...` (no `HIP_VISIBLE_DEVICES`).
-- **QLoRA rank/VRAM skew is the H100 risk.** The MI355X run showed QLoRA under DDP puts a
+  towers get no gradient in a text-only batch). Use a distinct `--master_port` (e.g.
+  29642), plain `CUDA_VISIBLE_DEVICES=0,1,...` (no `HIP_VISIBLE_DEVICES`).
+- **QLoRA rank/VRAM skew is the H100 risk.** The MI355X run shows QLoRA under DDP puts a
   second allocation on rank 0 (GPU 0 ~76% VRAM vs 17–19% on ranks 1–7) — on a 288 GB card
   that is headroom; **on an 80 GB H100 that is exactly the pattern that OOMs rank 0 first
   while the other GPUs look idle.** Watch GPU 0 when scaling QLoRA; the MI355X finding to
@@ -633,7 +637,7 @@ mirror the MI355X 8-GPU section and, on 80 GB cards, needs care the 288 GB MI355
 
 ## Hardware support & evidence
 
-Claims above were checked against upstream sources on **2026-08-19**:
+Claims above were checked against upstream sources:
 
 - **bitsandbytes on AMD ROCm is official.** The upstream installation guide
   ([bitsandbytes-foundation/bitsandbytes `docs/source/installation.mdx`](https://github.com/bitsandbytes-foundation/bitsandbytes/blob/main/docs/source/installation.mdx))

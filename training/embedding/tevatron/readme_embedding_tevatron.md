@@ -48,19 +48,26 @@ Two differences that are real but narrow:
   `--gc_p_chunk_size`), which matters when queries are short and passages are long — the
   cached ST loss uses one `mini_batch_size` for both.
 
-Neither is a capability gap. See **Verdict** at the bottom.
+Neither is a capability gap. See **Summary** at the bottom.
 
 ## Install
 
-Python 3.12. **The venv lives outside the repo** — `/` on this host is at 94% and the
-existing venvs already total >400 GB:
+Python 3.12, in its own venv. If the root filesystem is tight, put it outside the repo on
+a larger volume:
 
 ```
-/mnt/data_450g/envs/.env_train_embedding_tevatron
+$DATA_DIR/envs/.env_tevatron
 ```
 
-> This venv survived the 2026-08 repo reorg (it lives outside the repo); the in-repo
-> campaign venvs were removed in that reorg.
+The commands below refer to a few machine-specific locations through environment
+variables — set them to suit your machine:
+
+```bash
+# Set these to suit your machine
+export DATA_DIR=/path/to/data          # venv + pip cache location
+export OUTPUT_DIR=/path/to/outputs     # training artifacts
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+```
 
 Tevatron on PyPI (`pip install tevatron`) is **0.1.0 — the 2021 v1 package**. It has no
 `tevatron.retriever` module and no `--grad_cache` flag. Install from git.
@@ -71,9 +78,9 @@ Install the ROCm torch wheel **first**, then everything else, then re-check that
 not swap in a CUDA wheel:
 
 ```bash
-export PIP_CACHE_DIR=/mnt/data_1.5t/pip_cache
-python3 -m venv /mnt/data_450g/envs/.env_train_embedding_tevatron
-source /mnt/data_450g/envs/.env_train_embedding_tevatron/bin/activate
+export PIP_CACHE_DIR=$DATA_DIR/pip_cache
+python3 -m venv $DATA_DIR/envs/.env_tevatron
+source $DATA_DIR/envs/.env_tevatron/bin/activate
 pip install -U pip setuptools wheel
 
 pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
@@ -90,7 +97,7 @@ python -c "import torch; print(torch.__version__, torch.version.hip, torch.versi
 from the pinned versions. Nothing else in Tevatron's dependency set is missing from
 `requirements_embedding_tevatron.txt`.
 
-If pip ever replaces torch with the CUDA build (it did for other folders on this host):
+If pip ever replaces torch with the CUDA build (it can, depending on resolution order):
 
 ```bash
 pip install --force-reinstall --no-deps torch==2.11.0 \
@@ -103,13 +110,13 @@ pip install --force-reinstall --no-deps torch==2.11.0 \
 
 ### NVIDIA (CUDA) — verified on H100 (see the H100 section below)
 
-Same, minus the ROCm index. On the H100 box `pip install torch==2.11.0` resolves a
+Same, minus the ROCm index. On a CUDA 13 box `pip install torch==2.11.0` resolves a
 **native CUDA 13 wheel** (`2.11.0+cu130`) straight from PyPI — no `--index-url` needed:
 
 ```bash
 export PIP_CACHE_DIR=/dev/shm/h100/pipcache
-python3 -m venv /dev/shm/h100/venv_tevatron
-source /dev/shm/h100/venv_tevatron/bin/activate
+python3 -m venv /dev/shm/h100/.env_tevatron
+source /dev/shm/h100/.env_tevatron/bin/activate
 pip install -U pip setuptools wheel
 pip install torch==2.11.0 numpy          # -> 2.11.0+cu130, nvidia-*-cu13 deps
 pip install -r requirements_embedding_tevatron.txt   # minus torch/numpy already satisfied
@@ -132,10 +139,10 @@ HF_TOKEN=hf_xxxxxxxxxxxxxxxx
 ```
 
 Only needed for gated models — `BAAI/bge-small-en-v1.5` and `Qwen/Qwen3-0.6B` are not
-gated. Point the model cache at the shared one:
+gated. Point the model cache at a shared cache directory:
 
 ```bash
-export HF_HOME=/mnt/data_1.5t/hf_cache
+export HF_HOME=/path/to/hf_cache
 export HIP_VISIBLE_DEVICES=2,3 CUDA_VISIBLE_DEVICES=2,3
 ```
 
@@ -182,13 +189,12 @@ dir, prints the effective batch geometry, and execs
 Smoke test on the shipped sample (single GPU):
 
 ```bash
-source /mnt/data_450g/envs/.env_train_embedding_tevatron/bin/activate
-export HF_HOME=/mnt/data_1.5t/hf_cache
+source $DATA_DIR/envs/.env_tevatron/bin/activate
 
 python train_embedding_tevatron.py \
   --devices 2 --model_name_or_path BAAI/bge-small-en-v1.5 \
   --batch_size 8 --train_group_size 6 --epochs 1 \
-  --output_dir /mnt/data_450g/outputs/train_embedding_tevatron/smoke_1gpu --overwrite
+  --output_dir $OUTPUT_DIR/train_embedding_tevatron/smoke_1gpu --overwrite
 ```
 
 Two GPUs (the launcher switches to `torchrun` automatically):
@@ -196,7 +202,7 @@ Two GPUs (the launcher switches to `torchrun` automatically):
 ```bash
 python train_embedding_tevatron.py --devices 2,3 \
   --batch_size 8 --train_group_size 6 --epochs 8 --save_strategy no \
-  --output_dir /mnt/data_450g/outputs/train_embedding_tevatron/smoke_2gpu --overwrite
+  --output_dir $OUTPUT_DIR/train_embedding_tevatron/smoke_2gpu --overwrite
 ```
 
 GradCache — the reason this folder exists. `--batch_size` is no longer bounded by
@@ -208,7 +214,7 @@ python train_embedding_tevatron.py --devices 2,3 \
   --lora --lr 1e-4 \
   --grad_cache --gc_q_chunk_size 8 --gc_p_chunk_size 16 \
   --batch_size 32 --train_group_size 8 --epochs 30 --save_strategy no \
-  --output_dir /mnt/data_450g/outputs/train_embedding_tevatron/gc_2gpu --overwrite
+  --output_dir $OUTPUT_DIR/train_embedding_tevatron/gc_2gpu --overwrite
 ```
 
 Full run — point `--dataset_path` at your own converted JSONL:
@@ -219,7 +225,7 @@ nohup python train_embedding_tevatron.py --devices 2,3 \
   --model_name_or_path Qwen/Qwen3-0.6B --pooling eos --append_eos_token --lora --lr 1e-4 \
   --grad_cache --gc_q_chunk_size 8 --gc_p_chunk_size 16 \
   --batch_size 64 --train_group_size 16 --epochs 1 \
-  --output_dir /mnt/data_450g/outputs/train_embedding_tevatron/run \
+  --output_dir $OUTPUT_DIR/train_embedding_tevatron/run \
   > train_embedding_tevatron.log 2>&1 &
 
 tail -f train_embedding_tevatron.log
@@ -296,7 +302,7 @@ set -f && python -m tevatron.retriever.driver.search \
 | `--lora_r` / `--lora_alpha` / `--lora_dropout` | `16` / `64` / `0.1` | LoRA hyperparameters |
 | `--lora_target_modules` | `q_proj,...,gate_proj` | Comma-separated LoRA target modules |
 | `--devices` | `None` | GPU ids for `HIP_VISIBLE_DEVICES`/`CUDA_VISIBLE_DEVICES`, e.g. `2,3` |
-| `--master_port` | `29820` | torchrun rendezvous port (29500 collides on this host) |
+| `--master_port` | `29820` | torchrun rendezvous port (29500 often collides on a shared box) |
 | `--dry_run` | off | Print the resolved command and exit |
 
 ## Output
@@ -322,7 +328,7 @@ yourself (e.g. with `pytrec_eval`).
   driver 580.173.02, Python 3.12.3, `torch==2.11.0+cu130` (native CUDA-13 PyPI wheel),
   `transformers==5.5.0`, `datasets==4.3.0`, `accelerate==1.14.0`, `peft==0.20.0`,
   `GradCache==0.1.0`, `faiss-cpu==1.13.0`, Tevatron at git `dd06310`. Single-GPU smoke
-  verified 2026-08-22 (see the H100 section below).
+  verified (see the H100 section below).
 - **Other hardware (upstream claims — not verified here):** Google **TPU** — Tevatron's
   paper and docs claim TPU training via the JAX/Flax path (`tevax` /
   `tevatron.driver.jax_train`, GradCache included), from the v1 era. The v2
@@ -330,15 +336,15 @@ yourself (e.g. with `pytrec_eval`).
 - **AMD:** **tested** — 1× and 2× MI355X (gfx950, 288 GB), ROCm 7.2.4, Python 3.12.3,
   `torch==2.11.0+rocm7.2`, `transformers==5.5.0`, `datasets==4.3.0`,
   `accelerate==1.14.0`, `peft==0.20.0`, `GradCache==0.1.0`, `faiss-cpu==1.13.0`,
-  Tevatron at git `dd06310`. Verified 2026-08-20.
+  Tevatron at git `dd06310`.
 
-### Tested on AMD Instinct MI355X — ROCm 7.2 (verified 2026-08-20)
+### Platform notes — AMD Instinct MI355X (ROCm 7.2)
 
-**Verdict: works, with two argument changes** (`--attn_implementation sdpa`, and drop
+This path works on MI355X with two argument changes (`--attn_implementation sdpa`, and drop
 `--overwrite_output_dir`). No Tevatron source changes. GradCache, LoRA, DDP with the
 cross-rank negative gather, and the model save all behave as documented.
 
-Note on this host: GPUs 2 and 3 are **shared with a resident vLLM/SGLang tenant** holding
+Note on the test node: GPUs 2 and 3 were **shared with a resident vLLM/SGLang tenant** holding
 ~213 GiB of each 288 GB card, so the memory budget in every number below is **~74 GiB per
 GPU**, not 288 GB. That makes the OOM boundary below tighter than it would be on an idle
 card — the *shape* of the result (flat vs linear memory) is what matters.
@@ -395,27 +401,27 @@ Monotone decreasing, `train_mem_gpu_peaked_delta` 7.65 GiB per rank.
 used, which includes the co-tenant's ~213 GiB baseline):
 
 ```
-07:32:35   0,0  | vram_used_GiB 212.8 213.6     <- before launch (co-tenant only)
-07:33:54  95,94 | vram_used_GiB 226.0 226.8
-07:35:18  91,96 | vram_used_GiB 226.0 226.8
-07:36:41  99,96 | vram_used_GiB 226.0 227.0
-07:39:40   0,0  | vram_used_GiB 212.8 213.6     <- after exit
+  0,0  | vram_used_GiB 212.8 213.6     <- before launch (co-tenant only)
+ 95,94 | vram_used_GiB 226.0 226.8
+ 91,96 | vram_used_GiB 226.0 226.8
+ 99,96 | vram_used_GiB 226.0 227.0
+  0,0  | vram_used_GiB 212.8 213.6     <- after exit
 ```
 
 Both assigned GPUs sit at **91–99% busy** for the whole run; the delta over the idle
 baseline is ~13.2 GiB per card, matching the 7.65 GiB peak plus allocator reserve.
 
-### Tested on NVIDIA H100 80GB — CUDA 13.0 (verified 2026-08-22)
+### Platform notes — NVIDIA H100 80GB (CUDA 13.0)
 
-**Verdict: works, with the same one argument change as ROCm** (`--attn_implementation sdpa`
-for the BERT backbone). Single-GPU smoke only; multi-GPU deferred (box was co-tenanted — see
-below). Ran on physical GPU 4 (`CUDA_VISIBLE_DEVICES=4`) of a shared 8×H100 node.
+This path works on H100 with the same one argument change as ROCm (`--attn_implementation
+sdpa` for the BERT backbone). Single-GPU smoke only; multi-GPU was not exercised (the node
+was co-tenanted — see below). Ran on one GPU (`CUDA_VISIBLE_DEVICES=4`) of a shared 8×H100 node.
 
-**Install that worked** (venv on tmpfs; `/` is tight on this box too):
+**Install that worked** (venv on tmpfs, for a host with a tight root filesystem):
 
 ```bash
-export PIP_CACHE_DIR=/dev/shm/h100/pipcache HF_HOME=/mnt/gsma/gsma/gsma/models
-python3 -m venv /dev/shm/h100/venv_tevatron && source /dev/shm/h100/venv_tevatron/bin/activate
+export PIP_CACHE_DIR=/dev/shm/h100/pipcache HF_HOME=/path/to/hf_cache
+python3 -m venv /dev/shm/h100/.env_tevatron && source /dev/shm/h100/.env_tevatron/bin/activate
 pip install -U pip setuptools wheel
 pip install torch==2.11.0 numpy          # PyPI ships a cu130 wheel for the 2.11.0 pin — no --index-url
 pip install transformers==5.5.0 datasets==4.3.0 accelerate==1.14.0 peft==0.20.0 \
@@ -432,7 +438,7 @@ accelerate 1.14.0, peft 0.20.0, GradCache 0.1.0, Tevatron @ dd06310, driver **58
 No torch-clobber occurred — the two git installs left `2.11.0+cu130` intact (re-verified).
 
 **Model:** the documented default `BAAI/bge-small-en-v1.5` was **not** in the shared cache, so
-it was downloaded once (~130 MB; egress needs the box proxy unset) into `HF_HOME`. It is a
+it was downloaded once (~130 MB; egress may need an outbound proxy unset) into `HF_HOME`. It is a
 BERT encoder (33.4 M params) — the `embeddings.position_ids UNEXPECTED` load note is benign.
 `google/embeddinggemma-300m` is cached and is a drop-in fallback (`--pooling mean`) if egress
 is unavailable.
@@ -440,17 +446,17 @@ is unavailable.
 **Exact smoke command** (the launcher picks plain `python` for a single GPU, so no torchrun):
 
 ```bash
-export HF_HOME=/mnt/gsma/gsma/gsma/models HF_HUB_OFFLINE=1 \
+export HF_HOME=/path/to/hf_cache HF_HUB_OFFLINE=1 \
        HF_DATASETS_CACHE=/dev/shm/h100/dscache_tevatron CUDA_VISIBLE_DEVICES=4
 python train_embedding_tevatron.py \
   --devices 4 --model_name_or_path BAAI/bge-small-en-v1.5 \
   --attn_implementation sdpa \
   --batch_size 8 --train_group_size 6 --epochs 4 \
-  --output_dir /dev/shm/h100/out/tevatron/smoke_1gpu --overwrite
+  --output_dir $OUTPUT_DIR/tevatron/smoke_1gpu --overwrite
 ```
 
 100 rows / (8 per-device × 1 GPU × 1 accum) = **13 steps/epoch × 4 = 52 optimizer steps**
-(`drop_last` keeps 96 rows). Real output:
+(`drop_last` keeps 96 rows). **Expected output:**
 
 ```text
 {'loss': '0.4837', 'grad_norm': '19.38', 'learning_rate': '0', 'epoch': '0.07692'}
@@ -465,18 +471,16 @@ the trend is unambiguously **decreasing** — epoch-mean loss 0.948 → 0.916 �
 per-epoch min 0.350 → 0.075, final `train_loss 0.8935`, rc=0. Final encoder saved and reloads
 via `AutoModel.from_pretrained` (`model.safetensors` 66.7 MB, matching the ROCm artifact).
 
-GPU-4 residency, sampled by PID from **inside** the run (`nvidia-smi --query-compute-apps`):
+GPU residency, sampled by PID from **inside** the run (`nvidia-smi --query-compute-apps`):
 
 ```text
-GPU4 UUID: GPU-e13d18b6-ccfb-6676-668a-cd489ad01b55
-[04:12:19] util=14 % mem=3267 MiB | PID_on_GPU4: GPU-e13d18b6..., 1572032, python, 3120 MiB
-[04:12:23] util=22 % mem=3291 MiB | PID_on_GPU4: GPU-e13d18b6..., 1572032, python, 3282 MiB
+util=14 % mem=3267 MiB | PID_on_GPU: <gpu-uuid>, <pid>, python, 3120 MiB
+util=22 % mem=3291 MiB | PID_on_GPU: <gpu-uuid>, <pid>, python, 3282 MiB
 ```
 
-The training PID sits on GPU 4's UUID at ~3.3 GB (a 33 M-param BERT on 96 rows is light and
-finishes in ~12 s, so utilisation stays modest). GPUs 0–3 were a co-tenant production job and
-were never touched. Epoch checkpoints (`--save_strategy epoch`, 191 MB each) were deleted after
-capturing evidence.
+The training PID sits on the target GPU's UUID at ~3.3 GB (a 33 M-param BERT on 96 rows is
+light and finishes in ~12 s, so utilisation stays modest). Co-tenant GPUs are never touched.
+Epoch checkpoints are ~191 MB each with `--save_strategy epoch`.
 
 **Quirks / deviations from the MI355X recipe:**
 - `torch==2.11.0` needs **no** `--index-url` on H100 — the plain PyPI wheel is already
@@ -489,10 +493,10 @@ capturing evidence.
 - VRAM is 80 GB here vs 288 GB on MI355X — irrelevant at this model size (peaked ~3.3 GB); it
   matters only for the Qwen/LoRA and GradCache recipes, where `--grad_cache` / offload apply.
 
-**Multi-GPU (deferred):** a 2- or 8-GPU pass would use `--devices 4,5` (etc.), which flips the
-launcher to `torchrun --nproc_per_node N --master_port 29644`. Not run this wave because GPUs
-0–3 were a live production job; the lead coordinates the multi-GPU pass once they free up. DDP
-gives the cross-rank in-batch-negative pool the ROCm 2-GPU run already exercised.
+**Multi-GPU (not exercised on H100):** a 2- or 8-GPU pass would use `--devices 4,5` (etc.),
+which flips the launcher to `torchrun --nproc_per_node N --master_port 29644`. It was not run
+here because the node's other GPUs were held by a live production job. DDP gives the
+cross-rank in-batch-negative pool the ROCm 2-GPU run already exercised.
 
 ## Notes
 
@@ -510,7 +514,7 @@ gives the cross-rank in-batch-negative pool the ROCm 2-GPU run already exercised
   have to move to `warmup_steps`.
 - **No `tf32` anywhere.** Tevatron never sets it, so the usual ROCm
   `tf32=True` crash does not apply here.
-- **Port 29820** is the launcher default; 29500 collides on this host.
+- **Port 29820** is the launcher default; 29500 often collides on a shared box.
 - **`destroy_process_group() was not called`** warning at the end of every multi-GPU run —
   upstream never tears the group down. Cosmetic.
 - **Loss goes *up* with batch size** in the sweep table. Expected, not a bug: a larger
@@ -527,7 +531,7 @@ gives the cross-rank in-batch-negative pool the ROCm 2-GPU run already exercised
 - **The shipped sample is a pipeline check, not a training result.** 100 rows of OTel/paper
   text produce no useful retriever.
 
-## Verdict
+## Summary
 
 **Does it work on MI355X? Yes.** Every headline capability ran unmodified on gfx950 /
 ROCm 7.2.4 with `torch==2.11.0+rocm7.2`: training, LoRA, DDP with the cross-rank negative

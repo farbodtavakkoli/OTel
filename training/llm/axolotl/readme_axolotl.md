@@ -21,13 +21,13 @@ Files in this folder:
 - `data/dpo_sample.jsonl` — 10-row **synthetic** preference sample the DPO config points at (see section 4).
 - `requirements_axolotl.txt` — dependency list plus the required install order, with a commented ROCm variant.
 
-> **Tested topology:** the H100 path is **UNTESTED** — the configs were written against
+> **Tested topology:** the 8x H100 path is **UNTESTED** — the configs were written against
 > the upstream Axolotl documentation (docs.axolotl.ai config reference, dataset formats,
-> RLHF and multi-GPU guides) as of **August 2026** and target a single node with
+> RLHF and multi-GPU guides) for the pinned versions below and target a single node with
 > **8x H100 80GB**; multi-node is supported upstream (torchrun / Ray) but is not configured
 > here. Treat every batch-size and learning-rate number as a starting point, not a result.
-> **AMD MI355X (ROCm 7.2): TESTED and working** — single-GPU LoRA SFT smoke verified on
-> 2026-08-19 (see section 2a). The H100 configs need three ROCm overrides
+> **AMD MI355X (ROCm 7.2): TESTED and working** — single-GPU LoRA SFT smoke verified
+> (see section 2a). The H100 configs need three ROCm overrides
 > (`sdpa`, `tf32: false`, ROCm torch wheel) documented there.
 
 ## 2. Install
@@ -95,12 +95,18 @@ ROCm caveats documented in that guide, which affect the configs in this folder:
 
 See section 8 for the full evidence trail.
 
-### 2a. AMD MI355X (ROCm 7.2) — TESTED 2026-08-19 ✅
+### 2a. Platform notes — AMD MI355X (ROCm 7.2) ✅
 
 Verified on 8x AMD Instinct MI355X (gfx950, 288 GB), ROCm 7.2.4, Ubuntu, Python 3.12.3.
-**Verdict: works with changes** — a plain `pip install axolotl` (no source build, no
+This path works with changes — a plain `pip install axolotl` (no source build, no
 extras) trains LoRA SFT on ROCm once the torch wheel is corrected and two config keys
 are overridden. The upstream AMD HPC guide's source-build path was NOT needed.
+
+```bash
+# Set these to suit your machine
+export OUTPUT_DIR=/path/to/outputs     # training artifacts
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+```
 
 ```bash
 cd training/llm/axolotl
@@ -137,7 +143,7 @@ HIP_VISIBLE_DEVICES=6 CUDA_VISIBLE_DEVICES=6 \
 python3 train_llm_axolotl.py --config config_sft_lora_smoke_mi355x.yaml --num-processes 1
 ```
 
-Log evidence (5/5 steps, finite loss dropping, LoRA kernels auto-patched on ROCm):
+**Expected output** (5/5 steps, finite loss dropping, LoRA kernels auto-patched on ROCm):
 
 ```
 [axolotl.monkeypatch.lora_kernels] Patched attention class with LoRA optims: Qwen3Attention
@@ -146,8 +152,8 @@ Log evidence (5/5 steps, finite loss dropping, LoRA kernels auto-patched on ROCm
 [axolotl.train] Model successfully saved to .../outputs/train_llm_axolotl/sft-lora-smoke
 ```
 
-`rocm-smi -d 6` mid-run showed VRAM climbing to ~6 GB on the MI355X; adapter
-(`adapter_model.safetensors`) and checkpoints landed in the output dir.
+`rocm-smi -d 6` mid-run shows VRAM climbing to ~6 GB on the MI355X; the adapter
+(`adapter_model.safetensors`) and checkpoints land in the output dir.
 
 ROCm quirks found (apply these when running the shipped H100 configs on MI355X):
 
@@ -165,12 +171,12 @@ ROCm quirks found (apply these when running the shipped H100 configs on MI355X):
 - **DeepSpeed / sharding**: not exercised in this smoke (single GPU). The upstream AMD
   guide reports DeepSpeed broken with Axolotl on ROCm — for multi-GPU `config_sft_full`
   runs on MI355X, prefer the commented `fsdp_version: 2` block over the `deepspeed:` key.
-- Parallel-job note: this box runs many trainings; pass a unique
+- Parallel-job note: when the machine runs several trainings at once, pass a unique
   `--main-process-port` (e.g. 29660) to avoid the 29500 collision.
 
-### 8-GPU run (8x MI355X, ROCm 7.2.4) — tested August 2026
+### 8-GPU run (8x MI355X, ROCm 7.2.4)
 
-**Verdict: WORKS WITH CHANGES.** The exact 1-GPU recipe above scales to all 8 MI355X with
+**Works with changes.** The 1-GPU recipe above scales to all 8 MI355X with
 **no new packages and no source build** — `requirements_axolotl.txt` is unchanged. The
 changes are all config/launch-side: a new 8-GPU YAML, a replicated dataset (the shipped
 10-row sample cannot feed 8 ranks), and an env override for a stale GPU pin in the venv.
@@ -178,13 +184,13 @@ Parallelism is **plain torch DDP** (accelerate multi-GPU, RCCL) — **no DeepSpe
 so the upstream "DeepSpeed is broken on ROCm" caveat never comes into play for LoRA.
 
 ```bash
-# runner script, executed under the box-wide mutex:
-#   flock -w 25200 /tmp/mi355x_gpu8.lock bash /tmp/run8_axolotl.sh
+# runner script, executed under a machine-wide mutex so the job owns all 8 GPUs:
+#   flock -w 25200 /tmp/mi355x_gpu8.lock bash run8_axolotl.sh
 cd training/llm/axolotl
-source .env_train_llm_axolotl/bin/activate
+source .env_axolotl/bin/activate
 export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7      # MUST override: see "stale pin" below
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export HF_HOME=/mnt/data_1.5t/hf_cache
+# HF_HOME as exported in the "Set these to suit your machine" block above
 python -c "import torch;assert torch.cuda.device_count()==8"   # assert BEFORE training
 
 python3 train_llm_axolotl.py \
@@ -196,39 +202,28 @@ The folder's own wrapper works unmodified at 8 processes: it forwards `--num-pro
 the passthrough `--main-process-port` to the axolotl CLI, which expands to
 `accelerate launch --num-processes 8 --main-process-port 29700 -m axolotl.cli.train <cfg>`.
 
-> **Venv note:** the runner transcript above is verbatim from the August 2026 campaign
-> (old folder/venv names). The campaign venvs were removed during the 2026-08 reorg —
-> rebuild from `requirements_axolotl.txt` (new convention: `.env_axolotl`).
-
-**Parallelism / batch geometry (as axolotl actually logged it, not as intended):**
+**Parallelism / batch geometry (as axolotl logs it, not as intended):**
 `"world_size": 8`, `"tensor_parallel_size": 1`, `"context_parallel_size": 1` →
 pure data parallel. `micro_batch_size: 2` x `gradient_accumulation_steps: 1` x 8 ranks =
-**global batch 16**; 20 steps. Axolotl did not rewrite the geometry, but it *did* reinterpret
+**global batch 16**; 20 steps. Axolotl does not rewrite the geometry, but it *does* reinterpret
 the epoch count — see the dataset note.
 
-**Evidence — all 8 GPUs, PIDs cross-checked in-band.** The `rocm-smi` sampler ran *inside*
-the flock alongside training; `--showpids` in the same sample as `pgrep` shows the 8 VRAM
-holders are exactly this run's `axolotl.cli.train` ranks (183499-183506) plus the
-`pt_elastic` launcher (182277) — not another tenant's job:
+**Checking that all 8 GPUs are really in use.** Run a `rocm-smi --showpids` sampler
+alongside training (inside the same flock) and cross-check the VRAM holders against
+`pgrep -f 'axolotl.cli.train'`, so you know the 8 busy GPUs are your ranks and not another
+tenant's job. A healthy sample looks like this:
 
 ```
 ASSERT device_count = 8    (gpu0..gpu7: AMD Instinct MI355X)
 RCCL version : 2.27.7-HEAD:96a25b5    HIP 7.2.53211    ROCm 7.2.1.0-81
-PID     PROCESS NAME  GPU(s)  VRAM USED
-183499  python3       1       10969735168      <- 8 ranks x ~11-12 GB, one per MI355X
-183500  python3       2       11931127808         (183499..183506 == the 8 pgrep'd
-183501  python3       2       11937419264          `-m axolotl.cli.train` children)
-183502  python3       2       11924836352
-183503  python3       2       11872407552
-183504  python3       2       11780132864
-183505  python3       2       11799007232
-183506  python3       2       11788521472
-182277  pt_elastic    0       0                <- accelerate launcher, holds no VRAM
+PROCESS NAME  GPU(s)  VRAM USED
+python3       0..7    ~11-12 GB each   <- 8 axolotl.cli.train ranks, one per MI355X
+pt_elastic    -       0                <- accelerate launcher, holds no VRAM
 ```
-(`rocm-smi --showmeminfo vram` in that same sample: 11.6-14.9 GB on each of GPU[0]..GPU[7],
+(`rocm-smi --showmeminfo vram` in the same sample: 11.6-14.9 GB on each of GPU[0]..GPU[7],
 up from the 0.3 GB idle baseline.)
 
-Training log — finite, monotonically decreasing loss, clean exit:
+**Expected output** — finite, monotonically decreasing loss, clean exit:
 
 ```
 {'loss': '1.695', 'grad_norm': '7.532', 'ppl': '5.444', 'epoch': '0.25'}
@@ -237,47 +232,47 @@ Training log — finite, monotonically decreasing loss, clean exit:
 {'train_runtime': '35.87', 'train_samples_per_second': '8.921', 'train_steps_per_second': '0.558',
  'train_loss': '0.1716', 'memory/max_allocated (GiB)': '3.17'}
 [axolotl.train] Model successfully saved to .../gpu8/sft-lora-smoke-8gpu
-=== TRAIN EXIT CODE: 0 ===
 ```
 
 ~1.0-2.2 s/step steady-state, ~3100 train tokens/s/GPU, 3.17 GiB peak allocated per rank
 (1.2% of the MI355X's 288 GB — this model is far too small to say anything about scaling
-efficiency). All 8 ranks finished, RCCL tore down with no hang, wrapper exit code 0.
+efficiency). All 8 ranks should finish, RCCL should tear down with no hang, and the wrapper
+should exit with code 0.
 
-**What differed from the 1-GPU run:**
+**What differs from the 1-GPU run:**
 
 1. **New config `config_sft_lora_smoke_mi355x_8gpu.yaml`** (the working 1-GPU
-   `config_sft_lora_smoke_mi355x.yaml` was left untouched). Deltas: dataset path,
+   `config_sft_lora_smoke_mi355x.yaml` is left untouched). Deltas: dataset path,
    `micro_batch_size` 1 -> 2, `max_steps` 5 -> 20, `num_epochs` 3 -> 1,
    `save_strategy: "no"` + `saves_per_epoch: null`, gpu8 output/prepared dirs. Same
    `Qwen/Qwen3-0.6B`, same `sdpa`, same `tf32: false`. **No `deepspeed:` / `fsdp:` block** —
    DDP is the right choice for a 0.6B LoRA and sidesteps the ROCm DeepSpeed problem.
-2. **Stale GPU pin in the venv (the trap).** `.env_train_llm_axolotl/bin/activate` ends with
-   `export HIP_VISIBLE_DEVICES=6` / `CUDA_VISIBLE_DEVICES=6` (lines 72-73), left by the
-   1-GPU session. Sourcing the venv and launching 8 processes would put all 8 ranks on GPU 6
-   — a silently wrong "8-GPU pass". Always re-export both vars after `source`, and assert
+2. **Stale GPU pin in the venv (the trap).** If a single-GPU run left
+   `export HIP_VISIBLE_DEVICES=6` / `CUDA_VISIBLE_DEVICES=6` at the end of
+   `.env_axolotl/bin/activate`, sourcing the venv and launching 8 processes puts all 8 ranks
+   on GPU 6 — a silently wrong "8-GPU pass". Always re-export both vars after `source`, and assert
    `torch.cuda.device_count()==8` before training. The configs themselves pin no devices.
-3. **Dataset had to be replicated, and axolotl still shrank it — read this honestly.**
-   `./data/OTel_LLM_sample_10.jsonl` (10 rows) cannot feed a global batch of 16. A 640-row
-   copy (the same 10 rows x64) was written *outside the repo* to
-   `/mnt/data_1.5t/outputs/train_llm_axolotl/gpu8/otel_sample_x64.jsonl`. Axolotl then ran
-   `Dropping Invalid Sequences (<None or >512)` over the 640 and kept **64** — only 1 of the
+3. **The dataset has to be replicated, and axolotl still shrinks it — read this honestly.**
+   `./data/OTel_LLM_sample_10.jsonl` (10 rows) cannot feed a global batch of 16. Write a
+   640-row copy (the same 10 rows x64) *outside the repo*, e.g. to
+   `$OUTPUT_DIR/train_llm_axolotl/gpu8/otel_sample_x64.jsonl`. Axolotl then runs
+   `Dropping Invalid Sequences (<None or >512)` over the 640 and keeps **64** — only 1 of the
    10 sample rows fits `sequence_len: 512`; the rest are long IETF mail dumps. So 20 steps at
    batch 16 = **5 epochs over 64 copies of a single conversation**, and the loss collapse to
    4e-4 / ppl 1.0 is **memorisation of one row, not learning**. This is a *pipeline* proof
    (8 ranks, RCCL all-reduce, DDP step loop) and nothing more. For a real multi-GPU run,
    raise `sequence_len` (or set `long_sequences_strategy: truncate`) and use real data.
-4. **Port**: `--main-process-port 29700` (the box runs several trainings at once).
-5. QLoRA at 8 GPUs was **not** attempted here; 4-bit + DDP remains untested on this box.
+4. **Port**: `--main-process-port 29700` (use a unique port when several trainings share a machine).
+5. QLoRA at 8 GPUs was **not** attempted here; 4-bit + DDP remains untested.
 
 Not exercised: DeepSpeed and FSDP (unnecessary for LoRA at this size), multi-node, and any
 model large enough to make sharding meaningful.
 
-### 2b. NVIDIA H100 80GB (CUDA 13.0) — TESTED 2026-08-22 ✅
+### 2b. Platform notes — NVIDIA H100 80GB (CUDA 13.0) ✅
 
 Verified on 1x NVIDIA H100 80GB HBM3 (Hopper, cc 9.0), driver **580.173.02**, **CUDA 13.0**,
-Ubuntu, Python 3.12.3. **Verdict: WORKS** — a plain `pip install axolotl` (base, no extras)
-trains LoRA SFT on CUDA once one LoRA-kernel autopatch is disabled for the model in use.
+Ubuntu, Python 3.12.3. This path works as documented — a plain `pip install axolotl` (base,
+no extras) trains LoRA SFT on CUDA once one LoRA-kernel autopatch is disabled for the model in use.
 Both **`sdpa`** (zero-build) and **`flash_attention_2`** (source-built flash-attn 2.8.3, ~15 min
 nvcc compile) were verified end-to-end. The MI355X ROCm workarounds were all **reversed /
 unnecessary** on H100: flash-attn builds & runs here (MI355X used sdpa), `tf32: true` is safe,
@@ -287,17 +282,17 @@ and the torch wheel + bitsandbytes bumps aren't needed.
 cd training/llm/axolotl
 python3 -m venv .env_axolotl && source .env_axolotl/bin/activate
 
-# step 1: torch FIRST. On this box plain PyPI serves native cu130 wheels, so NO --index-url
+# step 1: torch FIRST. Where plain PyPI serves native cu130 wheels, NO --index-url
 # and NO UV_TORCH_BACKEND are needed. (The README's uv/cu130 flow also works; plain pip is
 # simpler here.) The upstream `torch==2.12.0` pin DOES resolve to a cu130 wheel on PyPI now,
-# but we let the base install settle on what axolotl wants:
+# but the base install is left to settle on what axolotl wants:
 pip install torch numpy                 # -> torch 2.13.0+cu130 (CUDA 13.0), bf16 matmul OK on H100
 
 # step 2: base axolotl — NO extras. [deepspeed] is not needed for a single-GPU LoRA smoke.
 pip install packaging ninja
 pip install --no-build-isolation axolotl    # installed axolotl 0.18.0
 
-# step 3: RE-VERIFY torch — axolotl DID replace it (pins torch==2.12.1), BUT on this box
+# step 3: RE-VERIFY torch — axolotl DOES replace it (pins torch==2.12.1), BUT on CUDA hosts
 # 2.12.1 also resolves to a cu130 wheel, so NO recovery reinstall is required (contrast MI355X,
 # where the pin pulled a CUDA wheel blind to the AMD GPUs). Just confirm cuda == 13.0:
 python -c "import torch; print(torch.__version__, torch.version.cuda)"
@@ -309,10 +304,10 @@ fine), axolotl 0.18.0, transformers 5.14.1, trl 1.8.0, peft 0.19.1, accelerate 1
 datasets 4.8.4, kernels 0.15.2, bitsandbytes 0.49.1 (untouched — QLoRA not exercised),
 xformers 0.0.35, driver 580.173.02, CUDA 13.0.
 
-**Model swap (offline node).** The Hub is 403-blocked on this box, so the configs'
-`base_model: Qwen/Qwen3-8B` is unreachable. Smoke ran against the fully-cached
-**`LiquidAI/LFM2.5-350M`** (env: `HF_HOME=/mnt/gsma/gsma/gsma/models HF_HUB_OFFLINE=1
-TRANSFORMERS_OFFLINE=1`). LFM2 ships a chat template (both `chat_template.jinja` and a
+**Model swap (offline node).** On a node where the Hub is 403-blocked, the configs'
+`base_model: Qwen/Qwen3-8B` is unreachable. The smoke runs instead against the fully-cached
+**`LiquidAI/LFM2.5-350M`** (env: `HF_HOME=$HF_HOME` pointing at a populated local cache, plus
+`HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1`). LFM2 ships a chat template (both `chat_template.jinja` and a
 `chat_template` key in `tokenizer_config.json`), so `chat_template: tokenizer_default` works
 unchanged.
 
@@ -321,14 +316,14 @@ Smoke run (single GPU, `config_sft_lora_smoke_h100_sdpa.yaml` in this folder —
 seq 2048, batch 1, `max_steps: 20`, and the LoRA-kernel autopatch disabled — see quirk 1):
 
 ```bash
-CUDA_VISIBLE_DEVICES=5 HF_HOME=/mnt/gsma/gsma/gsma/models \
+CUDA_VISIBLE_DEVICES=5 \
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
 HF_DATASETS_CACHE=/dev/shm/h100/dscache_axolotl AXOLOTL_DO_NOT_TRACK=1 \
 python3 train_llm_axolotl.py --config config_sft_lora_smoke_h100_sdpa.yaml \
     --num-processes 1 --main-process-port 29645
 ```
 
-Log evidence (20/20 steps, finite loss trending down, clean save):
+**Expected output** (20/20 steps, finite loss trending down, clean save):
 
 ```
 {'loss': '1.325', 'grad_norm': '99.88', 'learning_rate': '0.0002',    'ppl': '3.761', 'epoch': '0.1111'}
@@ -336,28 +331,22 @@ Log evidence (20/20 steps, finite loss trending down, clean save):
 {'loss': '0.1121','grad_norm': '7.018', 'learning_rate': '1.231e-06', 'ppl': '1.119', 'epoch': '2.222'}
 {'train_runtime': '15.86', 'train_samples_per_second': '1.261', 'train_steps_per_second': '1.261', 'train_loss': '0.9872'}
 [axolotl.train] Model successfully saved to /dev/shm/h100/out/axolotl/sft-lora-smoke-sdpa
-=== SMOKE (sdpa) EXIT 0 ===
 ```
 
-**GPU residency (nvidia-smi by-PID, sampled from inside the run on GPU 5):** the training
-child (PID 1462215) is the VRAM holder on GPU-5, climbing as it loads + trains — not another
-tenant's job:
+The run should finish with exit code 0.
 
-```
-GPU5 uuid=GPU-e71a0833-4f61-11c9-6eff-10c149e752e4
-[02:03:48] GPU5 pid=1462215 mem=940 MiB    <== OUR axolotl PID
-[02:03:54] GPU5 pid=1462215 mem=1944 MiB   <== OUR axolotl PID
-[02:04:00] GPU5 pid=1462215 mem=3710 MiB   <== OUR axolotl PID
-```
+**GPU residency check.** Sample `nvidia-smi` by-PID from inside the run and confirm the
+training child is the VRAM holder on the pinned GPU (memory climbing from a few hundred MiB
+to a few GiB as it loads and trains) rather than another tenant's job.
 
-Peak reported by axolotl was `memory/max_allocated (GiB): 2.54` — trivial next to the H100's
-80 GB (this 350M model says nothing about scaling). Adapter
-(`adapter_model.safetensors`, 96 MB) + `checkpoint-20/` + resolved chat template landed in
+Peak reported by axolotl is `memory/max_allocated (GiB): 2.54` — trivial next to the H100's
+80 GB (this 350M model says nothing about scaling). The adapter
+(`adapter_model.safetensors`, 96 MB) + `checkpoint-20/` + resolved chat template land in
 the output dir; `adapter_config.json` records `base_model_name_or_path: LiquidAI/LFM2.5-350M`.
 
-**Step count is real.** 9 of the 10 sample rows survived `sequence_len: 2048` (one long IETF
+**Step count is real.** 9 of the 10 sample rows survive `sequence_len: 2048` (one long IETF
 row dropped; `min_input_len 390 / max 2212`). batch 1 x grad_accum 1 x 1 GPU x 3 epochs would
-be 27 steps, capped by `max_steps: 20` → **20 optimizer steps actually ran** (not a 0-step
+be 27 steps, capped by `max_steps: 20` → **20 optimizer steps actually run** (not a 0-step
 exit).
 
 **H100 quirks / deltas from the MI355X recipe:**
@@ -389,8 +378,8 @@ exit).
 7. **Telemetry noise:** on the offline node axolotl's posthog/HF telemetry spams
    `403 Forbidden` proxy warnings — harmless. `AXOLOTL_DO_NOT_TRACK=1 HF_HUB_DISABLE_TELEMETRY=1`
    quiets it.
-8. **Datasets cache on `/mnt/gsma` fails** the `.arrow` write path used elsewhere in this
-   campaign — point `HF_DATASETS_CACHE` at tmpfs (`/dev/shm/...`).
+8. **Datasets cache on a shared/network mount can fail** the `.arrow` write path — point
+   `HF_DATASETS_CACHE` at tmpfs (`/dev/shm/...`) if you hit it.
 
 **flash-attn on H100 — BUILT + TRAINED ✅ (a genuine reversal from MI355X's sdpa).**
 flash-attn has **no prebuilt wheel** on this PyPI index (`pip install --only-binary=:all:
@@ -399,7 +388,7 @@ flash-attn` → no distribution), so it needs a source build via the on-box `nvc
 ```bash
 export CUDA_HOME=/usr/local/cuda            # nvcc 13.0 (release V13.0.88)
 MAX_JOBS=16 pip install --no-build-isolation flash-attn==2.8.3
-# ~15.5 min nvcc compile on this box (16 jobs); built flash_attn-2.8.3-cp312 wheel, EXIT 0.
+# ~15.5 min nvcc compile with 16 jobs; builds a flash_attn-2.8.3-cp312 wheel, exit code 0.
 # torch stays 2.12.1+cu130 afterward (flash-attn does NOT clobber it). Re-verify anyway.
 ```
 
@@ -422,8 +411,8 @@ training — not attempted here. Both paths are documented; **sdpa remains the z
 fallback** if you can't spare the ~15 min compile (or hit an arch mismatch on a different
 base model).
 
-**Multi-GPU (2, then 8) is DEFERRED** (production job holds GPUs 0–3). No multi-GPU pass was
-launched. What a multi-GPU LoRA pass would need — mirroring the MI355X 8-GPU section — is
+**Multi-GPU on H100 is not covered here** — no multi-GPU pass was run on this
+platform. What a multi-GPU LoRA pass would need — mirroring the MI355X 8-GPU section — is
 purely config/launch-side: a new N-GPU YAML (bump `micro_batch_size`/`max_steps`, drop
 `num_epochs` to 1), a **replicated dataset** (10 rows cannot feed a global batch across N
 ranks), `--num-processes N --main-process-port <unique>`, and a pre-flight
@@ -616,7 +605,7 @@ Everything lands under the config's `output_dir` (`./outputs/<recipe>` by defaul
 
 ## 8. Hardware support & evidence
 
-What upstream actually documents (all checked August 2026):
+What upstream actually documents (checked against the pinned versions below):
 
 - **NVIDIA** — first-class. Requirements in the upstream README and installation guide:
   "NVIDIA GPU (Ampere architecture or newer for `bf16` and Flash Attention) or AMD GPU",
@@ -642,7 +631,7 @@ What upstream actually documents (all checked August 2026):
   `deepspeed: deepspeed_configs/zero3_bf16.json` to the FSDP2 block for sharded AMD runs.
 - **Other hardware (upstream claims — not verified here):** none claimed beyond
   NVIDIA/AMD — the upstream README's requirements line lists only "NVIDIA GPU
-  (Ampere or newer …) or AMD GPU" (checked August 2026).
+  (Ampere or newer …) or AMD GPU".
 
 ## 9. Notes
 

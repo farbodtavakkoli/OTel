@@ -1,10 +1,10 @@
 # `training/llm/lightning` — chat fine-tuning with PyTorch Lightning
 
-> **Tested topology: 1x and 8x AMD Instinct MI355X (ROCm 7.2.4), 2026-08-19** — single
+> **Tested topology: 1x and 8x AMD Instinct MI355X (ROCm 7.2.4)** — single
 > device plus a full FSDP `FULL_SHARD` run across all 8 GPUs; see
-> [Tested on AMD MI355X](#tested-on-amd-mi355x-rocm-72--2026-08-19) below. Originally
+> [Platform notes — AMD MI355X](#platform-notes--amd-mi355x-rocm-72) below. Originally
 > written against the PyTorch Lightning upstream README and the `FSDPStrategy` /
-> `DeepSpeedStrategy` sources on `master` as of **August 2026**, targeting a single node
+> `DeepSpeedStrategy` sources on `master` for the pinned versions below, targeting a single node
 > of 8x H100 80GB (NVIDIA, CUDA); the NVIDIA multi-GPU path remains untested. Lightning
 > moves quickly across 2.x minors — run the smoke command below before committing to a
 > long job.
@@ -76,7 +76,7 @@ API, so `accelerator="gpu"` works unchanged. Note the honest claim level: Lightn
 upstream does not separately advertise or CI-test ROCm (its README lists CPU/GPU/TPU
 generically), so this is "supported via torch," not "certified by Lightning."
 torch 2.11.0 ROCm wheels live on the **rocm7.2** index (the older `rocm6.4` index stops
-at torch 2.9.1 — verified against download.pytorch.org, 2026-08):
+at torch 2.9.1 — verified against download.pytorch.org):
 
 ```bash
 python3.12 -m venv ~/.venv-lightning && source ~/.venv-lightning/bin/activate
@@ -88,8 +88,8 @@ On ROCm keep `--attn_implementation sdpa` (the default) and prefer `--strategy f
 (DeepSpeed 0.19.x ships as a pure-python wheel that JIT-compiles its ops and has been
 verified working on this box's ROCm 7.2 stack — see `training/llm/deepspeed` — so
 `--strategy deepspeed` is also viable, though it was not smoke-tested from this folder.)
-This install path was executed verbatim on an MI355X on 2026-08-19 — see the
-[Tested on AMD MI355X](#tested-on-amd-mi355x-rocm-72--2026-08-19) section for results
+This install path was executed verbatim on an MI355X — see the
+[Platform notes — AMD MI355X](#platform-notes--amd-mi355x-rocm-72) section for results
 and two required run-time tweaks.
 
 ### Either way
@@ -122,6 +122,15 @@ needed for gated checkpoints such as Llama or Gemma.
 
 `dev.env` is git-ignored at the repo root. **Never commit a token**; rotate it on the Hub
 if one ever lands in a commit.
+
+The multi-GPU commands below refer to two directories by environment variable — set them
+to suit your machine:
+
+```bash
+# Set these to suit your machine
+export OUTPUT_DIR=/path/to/outputs     # checkpoints, logs and tfevents
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+```
 
 ## Data
 
@@ -272,7 +281,7 @@ and `val_loss` too if you passed `--eval_samples`.
 **Other hardware (upstream claims — not verified here):** Apple Silicon (MPS) and Google TPU are first-class Lightning accelerators; Intel via torch XPU builds (Lightning docs).
 
 
-Claims above were checked against upstream sources on **2026-08-19**:
+Claims above were checked against upstream sources for the pinned versions below:
 
 - **Lightning's own claim level.** The upstream README
   ([Lightning-AI/pytorch-lightning `README.md`](https://github.com/Lightning-AI/pytorch-lightning/blob/master/README.md))
@@ -289,19 +298,19 @@ Claims above were checked against upstream sources on **2026-08-19**:
   deepspeed < 0.16.0 (`torch.load` switched to `weights_only=True`); hence the
   `deepspeed>=0.16.0` note in the requirements file.
 
-## Tested on AMD MI355X (ROCm 7.2) — 2026-08-19
+## Platform notes — AMD MI355X (ROCm 7.2)
 
-**Verdict: works with changes** on a single AMD Instinct MI355X (gfx950, 288 GB), ROCm
-7.2.4, Python 3.12.3. One code fix was required (transformers API drift, not a ROCm
-issue); the ROCm install path above is otherwise exactly right.
+**This path works on a single AMD Instinct MI355X (gfx950, 288 GB), ROCm 7.2.4,
+Python 3.12.3, with the fixes below.** One code fix is required (transformers API drift,
+not a ROCm issue); the ROCm install path above is otherwise exactly right.
 
-Environment that was actually run (versions as resolved by pip on 2026-08-19):
+Validated environment (versions as resolved by pip):
 `torch 2.11.0+rocm7.2`, `lightning 2.6.5`, `transformers 5.15.0`, `tokenizers 0.22.2`,
 `accelerate 1.14.0`, `python-dotenv 1.2.3`.
 
 ```bash
 cd training/llm/lightning
-python3 -m venv .env_train_llm_lightning && source .env_train_llm_lightning/bin/activate
+python3 -m venv .env_lightning && source .env_lightning/bin/activate
 pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
 pip install -r requirements_lightning.txt
 ln -sf ../../../dev.env dev.env   # HF_TOKEN for the gated Gemma checkpoint
@@ -319,7 +328,7 @@ python3 train_llm_lightning.py \
   --output_dir ./lightning_smoke
 ```
 
-What it printed (abridged):
+**Expected output** (abridged):
 
 ```
 Loaded 6 rows from data/OTel_LLM_sample_10.jsonl (dropped 0 over 2048 tokens, 0 with no supervised tokens)
@@ -365,9 +374,9 @@ DeepSpeed (`--strategy deepspeed`) was not smoke-tested here, but `deepspeed==0.
 is verified working on this box's ROCm stack by the sibling `training/llm/deepspeed`
 folder — it should be viable if you need ZeRO.
 
-### 8-GPU run (8x MI355X, ROCm 7.2.4) — tested August 2026
+### 8-GPU run (8x MI355X, ROCm 7.2.4)
 
-**Verdict: WORKS WITH CHANGES.** Lightning's FSDP strategy scales from 1 to 8 MI355X with
+**This works with the changes below.** Lightning's FSDP strategy scales from 1 to 8 MI355X with
 no ROCm-specific work at all: `--devices 8 --strategy fsdp` spawns 8 ranks over RCCL,
 `FULL_SHARD` genuinely shards, and the run exits 0 with a cleanly decreasing loss. The two
 changes needed are both hardware-independent Lightning/model quirks — `--grad_clip 0` is
@@ -378,14 +387,14 @@ Same stack as the single-GPU section: `torch 2.11.0+rocm7.2`, `lightning 2.6.5`,
 `transformers 5.15.0`. No new packages, no new pins — `requirements_lightning.txt` is
 unchanged for the 8-GPU path.
 
-Exact launch (the whole command — no `torchrun`, Lightning spawns the ranks itself):
+Launch (the whole command — no `torchrun`, Lightning spawns the ranks itself):
 
 ```bash
 cd training/llm/lightning
-source .env_train_llm_lightning/bin/activate
+source .env_lightning/bin/activate
 export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export HF_HOME=/mnt/data_1.5t/hf_cache
+# HF_HOME / OUTPUT_DIR: see the "Set these to suit your machine" block above
 export MASTER_PORT=29670          # see quirk 5 above; Lightning reads this env var
 
 python3 train_llm_lightning.py \
@@ -397,7 +406,7 @@ python3 train_llm_lightning.py \
   --batch_size 1 --grad_acc_steps 1 --max_seq_len 2048 \
   --num_train_epochs 10 --log_every_n_steps 1 \
   --grad_clip 0 --no_checkpoint \
-  --output_dir /mnt/data_1.5t/outputs/train_llm_lightning/gpu8/fsdp8
+  --output_dir $OUTPUT_DIR/lightning/gpu8/fsdp8
 ```
 
 **Parallelism actually used:** pure data parallelism with full parameter sharding —
@@ -407,7 +416,7 @@ parallelism. Batch geometry: micro-batch 1 x grad_acc 1 x 8 ranks = **global bat
 sequences** at up to 2048 tokens. The sample file yields 9 usable rows, so each rank sees
 2 batches per epoch → 2 optimizer steps/epoch x 10 epochs = **20 optimizer steps**.
 
-Real log lines — all 8 ranks registered, and the FSDP wrap policy resolved on each:
+**Expected output** — all 8 ranks registered, and the FSDP wrap policy resolved on each:
 
 ```
 [assert] torch 2.11.0+rocm7.2 device_count=8
@@ -443,7 +452,7 @@ step  3: 0.6324    step  8: 0.4878    step 13: 0.3520    step 18: 0.3467
 step  4: 0.6113    step  9: 0.4647    step 14: 0.3750    step 19: 0.4027
 ```
 
-Wall clock: 20 optimizer steps in ~165 s end-to-end (17:01:32 → 17:04:17), which includes
+Wall clock: 20 optimizer steps in ~165 s end-to-end, which includes
 FSDP wrapping and the first-step warmup — roughly 8 s/step amortised, and that is
 dominated by fixed setup at this tiny step count, not by steady-state throughput.
 
@@ -460,8 +469,8 @@ card1  58.1 GiB   card3  59.6 GiB   card5  59.8 GiB   card7  57.3 GiB
 ```
 
 PID cross-check via `rocm-smi --showpids` during the same window — 8 python processes,
-each pinned to exactly 1 GPU, and the PIDs are this job's own launcher (3438829) plus the
-7 ranks Lightning spawned (3439294-3439300):
+each pinned to exactly 1 GPU, and every PID is the job's own launcher plus the 7 ranks
+Lightning spawned:
 
 ```
 PID      PROCESS NAME  GPU(s)  VRAM USED
@@ -511,8 +520,8 @@ What differed from the single-GPU run:
      --strategy ddp_find_unused_parameters_true --grad_clip 1.0 --no_checkpoint
    ```
 
-   Its `--showpids` sample is the same shape — 8 python PIDs (3691548 launcher +
-   3692463-3692469), one GPU each, ~19.7-20.3 GB apiece at that instant.
+   Its `--showpids` sample is the same shape — 8 python PIDs (launcher + 7 ranks), one
+   GPU each, ~19.7-20.3 GB apiece at that instant.
 4. **Checkpointing must be turned off for smoke runs** — pass `--no_checkpoint` (new
    flag). Lightning writes a `.ckpt` every epoch by default, and for a 7.9 B model with
    optimizer state that is ~100 GB per file at 10 epochs. With the flag the whole 8-GPU
@@ -526,7 +535,7 @@ What differed from the single-GPU run:
 Not retested at 8 GPUs: `--activation_checkpointing`, `--export_hf_dir` (the FSDP
 all-gather export path), `--cpu_offload`, and `--strategy deepspeed`.
 
-### 4-GPU sharding run — **checkpoint writing enabled** (4×MI355X, ROCm 7.2.4) — tested August 2026
+### 4-GPU sharding run — **checkpoint writing enabled** (4×MI355X, ROCm 7.2.4)
 
 > Extends the 8-GPU section above, which ran with `--no_checkpoint` (quirk 4). That left
 > the FSDP **`--state_dict_type full` consolidated checkpoint** — where rank 0 gathers the
@@ -534,15 +543,15 @@ all-gather export path), `--cpu_offload`, and `--strategy deepspeed`.
 > `FULL_SHARD` re-confirmation at 4 devices. Nothing here contradicts the 1- or 8-GPU
 > results.
 
-Verified 2026-08-19 on physical GPUs **4,5,6,7** of the same node (a sibling job owned
-0-3), same venv and pins. **Verdict: FULL_SHARD holds at 4 devices, and the consolidated
-checkpoint save works — rc=0, no collective hang.**
+Validated on physical GPUs **4,5,6,7** of the same node (a sibling job owned 0-3), same
+venv and pins: `FULL_SHARD` holds at 4 devices, and the consolidated checkpoint save
+works — rc=0, no collective hang.
 
 ```bash
-source .env_train_llm_lightning/bin/activate
+source .env_lightning/bin/activate
 export HIP_VISIBLE_DEVICES=4,5,6,7
 export CUDA_VISIBLE_DEVICES=4,5,6,7
-export HF_HOME=/mnt/data_1.5t/hf_cache
+# HF_HOME / OUTPUT_DIR: see the "Set these to suit your machine" block above
 export MASTER_PORT=29796            # 29797/29798 for the two follow-up runs
 python -c "import torch; assert torch.cuda.device_count()==4"
 
@@ -556,7 +565,7 @@ python3 train_llm_lightning.py \
   --batch_size 1 --grad_acc_steps 1 --max_seq_len 2048 \
   --num_train_epochs 12 --log_every_n_steps 1 \
   --grad_clip 0 --no_checkpoint \
-  --output_dir /mnt/data_1.5t/outputs/train_llm_lightning_4gpu/fsdp4
+  --output_dir $OUTPUT_DIR/lightning_4gpu/fsdp4
 
 # Run B — consolidated checkpoint proof (NO --no_checkpoint; small model on purpose)
 python3 train_llm_lightning.py \
@@ -567,7 +576,7 @@ python3 train_llm_lightning.py \
   --precision bf16-mixed --attn_implementation sdpa \
   --batch_size 1 --grad_acc_steps 1 --max_seq_len 2048 \
   --num_train_epochs 6 --log_every_n_steps 1 --grad_clip 0 \
-  --output_dir /mnt/data_1.5t/outputs/train_llm_lightning_4gpu/fsdp4_ckpt
+  --output_dir $OUTPUT_DIR/lightning_4gpu/fsdp4_ckpt
 ```
 
 `--grad_clip 0` is still mandatory at 4 devices (quirk 1 is world-size independent).
@@ -594,7 +603,7 @@ INFO - __main__ - Training complete.                       # rc=0
 `rocm-smi` sampled every 2 s *during* training of the 8B `FULL_SHARD` run:
 
 ```
-=== sample 29  20:55:05 ===
+=== sample 29 (mid-training) ===
 GPU[4]: GPU use (%): 100   VRAM Total Used Memory (B): 61138726912   # 56.9 GiB
 GPU[5]: GPU use (%): 100   VRAM Total Used Memory (B): 68971597824   # 64.2 GiB
 GPU[6]: GPU use (%):  99   VRAM Total Used Memory (B): 65660182528   # 61.2 GiB
@@ -634,9 +643,9 @@ Still not tested at 4 GPUs: `--activation_checkpointing`, `--export_hf_dir`,
 `--cpu_offload`, `--strategy deepspeed`, and the 8B model with checkpointing enabled
 (disk-bound, see above).
 
-## Tested on NVIDIA H100 (CUDA 13.0) — 2026-08-22
+## Platform notes — NVIDIA H100 (CUDA 13.0)
 
-**Verdict: WORKS on a single NVIDIA H100 80GB HBM3** (Hopper, compute capability 9.0),
+**This path works on a single NVIDIA H100 80GB HBM3** (Hopper, compute capability 9.0),
 driver **580.173.02**, CUDA **13.0**, Python 3.12.3. Single-GPU smoke test only — the
 end-to-end path runs clean: chat-JSONL load → tokenize → train → `.ckpt` checkpoint →
 `--export_hf_dir` HF folder. **No code change was needed** (the `return_dict=False` fix
@@ -659,7 +668,7 @@ pip install -r requirements_lightning.txt     # torch unchanged afterward
 python -c "import torch;print(torch.__version__, torch.version.cuda)"   # still 2.13.0+cu130 13.0
 ```
 
-**Key versions as resolved by pip on 2026-08-22:** `torch 2.13.0+cu130`,
+**Key versions as resolved by pip:** `torch 2.13.0+cu130`,
 `lightning 2.6.5`, `transformers 5.15.1`, `tokenizers 0.22.2`, `accelerate 1.14.0`,
 `tensorboard 2.21.0`, `python-dotenv 1.2.3`; driver 580.173.02, CUDA 13.0. Notably
 `transformers 5.15.1` did **not** pull the `kernels` package here (a known crasher on this
@@ -668,8 +677,8 @@ pin `kernels>=0.12,<0.13`). This folder's loader reads the chat JSONL directly a
 **not** use HF `datasets`, so no `HF_DATASETS_CACHE` tmpfs redirect is needed.
 
 The node is offline (Hub egress is proxy-blocked, 403), so the run used the pre-cached
-`LiquidAI/LFM2.5-350M` (has a chat template) with `HF_HOME=/mnt/gsma/gsma/gsma/models
-HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1`. `tf32` on CUDA is available (cuDNN tf32 backend
+`LiquidAI/LFM2.5-350M` (has a chat template) with `HF_HOME` pointed at the local model
+cache plus `HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1`. `tf32` on CUDA is available (cuDNN tf32 backend
 on; Lightning also prints the "you have Tensor Cores — set float32_matmul_precision" hint).
 
 ### Exact smoke command (single GPU)
@@ -679,7 +688,7 @@ was pinned to physical GPU 6 with a non-default `MASTER_PORT`:
 
 ```bash
 source .env_lightning/bin/activate
-export HF_HOME=/mnt/gsma/gsma/gsma/models HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1   # HF_HOME points at the model cache (set above)
 export MASTER_PORT=29646            # unique port; Lightning defaults to 29500 and collides
 
 CUDA_VISIBLE_DEVICES=6 python3 train_llm_lightning.py \
@@ -701,9 +710,9 @@ steps**. `--grad_clip` is left at its default 1.0 and works here — the FSDP
 `gradient_clip_val` incompatibility (MI355X quirk 2) does **not** apply under
 `--strategy auto`/single-device.
 
-### Real evidence
+### Expected output
 
-Run completed `rc=0`. Loader + device + completion lines (from the run log):
+The run completes with `rc=0`. Loader + device + completion lines (from the run log):
 
 ```
 INFO - __main__ - Loaded 9 rows from data/OTel_LLM_sample_10.jsonl (dropped 1 over 2048 tokens, 0 with no supervised tokens)
@@ -733,16 +742,16 @@ pass with `--grad_acc_steps 1 --num_train_epochs 3 --learning_rate 1e-5` also ra
 `grad_acc` and lr is what makes the decrease legible on so few rows.)
 
 **GPU-6 residency (`nvidia-smi` filtered to GPU 6 by PID, sampled from a background loop
-in the same shell *while* the job trained):** the training PID (1404885) is the only
-compute app on card 6, ~8.0 GiB resident (354 M params bf16 + fp32 AdamW master weights),
-peak util 61% on the sampler's short probes:
+in the same shell *while* the job trains):** the training PID is the only compute app on
+card 6, ~8.0 GiB resident (354 M params bf16 + fp32 AdamW master weights), peak util 61%
+on the sampler's short probes:
 
 ```
-=== sample 14 00:41:08 ===        # nvidia-smi -i 6 --query-gpu=memory.used,utilization.gpu
+=== sample 14 ===        # nvidia-smi -i 6 --query-gpu=memory.used,utilization.gpu
 6169 MiB, 16 %
-=== sample 50 00:42:30 ===        # nvidia-smi -i 6 --query-compute-apps=pid,proc,used_memory
+=== sample 50 ===        # nvidia-smi -i 6 --query-compute-apps=pid,proc,used_memory
 8027 MiB, 0 %
-1404885, python3, 8018 MiB        # <- our training PID, pinned to GPU 6, no other app
+<pid>, python3, 8018 MiB          # <- the training PID, pinned to GPU 6, no other app
 ```
 
 (Util reads 0% on most 2-s samples because the forward/backward of a 350 M model on short
@@ -754,10 +763,9 @@ the H100's 80 GB, so no OOM playbook was needed for this model.)
 and `last.ckpt` (2,127,093,981 B each — weights + AdamW state + schedule), and
 `--export_hf_dir` produced a plain `from_pretrained`-loadable folder
 (`model.safetensors` 709 MB, `config.json`, `chat_template.jinja`, tokenizer files);
-reloading it gives `Lfm2ForCausalLM, 354.5M params, chat_template present`. Per the brief
-these large artifacts were deleted after capturing evidence (outputs live under
-`/dev/shm/h100/out/lightning`); the `.ckpt` files are ~2 GB each, so pass `--no_checkpoint`
-for throwaway smoke runs.
+reloading it gives `Lfm2ForCausalLM, 354.5M params, chat_template present`. The `.ckpt`
+files are ~2 GB each, so point `--output_dir` at scratch and pass `--no_checkpoint` for
+throwaway smoke runs.
 
 ### Quirks / deviations from the MI355X recipe
 
@@ -772,7 +780,7 @@ for throwaway smoke runs.
    "switch sdpa → flash_attention_2" step could not be completed. `sdpa` on Hopper already
    dispatches to an efficient fused kernel; flash-attn is a throughput optimisation, not a
    correctness requirement.
-2. **No code fix required.** The `return_dict=False` change the MI355X campaign made to
+2. **No code fix required.** The `return_dict=False` change the MI355X run added to
    `apply_chat_template(tokenize=True, ...)` is already committed in the script, so the
    loader kept all 9 rows (`0 with no supervised tokens`) on transformers 5.15.1. No new
    drift surfaced.
@@ -789,8 +797,8 @@ for throwaway smoke runs.
 
 ### What a multi-GPU pass would need (DEFERRED)
 
-Multi-GPU (2, then 8) was **not** run — GPUs 0–3 were a neighbour's production job during
-this wave. To do it later: `--strategy fsdp --sharding_strategy FULL_SHARD --devices N`
+Multi-GPU (2, then 8) was **not** run on NVIDIA — GPUs 0–3 were a neighbour's production
+job. To do it later: `--strategy fsdp --sharding_strategy FULL_SHARD --devices N`
 with **`--grad_clip 0`** (the `FSDPPrecision` grad-clip gap is world-size-independent and
 bit the MI355X FSDP runs at every scale), a distinct `MASTER_PORT`, and `--no_checkpoint`
 for smoke runs (a `.ckpt` of a large model with AdamW state is ~100 GB/file). Lightning

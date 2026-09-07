@@ -1,14 +1,13 @@
-# `inference/tensorrtllm/llm` — TensorRT-LLM (WORKS on NVIDIA H100)
+# `inference/tensorrtllm/llm` — TensorRT-LLM (works on NVIDIA H100)
 
 > Stack overview, scope note, and environment/venv conventions: [`../README.md`](../README.md).
 
-> **⭐ 2026-08-22 UPDATE — VERDICT FLIPPED on real NVIDIA H100.** This stack was previously
-> marked NOT SUPPORTED because the campaign box was pure-AMD MI355X (no NVIDIA GPU). It has
-> now been re-run on an **8×NVIDIA H100 80GB HBM3** host (driver 580.173.02, CUDA 13.0).
+> **This stack works on NVIDIA H100 and is not supported on AMD/ROCm.** Validated on an
+> **8×NVIDIA H100 80GB HBM3** host (driver 580.173.02, CUDA 13.0):
 > **`import tensorrt_llm` succeeds (v1.2.1), the probe exits 0 ("TensorRT-LLM appears usable
-> on this host"), and the H100 is confirmed present.** See **[H100 result (2026-08-22)](#h100-result-2026-08-22--tensorrt-llm-works)**
-> for the exact install recipe, versions, model-load outcome, and real logs. Everything below
-> the H100 section is the **historical MI355X evidence, retained but superseded** on NVIDIA
+> on this host"), and the H100 is detected.** See **[H100 result](#h100-result--tensorrt-llm-works)**
+> for the install recipe, versions, model-load outcome, and log samples. Everything below
+> the H100 section is the **MI355X evidence, retained but superseded** on NVIDIA
 > hardware.
 
 ## Overview & when to use
@@ -20,40 +19,40 @@ and integration with Triton Inference Server and NVIDIA Dynamo. On an NVIDIA clu
 top-tier candidate for maximum throughput and latency efficiency.
 
 > **Tested topology:** 8×AMD Instinct MI355X (gfx950), ROCm 7.2.4, Ubuntu, Python 3.12.3,
-> Docker 29.7.2. **Verdict: NOT SUPPORTED — TensorRT-LLM is NVIDIA-only and this host has
+> Docker 29.7.2. **Not supported there — TensorRT-LLM is NVIDIA-only, and such a host has
 > no NVIDIA GPU, no CUDA driver, and no `nvidia-smi`.** This is an expected, correct
 > outcome, not a failed benchmark.
 
 Use this folder as the **evidence record** for why TensorRT-LLM is not part of the working
-inference set on this box, and as a **ready-to-run recipe** for the day NVIDIA hardware is
-available. For serving on this AMD host, use [`inference/vllm/llm`](../../vllm/llm/)
+inference set on an AMD box, and as a **ready-to-run recipe** on NVIDIA hardware.
+For serving on an AMD host, use [`inference/vllm/llm`](../../vllm/llm/)
 or [`inference/sglang/llm`](../../sglang/llm/).
 
 ---
 
-## VERDICT (read this first)
+## Status (read this first)
 
-> **⭐ CURRENT VERDICT (2026-08-22, NVIDIA H100): WORKS.** `import tensorrt_llm` (v1.2.1)
+> **On NVIDIA H100 this path works.** `import tensorrt_llm` (v1.2.1)
 > succeeds, `probe_tensorrtllm.py` exits 0, and TRT-LLM loads a supported checkpoint and
-> generates on the H100 with confirmed GPU residency. Full recipe, versions, and real logs:
-> **[H100 result (2026-08-22)](#h100-result-2026-08-22--tensorrt-llm-works)**. The
-> "NOT SUPPORTED" verdict below is the **original AMD/MI355X finding — retained but superseded**
+> generates on the H100 with confirmed GPU residency. Full recipe, versions, and log samples:
+> **[H100 result](#h100-result--tensorrt-llm-works)**. The
+> "not supported" finding below is the **AMD/MI355X result — retained but superseded**
 > on NVIDIA hardware.
 
-**[SUPERSEDED — original AMD verdict] NOT SUPPORTED ON THIS HARDWARE.** Three distinct facts,
+**[Superseded on NVIDIA — the AMD finding] Not supported on that hardware.** Three distinct facts,
 deliberately kept separate — do not let the first hide the third:
 
 | # | Claim | Status | Scope |
 |---|---|---|---|
-| **(a)** | **The hardware is wrong** — no NVIDIA GPU, driver, or CUDA runtime on this box | **Decisive on the AMD box; ~~n/a on H100~~ (H100 has NVIDIA GPU + CUDA)** | The AMD host only |
+| **(a)** | **The hardware is wrong** — no NVIDIA GPU, driver, or CUDA runtime on an AMD box | **Decisive on the AMD box; ~~n/a on H100~~ (H100 has NVIDIA GPU + CUDA)** | The AMD host only |
 | **(b)** | **TensorRT-LLM is NVIDIA-only by design** — ROCm/AMD is not a supported target | **Upstream fact, verified** (still true: no ROCm build) | Any AMD host |
 | **(c)** | **Even on NVIDIA, `Qwen/Qwen3.8-27B-FP8` is unvalidated** | **CONFIRMED on H100 — and worse than expected:** it is a Qwen3.5 **VL** checkpoint (`model_type qwen3_5`); neither transformers 4.57.3 nor tensorrt_llm 1.2.1 registers `qwen3_5`, so it fails at config parse. A version gap, not hardware. | NVIDIA hosts too |
 
-(a) alone ends the discussion *on this machine*. (b) means no amount of AMD hardware would
+(a) alone ends the discussion *on an AMD machine*. (b) means no amount of AMD hardware would
 help. (c) is a separate, real caveat that survives moving to NVIDIA — it is the item most
-likely to be forgotten if you only remember "we had no NVIDIA GPU".
+likely to be forgotten once the "no NVIDIA GPU" blocker is out of the way.
 
-> **⚠️ SUPERSEDED ON NVIDIA (2026-08-22).** Facts (a) and (b)-as-blocker no longer hold on the
+> **Superseded on NVIDIA.** Facts (a) and (b)-as-blocker no longer hold on the
 > H100 host: `import tensorrt_llm` **succeeds** and the probe **exits 0**. (b) is still true as
 > an upstream *scope* statement (no ROCm build exists — the stack remains NVIDIA-only), and
 > (c) still stands as the model-checkpoint caveat. See the H100 section immediately below for
@@ -61,12 +60,12 @@ likely to be forgotten if you only remember "we had no NVIDIA GPU".
 
 ---
 
-## H100 result (2026-08-22) — TensorRT-LLM WORKS
+## H100 result — TensorRT-LLM works
 
-Re-run of this exact folder on an **8×NVIDIA H100 80GB HBM3** node (the AMD campaign could
-never test TensorRT-LLM because it needs an NVIDIA GPU). **Verdict: WORKS.** `import
-tensorrt_llm` succeeds, the repo's own `probe_tensorrtllm.py` exits **0**, and the H100 is
-confirmed present with a loadable `libcuda.so.1`.
+This folder was run on an **8×NVIDIA H100 80GB HBM3** node (an AMD-only host cannot test
+TensorRT-LLM at all, because it needs an NVIDIA GPU). **This path works as documented on
+H100:** `import tensorrt_llm` succeeds, the repo's own `probe_tensorrtllm.py` exits **0**, and
+the H100 is detected with a loadable `libcuda.so.1`.
 
 ### Host & versions (verified)
 
@@ -82,11 +81,16 @@ confirmed present with a loadable `libcuda.so.1`.
 
 ### Install recipe that made it work
 
-The blocker was **not** the wheel — it was network egress. The box's proxy
-(`proxy.conexus.svc.local:3128`) **403-blocks `pypi.nvidia.com`**, so the NVIDIA extra index
-fails until the proxy is unset. Recipe:
+The blocker was **not** the wheel — it was network egress. An HTTP proxy that
+**403-blocks `pypi.nvidia.com`** makes the NVIDIA extra index fail until the proxy is unset.
+Recipe:
 
 ```bash
+# 0. Set these to suit your machine
+export OUTPUT_DIR=/path/to/outputs     # probe/run artifacts
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+export PIP_CACHE_DIR=/path/to/pip_cache
+
 # 1. UNSET the proxy first (restores egress to pypi.nvidia.com / huggingface.co).
 #    Harmless otherwise — do this at the start of every shell.
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
@@ -102,20 +106,20 @@ sudo apt-get install -y libopenmpi3 openmpi-bin libopenmpi-dev
 
 **torch-clobber note (expected, leave it):** the install downgrades torch from
 `2.13.0+cu130` to **`2.9.1+cu128`** (tensorrt-llm 1.2.1 pins the cu128 build). `cu128` runs
-fine on this cu130 / driver-580 box — CUDA is backward-compatible with the newer driver. **Do
+fine on a cu130 / driver-580 box — CUDA is backward-compatible with the newer driver. **Do
 NOT force torch back to cu130**; that breaks tensorrt-llm's pins. Confirmed:
 `torch.cuda.is_available() == True`, device 0 = `NVIDIA H100 80GB HBM3`.
 
-### Smoke command (probe) + REAL log lines
+### Smoke command (probe)
 
 ```bash
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
-export HF_HOME=/mnt/gsma/gsma/gsma/models CUDA_VISIBLE_DEVICES=6
+export CUDA_VISIBLE_DEVICES=6
 source .env_tensorrtllm/bin/activate
-python llm/probe_tensorrtllm.py --device_id 6 --out /dev/shm/h100/out/tensorrtllm/llm/probe_h100.json
+python llm/probe_tensorrtllm.py --device_id 6 --out $OUTPUT_DIR/tensorrtllm/llm/probe_h100.json
 ```
 
-Real output (trimmed):
+**Expected output** (trimmed):
 
 ```
 nvidia-smi      : FOUND at /usr/bin/nvidia-smi
@@ -133,14 +137,14 @@ tensorrt_llm    : imports OK (version 1.2.1)
 VERDICT: TensorRT-LLM appears usable on this host.
 ```
 
-Probe exit code: **0**. (On the old AMD box this same script exited 1 with `ImportError:
+Probe exit code: **0**. (On an AMD box the same script exits 1 with `ImportError:
 libcuda.so.1`.)
 
 ### FP8 model-load attempt — `Qwen/Qwen3.8-27B-FP8` (the target)
 
 Attempted via the LLM API on GPU 6 (`from tensorrt_llm import LLM; LLM(model="Qwen/Qwen3.8-27B-FP8", tensor_parallel_size=1)`).
-The checkpoint **is fully cached** at `HF_HOME=/mnt/gsma/gsma/gsma/models` (66-shard snapshot).
-TRT-LLM launched an MPI executor worker (my PID held **588 MiB on GPU 6** — the H100 was
+The checkpoint must be fully cached under `$HF_HOME` (66-shard snapshot).
+TRT-LLM launched an MPI executor worker (the worker PID held **588 MiB on GPU 6** — the H100 was
 touched), then the load **failed at config parsing, before any FP8/weight handling**:
 
 ```
@@ -167,16 +171,16 @@ at all until a transformers build that knows `qwen3_5` **and** a TRT-LLM build t
 it both exist. This is exactly the model caveat the "fair NVIDIA test" section flagged, now
 confirmed on-hardware: **the checkpoint is too new for this TRT-LLM release.** (A bleeding-edge
 `transformers` from git *might* let the config parse, but TRT-LLM still has no `qwen3_5` model
-class, so the serving path would fail downstream — not attempted; out of time-box and risks
+class, so the serving path would fail downstream — not attempted, since it risks
 clobbering the verified env.)
 
-### Fallback — PROVING the serving path works end-to-end
+### Fallback — proving the serving path works end-to-end
 
-To show TRT-LLM genuinely serves on this H100 (not just imports), I loaded a small cached
+To show TRT-LLM genuinely serves on the H100 (not just imports), load a small cached
 model whose architecture **is** registered: **`Qwen/Qwen3-Reranker-0.6B`** →
-`Qwen3ForCausalLM` (BF16, 28 layers), single GPU, `CUDA_VISIBLE_DEVICES=6`. This **worked**:
+`Qwen3ForCausalLM` (BF16, 28 layers), single GPU, `CUDA_VISIBLE_DEVICES=6`. This **works**:
 
-Real log lines (`/dev/shm/h100/out/tensorrtllm/llm/load_fallback3.log`):
+**What a healthy run looks like:**
 
 ```
 [TRT-LLM] [I] Using LLM with PyTorch backend
@@ -186,12 +190,12 @@ Model init total -- 19.66s
 [  65.3s] DONE.
 ```
 
-GPU residency sampled by PID from a second shell **while the run was live** — proof the H100
-was used:
+Sample GPU residency by PID from a second shell **while the run is live** to confirm the H100
+is actually used:
 
 ```
 $ nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader -i 6
-1501286, 588 MiB          # <- this run's PID on GPU 6 (UUID e4fe48bc), + 68.69 GiB KV cache reserved
+<pid>, 588 MiB            # <- the run's PID on GPU 6, + 68.69 GiB KV cache reserved
 ```
 
 Greedy generations (`SamplingParams(max_tokens=16, temperature=0.0)`):
@@ -207,29 +211,29 @@ PROMPT: 'The capital of France is' ->  ' 100000000000000'
 fault: `Qwen3-Reranker-0.6B` is a *reranker/scoring* checkpoint, not an instruction-tuned
 generator, so free-form generation is weak — it was chosen only because it is tiny and its
 arch is supported, to exercise the load→generate path. A rigorous accuracy comparison against
-the transformers/vLLM baseline was **not** possible on the intended 27B-FP8 (it never loaded,
-above), and the provided transformers reference
-(`/dev/shm/h100/out/transformers/llm/reference_llm_lfm2.5-350m_1gpu.json`) is for LFM2.5-350M,
+the transformers/vLLM baseline is **not** possible on the intended 27B-FP8 (it never loads,
+above), and the transformers reference artifact
+(`reference_llm_lfm2.5-350m_1gpu.json`) is for LFM2.5-350M,
 a different model — so it is not a like-for-like reference for either model here. The
 defensible claim: **TRT-LLM loads a supported checkpoint on the H100 and produces coherent,
 partially-verifiable output; a full accuracy match awaits a serving-supported instruct model.**
 
-### Verdict (H100)
+### Summary (H100)
 
-- **Stack usable on H100: YES.** `import tensorrt_llm` (1.2.1) works, probe exits 0, and TRT-LLM
+- **Stack usable on H100: yes.** `import tensorrt_llm` (1.2.1) works, probe exits 0, and TRT-LLM
   loads a supported checkpoint and generates on the H100 with confirmed GPU residency.
-- **Target `Qwen/Qwen3.8-27B-FP8`: BLOCKED on this release** — it is a Qwen3.5 *VL* checkpoint
+- **Target `Qwen/Qwen3.8-27B-FP8`: blocked on this release** — it is a Qwen3.5 *VL* checkpoint
   (`model_type qwen3_5`) that neither transformers 4.57.3 nor tensorrt_llm 1.2.1 recognizes.
   Fix requires a newer transformers **and** a TRT-LLM build that registers `qwen3_5` — a
   version gap, not a hardware gap. Documented precisely above.
-- Reproduce the fallback: scripts under `/dev/shm/h100/out/tensorrtllm/llm/`
-  (`load_qwen3_27b_fp8.py`, `load_fallback.py`); probe JSON at `.../probe_h100.json`.
+- Reproduce the fallback with the loader scripts (`load_qwen3_27b_fp8.py`,
+  `load_fallback.py`), writing the probe JSON under `$OUTPUT_DIR/tensorrtllm/llm/`.
 
 ### Single-GPU only; what multi-GPU would need
 
-Per the shared-node rules this was a **single-GPU** smoke on GPU 6 (GPUs 0–3 = co-tenant
-production job, never touched). A multi-GPU pass (TP=2 then TP=8) is **deferred** until the
-production job frees GPUs 0–3; it would add `tensor_parallel_size=N` to the `LLM(...)` call
+On a shared node this is a **single-GPU** smoke on GPU 6 (other GPUs left to co-tenant
+jobs). A multi-GPU pass (TP=2 then TP=8) needs the remaining GPUs free;
+it would add `tensor_parallel_size=N` to the `LLM(...)` call
 (or `--tp_size N` to `trtllm-serve`) and re-verify residency across all N GPUs.
 
 ---
@@ -253,9 +257,9 @@ instead.
 
 ---
 
-## Host evidence — there is no NVIDIA GPU here
+## Host evidence — an AMD host has no NVIDIA GPU
 
-Every check below was run on this box. Reproduce with `python probe_tensorrtllm.py`.
+Every check below was run on the AMD host. Reproduce with `python probe_tensorrtllm.py`.
 
 ```bash
 $ which nvidia-smi
@@ -322,20 +326,18 @@ gcnArchName          : gfx950:sramecc+:xnack-
 
 ## Install attempt — what pip actually did
 
-Environment: fresh venv, `PIP_CACHE_DIR=/mnt/data_1.5t/pip_cache`, pip 24.0, Python 3.12.3,
+Environment: fresh venv, a `PIP_CACHE_DIR` on a large filesystem, pip 24.0, Python 3.12.3,
 x86_64 Linux.
 
 ```bash
 cd inference/tensorrtllm
 python3 -m venv .env_tensorrtllm
 source .env_tensorrtllm/bin/activate
-export PIP_CACHE_DIR=/mnt/data_1.5t/pip_cache
+export PIP_CACHE_DIR=/path/to/pip_cache
 pip install tensorrt-llm
 ```
 
-(Historically this used a per-campaign venv, `.env_inference_llm_tensorrtllm`; per-campaign
-venvs were removed in the 2026-08 reorg — the convention is now one venv at the software
-root, see [`../README.md`](../README.md).)
+(The convention is one venv at the software root, see [`../README.md`](../README.md).)
 
 ### The package installs cleanly — this is the surprising part
 
@@ -462,7 +464,7 @@ $ echo $?
 > `torch.cuda.is_available()` is still **`False`**, because a CUDA-built torch with no driver
 > is just as dead. On the **host** ROCm environment the same call returns `True` for the
 > opposite reason (HIP aliasing). Neither `True` nor `False` from `is_available()` is a
-> reliable CUDA test on this box — which is exactly why the probe checks
+> reliable CUDA test on such a host — which is exactly why the probe checks
 > `torch.version.cuda`, `torch.version.hip`, and `libcuda.so.1` loadability instead.
 
 Upstream's own Linux install instructions confirm the missing prerequisites are
@@ -482,7 +484,7 @@ be installed meaningfully without NVIDIA silicon.
 ```bash
 cd inference/tensorrtllm
 python3 -m venv .env_tensorrtllm && source .env_tensorrtllm/bin/activate
-export PIP_CACHE_DIR=/mnt/data_1.5t/pip_cache
+export PIP_CACHE_DIR=/path/to/pip_cache
 
 pip install tensorrt-llm                # succeeds, exit 0, ~16 GB -- this is NOT compatibility
 python -c "import tensorrt_llm"         # ImportError: libcuda.so.1 ... ; exit 1
@@ -501,8 +503,8 @@ No GPU is touched by any of the above — there is no NVIDIA GPU to touch, and n
 is opened either.
 
 > **State of the venv as committed:** the full 16 GB TensorRT-LLM install was performed, the
-> transcripts above were captured verbatim from it, and the venv was then **reset to just
-> `python-dotenv`** to return ~16 GB to a root filesystem sitting at 95% capacity while
+> output above was captured from it, and the venv was then **reset to just
+> `python-dotenv`** to return ~16 GB to a nearly full root filesystem while
 > sibling stacks are running. So `probe_tensorrtllm.py` as shipped reports
 > `ModuleNotFoundError: No module named 'tensorrt_llm'` rather than the `libcuda.so.1`
 > `ImportError`. Both are failures; the `libcuda.so.1` one is the deeper and more
@@ -540,7 +542,7 @@ the other vendor's path without executing it.
 
 ## Upstream support position (verified, not assumed)
 
-Checked directly against TensorRT-LLM `main` on the date below.
+Checked directly against TensorRT-LLM `main` for the versions pinned above.
 
 ### Hardware — `docs/source/supported-hardware.md`, verbatim and complete
 
@@ -686,11 +688,11 @@ vLLM/SGLang/TensorRT-LLM** — not TensorRT-LLM on AMD, which is not a thing.
 
 ## Single-GPU results
 
-**None — no model was loaded, and no GPU was used.** GPU budget consumed: **zero**, since the
-required GPU does not exist on this host. Nothing was downloaded to the model cache and this
-folder ships no model artifacts. Sibling stacks on GPUs 0–5 were not disturbed.
+**None on AMD — no model is loaded, and no GPU is used**, since the required GPU does not
+exist on such a host. Nothing is downloaded to the model cache and this folder ships no
+model artifacts. (The H100 single-GPU results are in the H100 section above.)
 
-Reported honestly: this is a **not-supported** result, not a failed benchmark.
+This is a **not-supported** result, not a failed benchmark.
 
 ## Multi-GPU results
 
@@ -743,14 +745,14 @@ No model output exists.
 - **`pip install tensorrt-llm` succeeding is not a compatibility signal.** It exits **0** on a
   machine with zero NVIDIA hardware and installs 16 GB of CUDA wheels. There is no
   GPU-vendor guard because the artifact is a generic `manylinux_x86_64` wheel. The failure is
-  deferred all the way to `import`. Contrast with the former MLC experiment
-  (`inference/mlc/llm`, retired before the 2026-08 reorg), where the wheel also installs but
+  deferred all the way to `import`. Contrast with the MLC experiment (`inference/mlc/llm`,
+  since retired), where the wheel also installs but
   dies on a ROCm *ABI* mismatch — here there is no ROCm build at all to mismatch against.
 - **Budget the disk before repeating this.** The install consumed ~16 GB in the venv and
   built a 2.5 GB `tensorrt_llm` wheel plus a 3.4 GB `tensorrt_cu13_libs` wheel into
-  `PIP_CACHE_DIR`. Point `PIP_CACHE_DIR` at `/mnt/data_1.5t/pip_cache` (as done here), not
-  `/`, which is at 95% capacity. Delete the venv once the evidence is recorded — it can
-  never do anything useful on this host.
+  `PIP_CACHE_DIR`. Point `PIP_CACHE_DIR` at a large data filesystem, not
+  `/`, which is typically the tightest. Delete the venv once the evidence is recorded — it can
+  never do anything useful on an AMD host.
 - **`torch.cuda.is_available() == True` on this AMD host.** ROCm PyTorch aliases `torch.cuda`
   onto HIP. Anyone using that call as a CUDA check will get a false positive on this machine.
   Check `torch.version.cuda`/`torch.version.hip` instead.
@@ -773,16 +775,16 @@ No model output exists.
 
 ---
 
-## Verdict
+## Summary — AMD / ROCm
 
-**NOT SUPPORTED on MI355X / ROCm 7.2 — correctly and by design.** TensorRT-LLM is an
+**Not supported on MI355X / ROCm 7.2 — correctly and by design.** TensorRT-LLM is an
 NVIDIA-only stack: its `supported-hardware.md` covers Blackwell, Hopper, Ada Lovelace, and
 Ampere and mentions AMD/ROCm nowhere, and its entire dependency closure is CUDA 12/13 wheels.
-This host has no NVIDIA GPU, no driver, no `libcuda.so.1`, and no `nvidia-smi` — so the
+Such a host has no NVIDIA GPU, no driver, no `libcuda.so.1`, and no `nvidia-smi` — so the
 question is settled twice over, independently.
 
 The pip install is a useful negative, and a sharper one than expected: `pip install
-tensorrt-llm` **completes successfully with exit code 0** on this pure-AMD box. There is no
+tensorrt-llm` **completes successfully with exit code 0** on a pure-AMD box. There is no
 platform guard, so pip downloads the whole CUDA userspace — 16 GB, ~200 packages, including a
 CUDA `torch-2.9.1` that would clobber this host's ROCm torch in any shared environment. The
 stack only refuses at import: `ImportError: libcuda.so.1: cannot open shared object file`,
@@ -798,7 +800,7 @@ mainline as `Qwen3_5ForCausalLM` but is **absent from the supported-model list**
 requires direct-load validation, an accuracy comparison against Transformers/vLLM, and
 possibly NVIDIA Model Optimizer requantization before any benchmark number means anything.
 
-**Recommendation:** do not include TensorRT-LLM as an AMD candidate. On this box use
+**Recommendation:** do not include TensorRT-LLM as an AMD candidate. On an AMD box use
 [`../../vllm/llm/`](../../vllm/llm/) or
 [`../../sglang/llm/`](../../sglang/llm/). Keep this folder as the evidence record
 and as the ready-to-run NVIDIA recipe above.

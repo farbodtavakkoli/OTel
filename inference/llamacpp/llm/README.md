@@ -28,15 +28,14 @@ tensor parallelism is the throughput answer; llama.cpp is the portability/GGUF a
 > artifact from the same base family — not the same file as the official FP8 repo.
 
 > **Tested topology:** 2xAMD Instinct MI355X (gfx950, 288 GB each), physical GPUs 6
-> and 7, ROCm 7.2.4, Ubuntu, Python 3.12.3. Verified **2026-08-20**.
+> and 7, ROCm 7.2.4, Ubuntu, Python 3.12.3.
 
 ## Build — see [`../README.md`](../README.md)
 
 llama.cpp is a C++ build, not a pip package. **One HIP build serves all three
 `inference/llamacpp/*` leaves** — the full ROCm/HIP recipe (prerequisites, cmake
 flags, the mandatory `-DLLAMA_OPENSSL=ON`, arch-flag notes, NVIDIA variant) lives in
-[`../README.md`](../README.md). The campaign's build tree was removed with the venvs
-in the 2026-08 reorg; the documented 40.6 s cold rebuild applies. This leaf assumes
+[`../README.md`](../README.md); a cold build takes about 40.6 s. This leaf assumes
 `llama.cpp/build/bin/llama-server` exists from that recipe.
 
 Verified at commit **`d59d455fd8ea09e5a2e87ce2a9d668267ffb5ccd`** (Wed Aug 19 2026),
@@ -52,12 +51,15 @@ export $(grep -v '^#' dev.env | xargs)          # only when a gated repo needs H
 `unsloth/Qwen3.8-27B-GGUF` is **not** gated, so the LLM pull needs no token. Never echo
 or commit `HF_TOKEN`.
 
-Model weights must land on `/mnt`, not on `/`:
+Point the model caches at a filesystem with room, not at the root filesystem:
 
 ```bash
+# Set these to suit your machine
+export HF_HOME=/path/to/hf_cache             # Hugging Face model cache
+export LLAMA_CACHE=$HF_HOME/llama_cpp        # llama.cpp's own -hf cache
+export OUTPUT_DIR=/path/to/outputs           # inference artifacts
+
 export HIP_VISIBLE_DEVICES=6,7 CUDA_VISIBLE_DEVICES=6,7
-export HF_HOME=/mnt/data_1.5t/hf_cache
-export LLAMA_CACHE=/mnt/data_1.5t/hf_cache/llama_cpp   # llama.cpp's own -hf cache
 ```
 
 `LLAMA_CACHE` is the one that actually matters for `-hf`: llama.cpp keeps its own
@@ -80,7 +82,7 @@ on disk:
 ```bash
 cd <your llama.cpp checkout>          # built per ../README.md
 export HIP_VISIBLE_DEVICES=6 CUDA_VISIBLE_DEVICES=6
-export HF_HOME=/mnt/data_1.5t/hf_cache LLAMA_CACHE=/mnt/data_1.5t/hf_cache/llama_cpp
+# HF_HOME / LLAMA_CACHE as exported above
 
 ./build/bin/llama-server \
   -hf unsloth/Qwen3.8-27B-GGUF:Q8_0 \
@@ -112,15 +114,15 @@ export HIP_VISIBLE_DEVICES=6,7 CUDA_VISIBLE_DEVICES=6,7
 
 ## Client / smoke command
 
-One shared venv at the software root serves all three leaves (the per-leaf campaign
-venvs were removed in the 2026-08 reorg; rebuild from `../requirements.txt`):
+One shared venv at the software root serves all three leaves — build it from
+`../requirements.txt`:
 
 ```bash
 cd .. && python3 -m venv .env_llamacpp && .env_llamacpp/bin/pip install -r requirements.txt && cd llm
 
 ../.env_llamacpp/bin/python inference_llm_llamacpp.py \
   --port 8200 \
-  --out /mnt/data_1.5t/outputs/inference_llm_llamacpp/chat_single_gpu.json
+  --out $OUTPUT_DIR/inference_llm_llamacpp/chat_single_gpu.json
 ```
 
 Equivalent raw curl:
@@ -135,7 +137,7 @@ curl -s http://127.0.0.1:8200/v1/chat/completions \
 
 ## Results — single GPU
 
-Real client output:
+**Expected client output**
 
 ```text
 endpoint      : http://127.0.0.1:8200/v1/chat/completions
@@ -203,7 +205,7 @@ end time, attributes, events, and its relationship to other spans.
 
 ### Single vs multi-GPU — the honest reading
 
-| Mode | Model buffers | tok/s | Verdict |
+| Mode | Model buffers | tok/s | Result |
 |---|---|---|---|
 | 1xMI355X, `-ngl 99` | ROCm0 25972 MiB | **66.7** | Best latency |
 | 2xMI355X, `--split-mode layer` | ROCm0 12730 + ROCm1 13242 MiB | 65.9 | Works, ~1 % *slower* |
@@ -231,7 +233,7 @@ Root cause traced, and it is **not** a gfx950 or AMD-specific defect. The check 
 CUDA backend compiled through hipcc, row split is unavailable to CUDA **and** HIP in
 this build. Use `--split-mode layer` (the default).
 
-## H100 (NVIDIA, CUDA) — verified 2026-08-22
+## H100 (NVIDIA, CUDA)
 
 Mirror of the MI355X run above, on **1x NVIDIA H100 80GB HBM3** (physical GPU 7,
 `CUDA_VISIBLE_DEVICES=7`), driver **580.173.02**, **CUDA 13.0**, Hopper cc 9.0,
@@ -245,18 +247,18 @@ it is vendor-neutral and required for the `-hf` HTTPS pull. Verified `llama-serv
 patches, **100 s** wall (`-j 32`), `CMAKE_CUDA_ARCHITECTURES=90-real` auto-detected for
 Hopper.
 
-**Model:** the documented 28 GB `unsloth/Qwen3.8-27B-GGUF:Q8_0` was substituted with the
+**Model:** the documented 28 GB `unsloth/Qwen3.8-27B-GGUF:Q8_0` is substituted with the
 small same-family **`unsloth/Qwen3-1.7B-GGUF:Q8_0`** (~1.8 GB) for a time-boxed
 single-GPU smoke test — an 80 GB H100 fits the 27B ~2.5x over, so the 27B is not a
 capacity problem here, only a download-time one. The serve/client commands are identical;
 swap the `-hf` repo back to `unsloth/Qwen3.8-27B-GGUF:Q8_0` for the production model.
 
 ```bash
-cd /dev/shm/h100/out/llamacpp/llama.cpp          # CUDA build per ../README.md
+cd /dev/shm/llamacpp/llama.cpp                   # CUDA build per ../README.md
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy   # HF pull
 export CUDA_VISIBLE_DEVICES=7
-export HF_HOME=/mnt/gsma/gsma/gsma/models
-export LLAMA_CACHE=/dev/shm/h100/out/llamacpp/model_cache
+# HF_HOME as exported above
+export LLAMA_CACHE=/dev/shm/llamacpp/model_cache   # tmpfs, see quirks below
 
 ./build/bin/llama-server \
   -hf unsloth/Qwen3-1.7B-GGUF:Q8_0 \
@@ -292,11 +294,11 @@ exactly as on MI355X. `system_info` confirms the CUDA backend: `CUDA : ARCHS = 9
 ```text
 $ nvidia-smi -i 7 --query-compute-apps=pid,process_name,used_memory --format=csv
 pid, process_name, used_gpu_memory [MiB]
-1699010, ./build/bin/llama-server, 3288 MiB
+<pid>, ./build/bin/llama-server, 3288 MiB
 ```
 
-**Real generation.** Qwen3 is a *reasoning* model: the default client run produced 128
-tokens of coherent `reasoning_content` and hit `finish_reason:length` before emitting
+**Generation.** Qwen3 is a *reasoning* model: the default client run produces 128
+tokens of coherent `reasoning_content` and hits `finish_reason:length` before emitting
 final content (an empty `content` string — a client/prompt artifact, not a GPU failure).
 Appending Qwen3's `/no_think` switch gives clean final content:
 
@@ -307,23 +309,23 @@ operation or event in a trace, capturing the context and metadata of the call st
 during a specific period of time.
 ```
 
-Throughput was **370.7 tok/s** on the 1.7B (vs 66.7 tok/s for the 27B on MI355X — a
+Throughput is **370.7 tok/s** on the 1.7B (vs 66.7 tok/s for the 27B on MI355X — a
 smaller model, not a hardware comparison).
 
 **Quirks seen on H100 (all shared with MI355X):** the harmless minja
 `Callee is not a function: got Undefined (hint: 'lstrip')` chat-template parse error
 prints at load and does not affect generation; `-DLLAMA_OPENSSL=ON` remains mandatory
-for `-hf`. New for this box: **no GGUF was cached** and **cmake/ninja were absent** —
-both were installed into a throwaway venv (see `../README.md`), and the model was pulled
-to a tmpfs `LLAMA_CACHE` (the `/mnt/gsma` share rejects pip/rename operations).
+for `-hf`. If the host has **no cached GGUF** and **no cmake/ninja**, install the
+toolchain into a throwaway venv (see `../README.md`) and pull the model to a tmpfs
+`LLAMA_CACHE` — some network/NFS model shares reject pip/rename operations.
 
-**Multi-GPU (deferred):** GPUs 0–3 were a co-tenant production job; only GPU 7 was used.
-A 2-GPU layer split would use the same `--split-mode layer --tensor-split 1,1` shown
-above; `--split-mode row` is expected to fail identically on CUDA (the missing
-`split_buffer_type` is in the shared CUDA/HIP backend, not AMD-specific).
+**Multi-GPU:** only GPU 7 is used in this single-GPU smoke. A 2-GPU layer split would
+use the same `--split-mode layer --tensor-split 1,1` shown above; `--split-mode row` is
+expected to fail identically on CUDA (the missing `split_buffer_type` is in the shared
+CUDA/HIP backend, not AMD-specific).
 
-**H100 verdict: PASS.** Builds clean with `-DGGML_CUDA=ON` in 100 s, serves a Qwen3 GGUF
-with all layers on the H100 (CUDA0 buffer + `nvidia-smi` by PID), real coherent output.
+**On H100 this path works.** Builds clean with `-DGGML_CUDA=ON` in 100 s, serves a Qwen3
+GGUF with all layers on the H100 (CUDA0 buffer + `nvidia-smi` by PID), coherent output.
 
 ## Arguments
 
@@ -360,7 +362,8 @@ with all layers on the H100 (CUDA0 buffer + `nvidia-smi` by PID), real coherent 
 
 ## Output
 
-Logs and artifacts go to `/mnt/data_1.5t/outputs/inference_llm_llamacpp/`, never to `/`:
+Logs and artifacts go to `$OUTPUT_DIR/inference_llm_llamacpp/`, never to the root
+filesystem:
 
 ```text
 build.log                     cold HIP build (681 targets, EXIT=0)
@@ -377,9 +380,8 @@ client_multi_gpu.txt          client stdout
 df_before.txt / df_after.txt  disk check around the 28 GB pull
 ```
 
-Disk after the pull: `/` 174 G free, `/mnt/data_1.5t` 172 G free. All 28 GB of weights
-are on `/mnt`; only the ~514 MB build tree sat under the repo on `/` (removed in the
-2026-08 reorg — rebuild per `../README.md`).
+All 28 GB of weights land under `$LLAMA_CACHE`, off the root filesystem; only the
+~514 MB build tree sits under the repo (rebuild per `../README.md`).
 
 ## Hardware support & evidence
 
@@ -415,7 +417,7 @@ are on `/mnt`; only the ~514 MB build tree sat under the repo on `/` (removed in
    you get "model loaded" and nothing else — no `offloaded N/N layers`, no buffer sizes.
    Always start with `-lv 5` when you need to prove residency, then drop it.
 3. **`LLAMA_CACHE`, not `HF_HOME`, controls where `-hf` writes.** Set it explicitly or
-   28 GB lands in `~/.cache` on `/`.
+   28 GB lands in `~/.cache` on the root filesystem.
 4. **`--split-mode row` is broken for CUDA and HIP** in this revision — see the source
    trace above. Only `layer` and `none` are usable.
 5. **Multi-GPU does not make a single request faster.** It is pipeline parallelism. If
@@ -429,9 +431,9 @@ are on `/mnt`; only the ~514 MB build tree sat under the repo on `/` (removed in
    `rocm-smi --showpids` reports a KFD index that matches neither — trust the per-card
    VRAM table.
 
-## VERDICT
+## Summary
 
-**PASS — fully working on MI355X (gfx950), single and multi-GPU.**
+**Fully working on MI355X (gfx950), single and multi-GPU.**
 
 llama.cpp builds clean against ROCm 7.2.4 for gfx950 in **40.6 seconds** with
 `-DGGML_HIP=ON -DGPU_TARGETS=gfx950`, no source patches. It serves
@@ -452,7 +454,7 @@ native FP8 checkpoint.
 - Benchmark `llama-bench` for prompt-processing vs token-generation throughput on
   gfx950; this README reports only end-to-end server latency on a 72-token prompt.
 - Compare `Q8_0` against `UD-Q8_K_XL` for quality/latency now that VRAM is a non-issue.
-- Try `--parallel N` with a batched client to measure real server throughput; the
+- Try `--parallel N` with a batched client to measure sustained server throughput; the
   single-request numbers here understate what one MI355X can do.
 - Watch upstream for a `split_buffer_type` implementation in the CUDA/HIP backend to
   re-enable `--split-mode row`.

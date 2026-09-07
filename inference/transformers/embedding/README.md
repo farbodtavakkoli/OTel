@@ -44,8 +44,8 @@ Python 3.12, in its own venv.
 Install torch from the ROCm wheel index **before** the rest of the requirements:
 
 ```bash
-python3 -m venv .env_inference_embedding_transformers
-source .env_inference_embedding_transformers/bin/activate
+python3 -m venv .env_transformers
+source .env_transformers/bin/activate
 pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
 pip install -r requirements_inference_embedding_transformers.txt
 ```
@@ -80,11 +80,14 @@ gated EmbeddingGemma repo:
 HF_TOKEN=hf_xxxxxxxxxxxxxxxx
 ```
 
-Loaded via `load_dotenv("dev.env")`. Point the model cache at the big volume and pin the
-two GPUs you own:
+Loaded via `load_dotenv("dev.env")`. Point the model cache at a large volume, choose an
+output directory, and pin the two GPUs you own:
 
 ```bash
-export HF_HOME=/mnt/data_1.5t/hf_cache
+# Set these to suit your machine
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+export OUTPUT_DIR=/path/to/outputs     # inference artifacts
+
 export HIP_VISIBLE_DEVICES=4,5 CUDA_VISIBLE_DEVICES=4,5
 ```
 
@@ -97,18 +100,18 @@ physical card 4 above.
 Single GPU, built-in query/document set, writing the reference artifact:
 
 ```bash
-source .env_inference_embedding_transformers/bin/activate
-export HIP_VISIBLE_DEVICES=4,5 CUDA_VISIBLE_DEVICES=4,5 HF_HOME=/mnt/data_1.5t/hf_cache
+source .env_transformers/bin/activate
+export HIP_VISIBLE_DEVICES=4,5 CUDA_VISIBLE_DEVICES=4,5
 
 python embed_transformers.py --dtype float32 --devices cuda:0 \
-  --output /mnt/data_1.5t/outputs/inference_embedding_transformers/reference_embedding_fp32_1gpu.json
+  --output $OUTPUT_DIR/inference_embedding_transformers/reference_embedding_fp32_1gpu.json
 ```
 
 Multi-GPU (sentence-transformers multi-process encoding across both cards):
 
 ```bash
 python embed_transformers.py --dtype float32 --devices cuda:0,cuda:1 \
-  --output /mnt/data_1.5t/outputs/inference_embedding_transformers/reference_embedding_fp32_2gpu.json
+  --output $OUTPUT_DIR/inference_embedding_transformers/reference_embedding_fp32_2gpu.json
 ```
 
 Your own corpus, Matryoshka-truncated to 256 dims:
@@ -122,7 +125,7 @@ The script exits non-zero if the relevance sanity check fails, so it works as a 
 
 ## Single-GPU results
 
-`--dtype float32 --devices cuda:0` (1× MI355X, physical card 4), verified 2026-08-20:
+`--dtype float32 --devices cuda:0` (1× MI355X, physical card 4) — expected output:
 
 ```
 model=google/embeddinggemma-300m dtype=float32 attn=sdpa devices=['cuda:0']
@@ -162,23 +165,23 @@ documents is ~0.44 cosine on Q0 and ~0.30 on Q1, and both queries rank correctly
 card during encoding — under 2% of the MI355X's 288 GB, so the model is nowhere near
 GPU-bound at this size.
 
-## H100 results (NVIDIA, CUDA 13 — verified 2026-08-22)
+## H100 results (NVIDIA, CUDA 13 — verified)
 
 Same model (`google/embeddinggemma-300m`, gated, cached; `HF_TOKEN` from `dev.env`). Shared
 stack venv: `torch 2.13.0+cu130`, `transformers 5.5.0`, `sentence-transformers 5.7.0`,
 `kernels 0.12.3`, driver 580.173.02, Python 3.12.3. `flash-attn` has no prebuilt cu130 wheel
 → ran `--attn_impl sdpa` (CUDA otherwise auto-selects `eager`; pass `sdpa` explicitly).
 
-Exact smoke command (physical GPU 5), fp32 for the canonical artifact:
+Smoke command (physical GPU 5), fp32 for the canonical artifact:
 
 ```bash
-export HF_HOME=/mnt/gsma/gsma/gsma/models HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES=5
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES=5
 python embed_transformers.py --model google/embeddinggemma-300m --dtype float32 --devices cuda:0 \
   --attn_impl sdpa \
-  --output /dev/shm/h100/out/transformers/embedding/reference_embedding_embeddinggemma-300m_fp32_1gpu.json
+  --output $OUTPUT_DIR/transformers/embedding/reference_embedding_embeddinggemma-300m_fp32_1gpu.json
 ```
 
-Real output (fp32, 2026-08-22):
+**Expected output** (fp32):
 
 ```
 model=google/embeddinggemma-300m dtype=float32 attn=sdpa devices=['cuda:0']
@@ -202,9 +205,9 @@ encode is sub-second so it undershoots a 1 Hz external `nvidia-smi` poll — tor
 reading is the residency proof here (an earlier reranker poll on the same GPU 5 did catch a
 PID at 2.3–3.1 GiB, confirming the sampler works).
 
-**Verdict (H100): WORKS, no code changes.** dim 768, both sanity checks PASS, fp32 identical
-to MI355X. Multi-GPU (data-parallel `--devices cuda:0,cuda:1`) deferred — production job on
-GPUs 0–3; nothing to shard at 300M params anyway.
+**On H100 this path works as documented, with no code changes.** dim 768, both sanity checks
+PASS, fp32 identical to MI355X. Multi-GPU (data-parallel `--devices cuda:0,cuda:1`) was not
+exercised on H100; there is nothing to shard at 300M params anyway.
 
 ## Multi-GPU results
 
@@ -216,7 +219,7 @@ each holding a full model replica, and splits the input batch between them. That
 `--devices cuda:0,cuda:1` does (it forwards a device list to `encode`, which switches to
 the multi-process pool path).
 
-Verified 2026-08-20, `--dtype float32 --devices cuda:0,cuda:1`:
+`--dtype float32 --devices cuda:0,cuda:1` — expected output:
 
 ```
 model=google/embeddinggemma-300m dtype=float32 attn=sdpa devices=['cuda:0', 'cuda:1']
@@ -297,7 +300,7 @@ is 0 on PASS, 1 on FAIL.
 `--output` writes the **reference artifact** other stacks are diffed against:
 
 ```
-/mnt/data_1.5t/outputs/inference_embedding_transformers/
+$OUTPUT_DIR/inference_embedding_transformers/
   reference_embedding_fp32_1gpu.json    <- canonical: exactly reproducible
   reference_embedding_fp32_2gpu.json    <- byte-identical to the above
   reference_embedding_1gpu.json         <- bf16 variant
@@ -333,16 +336,16 @@ diff `cosine_similarities` — that is dimensionless and dtype-robust, unlike ra
 - **The multi-process pool leaks semaphores at shutdown** — Python prints
   `resource_tracker: There appear to be 4 leaked semaphore objects`. Harmless, comes from
   sentence-transformers' pool teardown, and does not affect results.
-- **Shared HF cache permission warnings.** If `/mnt/data_1.5t/hf_cache` was populated by
+- **Shared HF cache permission warnings.** If `$HF_HOME` was populated by
   another user you will see `Ignoring corrupted tree cache file ... Permission denied`.
   It is a cache-metadata write failing, not a model-load failure; output is unaffected.
 - `--devices` indexes *within* `HIP_VISIBLE_DEVICES`, so `cuda:0,cuda:1` means physical
   cards 4 and 5 given the exports above. Check with
   `python -c "import torch; print(torch.cuda.device_count())"` before a multi-GPU run.
 
-## Verdict
+## Platform notes
 
-**WORKS, no code changes.** `google/embeddinggemma-300m` runs correctly on MI355X /
+**This path works as documented, with no code changes.** `google/embeddinggemma-300m` runs correctly on MI355X /
 gfx950 / ROCm 7.2.4 through the stock Transformers + sentence-transformers stack — 768-d
 embeddings, correct relevance ordering with a wide margin, on one GPU and across two.
 
@@ -355,7 +358,7 @@ an engine bug.
 
 Recommended reference command: `--dtype float32 --devices cuda:0`.
 
-**NVIDIA H100 (verified 2026-08-22): WORKS, no code changes.** 1× H100 80GB, CUDA 13.0,
+**NVIDIA H100 (verified): works, no code changes.** 1× H100 80GB, CUDA 13.0,
 driver 580.173.02, `torch==2.13.0+cu130`, `sentence-transformers==5.7.0`, attn `sdpa`. The
 fp32 artifact matches the MI355X fp32 golden reference to 6 decimals (`first8` identical,
 cos Q0 `+0.574747`, Q1 `+0.502445` on both) — this embedding baseline is fully

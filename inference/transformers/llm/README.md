@@ -40,7 +40,7 @@ Design notes:
 
 ## FP8 status — it loads, and it works
 
-**Verdict: FP8 loaded successfully. No fallback to BF16 was needed.** Falling back to a
+FP8 loads successfully and no fallback to BF16 is needed. Falling back to a
 BF16 checkpoint is sanctioned if FP8 is problematic; that turned out to be unnecessary
 on gfx950, but getting there required diagnosing two genuine defects.
 
@@ -129,8 +129,8 @@ Python 3.12, in its own venv.
 ### AMD (ROCm) — the route that was verified
 
 ```bash
-python3 -m venv .env_inference_llm_transformers
-source .env_inference_llm_transformers/bin/activate
+python3 -m venv .env_transformers
+source .env_transformers/bin/activate
 pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/rocm7.2
 pip install -r requirements_inference_llm_transformers.txt
 ```
@@ -171,7 +171,10 @@ HF_TOKEN=hf_xxxxxxxxxxxxxxxx
 Loaded via `load_dotenv("dev.env")`. Weights are ~30 GB, so keep the cache off `/`:
 
 ```bash
-export HF_HOME=/mnt/data_1.5t/hf_cache
+# Set these to suit your machine
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache (large volume)
+export OUTPUT_DIR=/path/to/outputs     # inference artifacts
+
 export HIP_VISIBLE_DEVICES=4,5 CUDA_VISIBLE_DEVICES=4,5
 ```
 
@@ -183,12 +186,12 @@ indexed **within** the visible set, so `cuda:0` is physical card 4 above.
 Single GPU (the 30 GB FP8 checkpoint fits on one 288 GB MI355X with room to spare):
 
 ```bash
-source .env_inference_llm_transformers/bin/activate
-export HIP_VISIBLE_DEVICES=4,5 CUDA_VISIBLE_DEVICES=4,5 HF_HOME=/mnt/data_1.5t/hf_cache
+source .env_transformers/bin/activate
+export HIP_VISIBLE_DEVICES=4,5 CUDA_VISIBLE_DEVICES=4,5
 
 python infer_llm_transformers.py --model Qwen/Qwen3.8-27B-FP8 --device_map cuda:0 \
   --max_new_tokens 96 \
-  --output /mnt/data_1.5t/outputs/inference_llm_transformers/reference_llm_qwen3.8-27b-fp8_1gpu.json
+  --output $OUTPUT_DIR/inference_llm_transformers/reference_llm_qwen3.8-27b-fp8_1gpu.json
 ```
 
 Multi-GPU, sharded across both cards:
@@ -196,7 +199,7 @@ Multi-GPU, sharded across both cards:
 ```bash
 python infer_llm_transformers.py --model Qwen/Qwen3.8-27B-FP8 --device_map auto \
   --max_new_tokens 96 \
-  --output /mnt/data_1.5t/outputs/inference_llm_transformers/reference_llm_qwen3.8-27b-fp8_2gpu.json
+  --output $OUTPUT_DIR/inference_llm_transformers/reference_llm_qwen3.8-27b-fp8_2gpu.json
 ```
 
 Prompted classification against your own prompts:
@@ -215,7 +218,7 @@ python infer_llm_transformers.py --model Qwen/Qwen3-4B --device_map cuda:0
 
 ## Single-GPU results
 
-`Qwen/Qwen3.8-27B-FP8 --device_map cuda:0` (1× MI355X, physical card 4), 2026-08-20:
+`Qwen/Qwen3.8-27B-FP8 --device_map cuda:0` (1× MI355X, physical card 4) — expected output:
 
 ```
 fp8 fix: dropped 130 'mlp.gate*' entries from modules_to_not_convert
@@ -247,10 +250,10 @@ model that emitted `融合融合融合` before the gate_proj fix.
 | Load time | 31.3 s |
 | Decode | 1.18 / 3.38 / 10.45 tok/s (prompts 1/2/3) |
 
-## H100 results (NVIDIA, CUDA 13 — verified 2026-08-22)
+## H100 results (NVIDIA, CUDA 13 — verified)
 
 **Model swap: `LiquidAI/LFM2.5-350M`, not `Qwen/Qwen3.8-27B-FP8`.** The FP8 27B checkpoint
-is *not* present in this H100 node's offline cache (only a bare Qwen3 tokenizer dir is), and
+was *not* present in the H100 node's offline cache (only a bare Qwen3 tokenizer dir is), and
 Hub access is 403-blocked. `LiquidAI/LFM2.5-350M` is fully cached with a chat template, so it
 is the H100 harness-correctness model. This means the two FP8 fixes (`--no_deepgemm`,
 `--fix_fp8_gate_proj`) are **not exercised on H100** — LFM2.5-350M is a dense bf16
@@ -272,16 +275,16 @@ Key versions: `torch 2.13.0+cu130`, `transformers 5.5.0`, `accelerate 1.14.0`,
 (source build exceeded the time budget) → ran `--attn_impl sdpa`. On CUDA the script would
 otherwise auto-select `eager` (`torch.version.hip` is `None`); pass `sdpa` explicitly.
 
-Exact smoke command (physical GPU 5):
+Smoke command (physical GPU 5):
 
 ```bash
-export HF_HOME=/mnt/gsma/gsma/gsma/models HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES=5
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES=5
 python infer_llm_transformers.py --model LiquidAI/LFM2.5-350M --device_map cuda:0 \
   --attn_impl sdpa --max_new_tokens 96 \
-  --output /dev/shm/h100/out/transformers/llm/reference_llm_lfm2.5-350m_1gpu.json
+  --output $OUTPUT_DIR/transformers/llm/reference_llm_lfm2.5-350m_1gpu.json
 ```
 
-Real output (2026-08-22):
+**Expected output:**
 
 ```
 model=LiquidAI/LFM2.5-350M arch=Lfm2ForCausalLM quant=None attn=sdpa device_map=cuda:0
@@ -299,23 +302,23 @@ peak VRAM(GiB)=[0.69]
 GPU-5 residency, sampled by PID from inside the run (`nvidia-smi --query-compute-apps` on `-i 5`):
 
 ```
-[smi] GPU5 pid=1444042  1196 MiB
-[smi] GPU5 pid=1444042  1198 MiB
+[smi] GPU5 pid=<pid>  1196 MiB
+[smi] GPU5 pid=<pid>  1198 MiB
 ```
 
-**Verdict (H100): WORKS** for harness correctness. `Paris` and `negative` are both correct
+**On H100 this path works** for harness correctness. `Paris` and `negative` are both correct
 (prompt 3 is a small-350M-model hallucination — real ROCm engines are not listed — and is
 not a harness fault). The `gcnArchName` field reads `NVIDIA H100 80GB HBM3` and `hip=None` in
 the artifact, confirming the CUDA build. tf32: these inference paths run bf16, so the fp32
 tf32 guard is not on the hot path (`torch.backends.cuda.matmul.allow_tf32` stays `False` by
 default in this torch; irrelevant to a bf16 generate). The **FP8 27B reference remains
-MI355X-only** on this node until the checkpoint is cached. Multi-GPU deferred (production job
-on GPUs 0–3).
+MI355X-only** until that checkpoint is cached on an NVIDIA node. Multi-GPU was not exercised
+on H100.
 
 ## Multi-GPU results
 
-`--device_map auto` shards the model across both visible GPUs via accelerate. Verified
-2026-08-20:
+`--device_map auto` shards the model across both visible GPUs via accelerate — expected
+output:
 
 ```
 model=Qwen/Qwen3.8-27B-FP8 arch=Qwen3_5ForConditionalGeneration quant=fp8 attn=sdpa device_map=auto
@@ -391,7 +394,7 @@ with its completion, latency and tok/s, and finally peak VRAM.
 `--output` writes the **reference artifact** other stacks are diffed against:
 
 ```
-/mnt/data_1.5t/outputs/inference_llm_transformers/
+$OUTPUT_DIR/inference_llm_transformers/
   reference_llm_qwen3.8-27b-fp8_1gpu.json   <- canonical FP8 reference
   reference_llm_qwen3.8-27b-fp8_2gpu.json   <- byte-identical completions
   reference_llm_qwen3-4b_1gpu.json          <- BF16 control run
@@ -411,7 +414,7 @@ strings — with `do_sample=False` any divergence is a real difference, not samp
   working** on one card and sharded across two, with `rocm-smi` confirming residency, and
   byte-identical completions between the two configurations. Requires the two fixes above,
   both applied automatically.
-- **NVIDIA H100: tested 2026-08-22 with `LiquidAI/LFM2.5-350M`** (the FP8 27B is not in this
+- **NVIDIA H100: tested with `LiquidAI/LFM2.5-350M`** (the FP8 27B was not in that
   node's cache), `torch 2.13.0+cu130`, CUDA 13.0, driver 580.173.02, attn `sdpa` — see "H100
   results" above. Correct `Paris`/`negative` output, GPU-5 residency ~1.2 GiB. **The FP8 path
   and its two fixes were NOT exercised on H100** (LFM2.5-350M is dense bf16, `quant=None`). The
@@ -440,14 +443,14 @@ strings — with `do_sample=False` any divergence is a real difference, not samp
   just slow. Do not try to pip-install those on ROCm.
 - **Checkpoint layout is unusual** — 81 files as `layers-N.safetensors` plus
   `outside.safetensors` and `mtp.safetensors` (an MTP speculative-decoding head), ~29 GB.
-- **Shared HF cache permission warnings.** If `/mnt/data_1.5t/hf_cache` was populated by
+- **Shared HF cache permission warnings.** If `$HF_HOME` was populated by
   another user you may see `Ignoring corrupted tree cache file ... Permission denied`.
   Cache-metadata only; results unaffected.
 
-## Verdict
+## Platform notes
 
-**WORKS — FP8 loaded natively, no BF16 fallback needed — but only with two fixes, one of
-which prevents silent corruption.**
+**This path works — FP8 loads natively, no BF16 fallback needed — but only with two fixes,
+one of which prevents silent corruption.**
 
 `Qwen/Qwen3.8-27B-FP8` runs correctly on MI355X / gfx950 / ROCm 7.2.4 through stock
 Transformers + PyTorch, as `Qwen3_5ForConditionalGeneration` with `trust_remote_code=True`

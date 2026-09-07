@@ -19,7 +19,7 @@ vLLM is the natural choice if you already run vLLM for the other two workloads.
 
 ## Install
 
-**There is no ROCm vLLM wheel.** Verified 2026-08-20:
+**There is no ROCm vLLM wheel.** Verified against the pinned versions below:
 
 - PyPI `vllm==0.27.1` ships two binary wheels (`manylinux_2_28_x86_64`, `aarch64`), both
   **CUDA-only** — hard deps on `flashinfer-python`, `nvidia-cudnn-frontend`,
@@ -29,28 +29,31 @@ vLLM is the natural choice if you already run vLLM for the other two workloads.
 - Source build for `gfx950` works but is an hours-long compile.
 
 The preferred pip/venv route is therefore unavailable on ROCm, and the verified route is a
-**container**. This host already had
-`rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2` on disk — zero pull
-cost, no disk spent:
+**container**. The validated runs used
+`rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2`:
 
 ```bash
+# Set these to suit your machine
+export HF_HOME=/path/to/hf_cache        # Hugging Face model cache
+export OUTPUT_DIR=/path/to/outputs      # server logs and run artifacts
+
 docker run -d --name vllm_bringup \
   --device /dev/kfd --device /dev/dri/renderD128 --device /dev/dri/renderD136 \
   --group-add "$(getent group video | cut -d: -f3)" \
   --group-add "$(getent group render | cut -d: -f3)" \
   --ipc=host --cap-add=SYS_PTRACE --security-opt seccomp=unconfined --shm-size 64G \
   --network host \
-  -v "$PWD":/workspace/repo -v /mnt/data_1.5t:/mnt/data_1.5t \
-  -e HF_HOME=/mnt/data_1.5t/hf_cache -w /workspace/repo \
+  -v "$PWD":/workspace/repo -v "$HF_HOME":"$HF_HOME" \
+  -e HF_HOME="$HF_HOME" -w /workspace/repo \
   rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2 sleep infinity
 ```
 
 Two gotchas:
 
 - The image has **no `render` group** — the canonical `--group-add render` fails with
-  `unable to find group render`. Use the host's numeric GIDs (`video`=44, `render`=993
-  here), as the `getent` substitutions above do.
-- Pinning by **render node** (`renderD128` = physical GPU0, `renderD136` = GPU1) instead
+  `unable to find group render`. Use the host's numeric GIDs (typically `video`=44,
+  `render`=993), as the `getent` substitutions above do.
+- Pinning by **render node** (`renderD128` = the first GPU, `renderD136` = the second) instead
   of `HIP_VISIBLE_DEVICES` makes the isolation structural: `torch.cuda.device_count()==2`
   inside the container regardless of what any tool does to the environment.
 
@@ -80,7 +83,7 @@ HF_TOKEN=hf_xxxxxxxxxxxxxxxx
 ```
 
 Loaded via `load_dotenv("dev.env")`; exported into the serving shell for the model pull.
-Never echo it. Weights live under `HF_HOME=/mnt/data_1.5t/hf_cache`, off `/`.
+Never echo it. Weights live under `$HF_HOME`, off `/`.
 
 ```bash
 export HIP_VISIBLE_DEVICES=0,1 CUDA_VISIBLE_DEVICES=0,1
@@ -95,7 +98,7 @@ verbatim from `/workspace/vllm/examples/pooling/score/template/qwen3_reranker.ji
 the image, so the command is self-contained:
 
 ```bash
-export HF_HOME=/mnt/data_1.5t/hf_cache HIP_VISIBLE_DEVICES=0
+export HF_HOME=/path/to/hf_cache HIP_VISIBLE_DEVICES=0
 vllm serve Qwen/Qwen3-Reranker-0.6B \
   --runner pooling \
   --hf_overrides '{"architectures":["Qwen3ForSequenceClassification"],"classifier_from_token":["no","yes"],"is_original_qwen3_reranker":true}' \
@@ -141,8 +144,8 @@ curl -s http://localhost:8002/v1/rerank -H 'Content-Type: application/json' -d '
 
 ## Single-GPU results
 
-**Verdict: works, unmodified.** The documented command — `--hf_overrides` JSON plus
-jinja template — worked as written on the first attempt on one MI355X.
+**This works, unmodified.** The documented command — `--hf_overrides` JSON plus
+jinja template — works as written on the first attempt on one MI355X.
 
 | Measurement | Value |
 |---|---|
@@ -155,7 +158,7 @@ jinja template — worked as written on the first attempt on one MI355X.
 | Max model len | 40960 (32K+ context, as documented) |
 | Total process VRAM (`rocm-smi`, default util 0.9) | 285.8 GB |
 
-Real output from `/v1/rerank` — note the **four-orders-of-magnitude** separation between
+**Expected output** from `/v1/rerank` — note the **four-orders-of-magnitude** separation between
 relevant and irrelevant documents:
 
 ```
@@ -173,7 +176,7 @@ a degenerate output.
 
 ## Multi-GPU (TP=2) results
 
-**Verdict: TP=2 works.** Unlike EmbeddingGemma (3 attention heads, TP=2 rejected),
+**TP=2 works.** Unlike EmbeddingGemma (3 attention heads, TP=2 rejected),
 Qwen3-Reranker-0.6B has a head count divisible by 2, so tensor parallelism is legal and
 vLLM shards it cleanly across both MI355X cards.
 
@@ -195,13 +198,13 @@ cache doubles:
 | Available KV cache per GPU | 263.12 GiB | 263.95 GiB | unchanged per card, as expected |
 | `init engine` | 13.50 s | 14.96 s (compilation 10.62 s) | +1.5 s for RCCL setup |
 
-`rocm-smi` with TP=2 resident — **both GPUs loaded, sibling GPUs untouched**:
+`rocm-smi` with TP=2 resident — **both GPUs loaded, other cards untouched**:
 
 ```
 device,VRAM Total Memory (B),VRAM Total Used Memory (B)
 card0,309220868096,286668083200     <- rank 0  (286.7 GB)
 card1,309220868096,286668226560     <- rank 1  (286.7 GB)
-card2,309220868096,298176512        <- idle, belongs to a sibling agent
+card2,309220868096,298176512        <- idle, another job's card
 ```
 
 Correctness held exactly across the topology change:
@@ -219,13 +222,13 @@ non-deterministic reduction order across ranks, not a numerical problem.
 **Caveat, stated plainly:** TP=2 *works* but is not *useful* for a 0.6 B model on 288 GB
 cards. It halves a 1.12 GiB footprint that was never a constraint, while adding a
 cross-GPU all-reduce to every forward pass. For production, prefer **two independent
-single-GPU replicas** (as demonstrated in `inference/vllm/embedding`) — that doubles
-throughput instead of splitting one model's latency. TP=2 is verified here because it is
-the requested evidence that multi-GPU serving functions on this hardware, and it does.
+single-GPU replicas** (as demonstrated in [`../embedding/README.md`](../embedding/README.md))
+— that doubles throughput instead of splitting one model's latency. TP=2 is documented here
+as evidence that multi-GPU serving functions on this hardware, and it does.
 
-## H100 (NVIDIA) — verified 2026-08-22
+## H100 (NVIDIA)
 
-**Verdict: ✅ PASS, unmodified.** vLLM `0.27.1` (pip / CUDA 13.0) serves
+**This works unmodified.** vLLM `0.27.1` (pip / CUDA 13.0) serves
 `Qwen/Qwen3-Reranker-0.6B` on one H100 80GB with the documented `--hf_overrides` JSON plus
 `qwen3_reranker.jinja` — both confirmed **mandatory** — correct ranking with a
 four-orders-of-magnitude relevant/irrelevant split on the first attempt, no code changes.
@@ -233,7 +236,7 @@ four-orders-of-magnitude relevant/irrelevant split on the first attempt, no code
 ### Install (pip route — the AMD "container-only" caveat does NOT apply on NVIDIA)
 
 The "no ROCm vLLM wheel" fact above is AMD-specific. On **NVIDIA the pip wheel is native**.
-One tmpfs venv is shared across all three leaves:
+One shared venv at the stack root (`inference/vllm/.env_vllm`) serves all three leaves:
 
 ```bash
 python3 -m venv .env_vllm && source .env_vllm/bin/activate
@@ -249,11 +252,11 @@ pip install python-dotenv
 | transformers | `5.15.1` |
 | driver / CUDA | 580.173.02 / 13.0, H100 80GB HBM3 |
 
-### Serve (the verified H100 command — identical to ROCm minus the HIP var)
+### Serve (the H100 command — identical to ROCm minus the HIP var)
 
 ```bash
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
-export HF_HOME=/mnt/gsma/gsma/gsma/models CUDA_VISIBLE_DEVICES=5
+export HF_HOME=/path/to/hf_cache CUDA_VISIBLE_DEVICES=<free-gpu>
 vllm serve Qwen/Qwen3-Reranker-0.6B \
   --runner pooling \
   --hf_overrides '{"architectures":["Qwen3ForSequenceClassification"],"classifier_from_token":["no","yes"],"is_original_qwen3_reranker":true}' \
@@ -266,7 +269,7 @@ vllm serve Qwen/Qwen3-Reranker-0.6B \
 python rerank_vllm.py --port 8500 --model qwen3-reranker
 ```
 
-### Real output (H100)
+### Expected output (H100)
 
 The `--hf_overrides` conversion is confirmed — vLLM loads the base `Qwen3ForCausalLM`
 checkpoint **as a sequence classifier**:
@@ -309,28 +312,26 @@ query : Where is the Eiffel Tower located?
    3      0  0.000012  vLLM supports AMD ROCm and runs on MI300/MI350 Instinct GPUs.
 ```
 
-### GPU-5 residency (sampled from inside serving)
+### GPU residency check (sampled while serving)
 
-```
-$ nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory --format=csv,noheader | grep <GPU5-UUID>
-1722028, GPU-e71a0833-4f61-11c9-6eff-10c149e752e4, 74882 MiB
-$ nvidia-smi --query-gpu=index,memory.used --format=csv,noheader -i 5
-5, 74891 MiB
+```bash
+nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory --format=csv,noheader
+nvidia-smi --query-gpu=index,memory.used --format=csv,noheader
 ```
 
-~74.9 GB resident on **physical GPU 5 only** — this is the default
+Expect ~74.9 GB resident on the single selected GPU — this is the default
 `--gpu-memory-utilization 0.9` KV pool, **not** the weights (the true weight footprint is
-the `Model loading took 1.12 GiB` line, exactly as the MI355X README warns). Co-tenant
-GPUs 0–3 untouched.
+the `Model loading took 1.12 GiB` line, exactly as the MI355X section warns). No other card
+is touched.
 
-### H100 verdict
+### H100 summary
 
-✅ **PASS — vLLM 0.27.1 (pip / cu130) serves Qwen3-Reranker-0.6B unmodified on one H100.**
+vLLM 0.27.1 (pip / cu130) serves Qwen3-Reranker-0.6B unmodified on one H100.
 The `--hf_overrides` + jinja requirement is confirmed genuinely mandatory; ranking is
 correct, sharply separated, and query-conditioned, matching MI355X to ~1e-4. The one AMD
 correction (install is container-only) does **not** apply on NVIDIA — the pip route works.
-TP=2 is legal for this model but not useful at 0.6 B; prefer replication. Multi-GPU
-deferred (single-GPU wave; GPUs 0–3 are a co-tenant production job).
+TP=2 is legal for this model but not useful at 0.6 B; prefer replication. The H100 notes
+here are single-GPU only.
 
 ## Arguments / flags
 
@@ -368,8 +369,8 @@ The `--hf_overrides` JSON, field by field:
 
 ## Output
 
-The client prints endpoint, model, query, usage, then a ranked table. Real captured run of
-`python rerank_vllm.py --port 8002`:
+The client prints endpoint, model, query, usage, then a ranked table. **Expected output**
+for `python rerank_vllm.py --port 8002`:
 
 ```
 endpoint    : http://localhost:8002/v1/rerank
@@ -384,8 +385,8 @@ rank  index  score       document
    4      3  0.000028  The Eiffel Tower is located in Paris, France.
 ```
 
-Server logs go to `/mnt/data_1.5t/outputs/inference_reranker_vllm/`. Nothing large lands
-in the repo.
+Redirect server logs to a data volume, e.g. `$OUTPUT_DIR/inference_reranker_vllm/`.
+Nothing large lands in the repo.
 
 ## Hardware support & evidence
 
@@ -393,9 +394,9 @@ in the repo.
   (`gfx950`, 288 GB), host ROCm 7.2.4, container ROCm 7.0.2, vLLM `0.20.2rc1.dev253`,
   torch `2.9.1.dev+rocm7.0.2`. Correct, sharply separated relevance scores; TP=2 agrees
   with TP=1 to ~1e-5.
-- **NVIDIA: not tested here** (no NVIDIA GPU on this host). The same command applies with
-  `vllm/vllm-openai:latest`; on CUDA the pip route also works.
-- vLLM is **✅ Native** for the Qwen3 reranker, and on ROCm/gfx950 that is **confirmed**.
+- **NVIDIA: tested and working** via the pip wheel — see the H100 section above. The same
+  command also applies with `vllm/vllm-openai:latest`.
+- vLLM is **Native** for the Qwen3 reranker, and on ROCm/gfx950 that is **confirmed**.
   The `--hf_overrides` + jinja requirement is confirmed as genuinely mandatory. The only
   correction: the AMD *install* story is container-only.
 
@@ -421,10 +422,10 @@ in the repo.
 - **`--runner pooling`, not `--is-embedding`.** SGLang's docs warn against `--is-embedding`
   for this model; vLLM's equivalent mistake is omitting the `--hf_overrides` conversion.
 
-## Verdict
+## Summary
 
-✅ **PASS — vLLM serves Qwen3-Reranker-0.6B on MI355X/gfx950 with no changes, on one GPU
-and on two.** The "✅ Native" rating and the documented serve command both hold.
+**vLLM serves Qwen3-Reranker-0.6B on MI355X/gfx950 with no changes, on one GPU
+and on two.** The "Native" rating and the documented serve command both hold.
 Relevance scores separate relevant from irrelevant documents by four orders of magnitude
 (0.9995 vs 0.000027), and TP=2 reproduces TP=1 to ~1e-5 while genuinely halving per-rank
 weights (1.12 → 0.57 GiB) and doubling KV capacity.

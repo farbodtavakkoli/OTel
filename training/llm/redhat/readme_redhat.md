@@ -57,17 +57,22 @@ This folder's reference environment was AMD MI355X with ROCm 7 (`torch==2.11.0`)
 
 Follow the upstream repo's README if the install steps have changed.
 
-### ✅ Verified on MI355X, ROCm 7.2.4 (2026-08-19)
+### ✅ Platform notes — MI355X, ROCm 7.2.4
 
-Re-validated end-to-end on 8× AMD Instinct MI355X (gfx950, 288 GB), ROCm 7.2.4, Ubuntu,
+Validated end-to-end on 8× AMD Instinct MI355X (gfx950, 288 GB), ROCm 7.2.4, Ubuntu,
 Python 3.12.3 — smoke run used 2 GPUs. The MI355X claim above **still holds**, with two
 small additions the generic AMD steps don't mention (liger + `TESTING=true`, below).
-Exact install that worked on this box:
+
+```bash
+# Set these to suit your machine
+export OUTPUT_DIR=/path/to/outputs     # checkpoints / training artifacts
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+```
+
+Validated install:
 
 ```bash
 cd training/llm/redhat
-# NOTE: campaign venvs were removed during the 2026-08 repo reorg — rebuild from
-# requirements_redhat.txt / the lines below.
 python3 -m venv .env_redhat && source .env_redhat/bin/activate
 pip install torch==2.11.0 torchvision --index-url https://download.pytorch.org/whl/rocm7.2
 pip install "training-hub[grpo,lora]"      # keeps the ROCm torch (requires only torch>=2.6)
@@ -90,7 +95,7 @@ python3 train_llm_redhat.py \
   --eos-token "<turn|>"
 ```
 
-Observed (finite, decreasing loss; `rocm-smi` mid-run showed both GPUs active,
+**Expected output** (finite, decreasing loss; `rocm-smi` mid-run shows both GPUs active,
 46–84 GB VRAM used, 100% GPU busy during OSFT weight reconstruction):
 
 ```
@@ -119,30 +124,31 @@ Epoch 1: ────────── 100% │ 5/5 │ loss: 6.0593 │ lr: 4.
 5. The gemma-4-E4B-it smoke checkpoint is ~16 GB — point `--ckpt-output-dir` at a large
    disk.
 
-**Verdict: works with changes** — OSFT training via training_hub runs on MI355X /
+**This path works with changes** — OSFT training via training_hub runs on MI355X /
 ROCm 7.2.4 exactly as the reference-environment claim says, provided you add the
 explicit `liger-kernel` install and `TESTING=true` (SDPA) listed above.
 
-> Scope note: the smoke run above used **2 GPUs**, not 8 (`--nproc-per-node 2`, see
-> `logs/2026-08-19_09-57-52/run_args.json`). The full 8-GPU verification is below.
+> Scope note: the smoke run above used **2 GPUs**, not 8 (`--nproc-per-node 2`). The full
+> 8-GPU verification is below.
 
-### 8-GPU run (8x MI355X, ROCm 7.2.4) — tested August 2026
+### 8-GPU run (8x MI355X, ROCm 7.2.4)
 
-**Verdict: WORKS WITH CHANGES.** The recipe scales from 2 to all 8 MI355X GPUs with no
+**This path works with changes.** The recipe scales from 2 to all 8 MI355X GPUs with no
 code edits — but two environment/data changes are mandatory (stale venv GPU pin, and a
 dataset large enough to feed 8 ranks). Clean exit (code 0), all 8 ranks finished, no
 teardown hang.
 
-**Exact launch** (serialized behind the box-wide GPU mutex; the runner script sources the
-venv, overrides the GPU pin, asserts `device_count()==8`, and samples `rocm-smi` in-band):
+**Launch** (serialized behind a machine-wide GPU mutex so the job owns all 8 GPUs; the
+runner script sources the venv, overrides the GPU pin, asserts `device_count()==8`, and
+samples `rocm-smi` in-band):
 
 ```bash
-nohup flock -w 25200 /tmp/mi355x_gpu8.lock bash /tmp/run8_redhat.sh \
-    > /mnt/data_1.5t/outputs/train_llm_redhat/gpu8/run.log 2>&1 &
+nohup flock -w 25200 /tmp/mi355x_gpu8.lock bash run8_redhat.sh \
+    > $OUTPUT_DIR/train_llm_redhat/gpu8/run.log 2>&1 &
 ```
 
 ```bash
-# inside the runner, AFTER `source .env_train_llm_redhat/bin/activate`:
+# inside the runner, AFTER `source .env_redhat/bin/activate`:
 export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7      # ← overrides the venv's stale 6,7 pin
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export TESTING=true                              # ROCm: SDPA instead of flash-attn
@@ -165,24 +171,24 @@ python3 train_llm_redhat.py \
 `max_tokens_per_gpu=8192`, ~72k–90k loss-counted tokens per step). Peak memory
 reported per rank: 40.1 GB at step 1, 53.1 GB at step 10.
 
-**Real log lines** (`--speed-steps 2`; full capture in the run's `training_metrics_0.jsonl`):
+**Expected output** (`--speed-steps 2`; the run's own `training_metrics_0.jsonl` has the full series):
 
 ```
 Epoch 1: ─━━━━━━━━━  10% │  1/10 │ loss: 10.8526 │ lr: 5.00e-06 │  5306 tok/s
 Epoch 1: ────━━━━━━  40% │  4/10 │ loss:  5.8742 │ lr: 3.97e-06 │ 37704 tok/s
 Epoch 1: ────────── 100% │ 10/10 │ loss:  4.8896 │ lr: 1.22e-07 │ 18575 tok/s
 ✅ Saved model at 640.0 samples in 167.21 seconds
-== TRAIN EXIT CODE: 0
 ```
 
-Loss is finite and monotonically decreasing (10.85 → 4.89); `grad_norm` 240 → 9.8.
-OSFT itself ran: `Reconstructing OSFT weights, this may take a while...` over **294 OSFT
+The run should finish with exit code 0. Loss is finite and monotonically decreasing
+(10.85 → 4.89); `grad_norm` 240 → 9.8.
+OSFT itself runs: `Reconstructing OSFT weights, this may take a while...` over **294 OSFT
 parameters**, with mini-trainer receiving `--osft --osft-unfreeze-rank-ratio=0.3
 --osft-upcast-dtype=float32 --use-liger-kernels`.
 
-**8-GPU proof — `rocm-smi` sampled *in-band*** (the sampler runs inside the flock-held
-runner, so the sample cannot capture another agent's job). 46 consecutive samples showed
-all 8 ranks resident. Peak VRAM used per card:
+**Checking all 8 GPUs are yours — `rocm-smi` sampled *in-band*** (run the sampler inside
+the flock-held runner, so the sample cannot capture another job). Across consecutive
+samples all 8 ranks should be resident. Peak VRAM used per card:
 
 ```
 card0 181.8   card1 185.9   card2 180.2   card3 183.8
@@ -190,30 +196,29 @@ card4 221.0   card5 220.4   card6 221.7   card7 181.1     (GiB used of 288)
 all 8 devices: SCLK 2388-2404 MHz, 312-322 W, GPU% 36-47 mid-step
 ```
 
-**PID cross-check** (same sample). `rocm-smi --showpids` listed exactly 8 `python3`
-holders, 35.3–41.5 GB each: `556801…556808`. `pgrep -af` in that same sample shows those
-pids are `mini_trainer/train.py` children of `torchrun … --nproc-per-node=8` (pid 556584),
-itself a child of our launcher `python3 train_llm_redhat.py … --nproc-per-node 8`
-(pid 549816) — the VRAM holders are our own processes, not a co-tenant's.
+**PID cross-check** (same sample). `rocm-smi --showpids` should list exactly 8 `python3`
+holders, 35.3–41.5 GB each; `pgrep -af` in that same sample shows those
+pids are `mini_trainer/train.py` children of `torchrun … --nproc-per-node=8`,
+itself a child of the launcher `python3 train_llm_redhat.py … --nproc-per-node 8`
+— i.e. the VRAM holders are your own processes, not a co-tenant's.
 
-**What differed from the 2-GPU run:**
+**What differs from the 2-GPU run:**
 
-1. **The venv's `bin/activate` pins `HIP_VISIBLE_DEVICES=6,7` / `CUDA_VISIBLE_DEVICES=6,7`
-   (lines 73-74)** — a leftover from the 2-GPU session. Sourcing the venv and passing
+1. **A venv's `bin/activate` may pin `HIP_VISIBLE_DEVICES=6,7` / `CUDA_VISIBLE_DEVICES=6,7`**
+   — a leftover from a 2-GPU session. Sourcing the venv and passing
    `--nproc-per-node 8` without re-exporting these silently runs on 2 GPUs (or fails
    rendezvous). **Always re-export both after `source …/bin/activate`.**
-2. **The bundled 10-row sample cannot feed 8 ranks.** We replicated it ×64 → **640 rows**,
-   written **outside the repo** (`/mnt/data_1.5t/outputs/train_llm_redhat/gpu8/data_rep_640.jsonl`).
+2. **The bundled 10-row sample cannot feed 8 ranks.** Replicate it ×64 → **640 rows**,
+   written **outside the repo** (e.g. `$OUTPUT_DIR/train_llm_redhat/gpu8/data_rep_640.jsonl`).
    Sample survival: **640 in → 640 processed → "Saved model at 640.0 samples"**, i.e. 0 rows
    dropped by `max_seq_len=4096` filtering. Because only 10 rows are unique, the falling
    loss here is **a pipeline proof, not a learning result** (it is memorisation).
-3. `--effective-batch-size 64` (was 2) so the global batch divides across 8 ranks; 10 steps
-   in 1 epoch. No batch-geometry assert was hit — mini-trainer's token-budget batching
-   derives `grad_accum` itself.
+3. `--effective-batch-size 64` (instead of 2) so the global batch divides across 8 ranks;
+   10 steps in 1 epoch. No batch-geometry assert is hit — mini-trainer's token-budget
+   batching derives `grad_accum` itself.
 4. Outputs redirected off the repo: `--ckpt-output-dir` / `--data-output-dir` under
-   `/mnt/data_1.5t/outputs/train_llm_redhat/gpu8/` (the 16 GB checkpoint was deleted after
-   evidence capture; see below).
-5. Throughput scaled as expected: peak **37.7k tok/s on 8 GPUs** vs 2.4k tok/s on the
+   `$OUTPUT_DIR/train_llm_redhat/gpu8/` (delete the 16 GB checkpoint afterwards; see below).
+5. Throughput scales as expected: peak **37.7k tok/s on 8 GPUs** vs 2.4k tok/s on the
    2-GPU smoke run (different batch geometry, so treat as indicative, not a clean speedup
    measurement).
 
@@ -224,24 +229,25 @@ itself a child of our launcher `python3 train_llm_redhat.py … --nproc-per-node
   1-epoch smoke run still writes a full **16 GB** `hf_format/samples_640.0`. Point
   `--ckpt-output-dir` at a big disk and delete afterwards, or edit `osft_params` to
   disable both.
-- **The rendezvous port is fixed at `127.0.0.1:29500`** in `osft_params`. On a shared box
-  a concurrent torchrun on that port would collide; it was free for this run (nothing to
-  override), but there is no CLI flag — you would have to edit the script.
+- **The rendezvous port is fixed at `127.0.0.1:29500`** in `osft_params`. On a shared
+  machine a concurrent torchrun on that port collides; there is no CLI flag, so set
+  `RDZV_ENDPOINT` (see the CUDA quirks below) or edit the script.
 - No new packages and no pins changed for the 8-GPU path — `requirements_redhat.txt` is
   unchanged. `TESTING=true` and the explicit `liger-kernel` install are still required,
   exactly as for 2 GPUs.
 
-### ✅ Re-verified on NVIDIA H100, CUDA 13.0 (2026-08-22)
+### ✅ Platform notes — NVIDIA H100, CUDA 13.0
 
-Single-GPU OSFT smoke re-validated on **1× NVIDIA H100 80GB HBM3** (Hopper cc 9.0),
-driver **580.173.02**, **CUDA 13.0**, Ubuntu, Python 3.12.3. **Verdict: WORKS WITH CHANGES**
+Single-GPU OSFT smoke validated on **1× NVIDIA H100 80GB HBM3** (Hopper cc 9.0),
+driver **580.173.02**, **CUDA 13.0**, Ubuntu, Python 3.12.3. **This path works with changes**
 — OSFT training via training_hub runs on H100, and unlike ROCm the CUDA `[cuda]` extra
 **does build and engage flash-attn** (so `TESTING=true` is *not* needed), but the `[cuda]`
 extra also drags in a `kernels` version that breaks the transformers import and must be
 pinned back (see quirk 1).
 
-**Model swap (offline node):** the folder's documented default (`google/gemma-4-*-it`) is
-not in this box's HF cache and the Hub is proxy-blocked (403). Ran against a fully-cached
+**Model swap (offline node):** on a node where the folder's documented default
+(`google/gemma-4-*-it`) is not in the HF cache and the Hub is proxy-blocked (403), the smoke
+runs against a fully-cached
 model instead: **`LiquidAI/LFM2.5-350M`** (arch `lfm2`; a hybrid conv+attention model —
 its `[cuda]` deps `mamba-ssm`/`causal-conv1d` also built). training_hub/mini-trainer/OSFT
 accepted the `lfm2` arch with no code change. **No `--eos-token` needed:** LFM2's chat
@@ -249,8 +255,8 @@ template closes turns with `<|im_end|>`, which already equals the tokenizer's `e
 (contrast Gemma 4's `<turn|>`), so the EOS-staging path — which would `snapshot_download`
 and fail offline — was correctly skipped.
 
-Exact CUDA install that worked (run offline: `export HF_HOME=/…/models HF_HUB_OFFLINE=1
-TRANSFORMERS_OFFLINE=1`; venv on a fast local FS, e.g. tmpfs):
+CUDA install (to run offline, point `HF_HOME` at a populated cache and export
+`HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1`; keep the venv on a fast local FS, e.g. tmpfs):
 
 ```bash
 cd training/llm/redhat
@@ -264,22 +270,22 @@ pip install -r requirements_redhat.txt
 ```
 
 **Torch-clobber outcome:** `training-hub[grpo,lora]` uninstalls the base `torch 2.13.0+cu130`
-and installs **`torch 2.11.0+cu130`** (its pin is `torch>=2.6`; pip resolved a cu130 wheel,
-so it stayed on **CUDA 13** — `torch.cuda.is_available()==True`, real bf16 matmul confirmed
-on-GPU). This is the same 2.11.0 the MI355X run landed. The `[cuda]` extra did **not**
-further clobber torch (verified `2.11.0+cu130` after it). No force-reinstall was required;
-kept 2.11.0+cu130 to respect training_hub's pins.
+and installs **`torch 2.11.0+cu130`** (its pin is `torch>=2.6`; pip resolves a cu130 wheel,
+so it stays on **CUDA 13** — `torch.cuda.is_available()==True`, real bf16 matmul confirmed
+on-GPU). This is the same 2.11.0 the MI355X run landed. The `[cuda]` extra does **not**
+further clobber torch (verify `2.11.0+cu130` after it). No force-reinstall is required;
+keep 2.11.0+cu130 to respect training_hub's pins.
 
 Key versions landed: `torch 2.11.0+cu130`, `flash-attn 2.8.3.post1`, `training-hub 0.9.7`,
 `instructlab-training 0.16.2`, `rhai-innovation-mini-trainer 0.8.1`, `transformers 5.5.0`,
 `trl 0.24.0`, `accelerate 1.14.0`, `liger-kernel 0.8.2`, **`kernels 0.12.3`** (pinned down
 from 0.16.0), driver 580.173.02.
 
-Exact smoke command (bundled sample, single GPU, port + GPU pinned for a shared box;
+Smoke command (bundled sample, single GPU, port + GPU pinned for a shared machine;
 3 epochs to make the loss trend obvious on only ~9 unique rows):
 
 ```bash
-export HF_HOME=/mnt/gsma/gsma/gsma/models HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1        # HF_HOME as exported above
 export HF_DATASETS_CACHE=/dev/shm/hf_datasets_cache   # QUIRK 2: keep datasets' .arrow cache OFF the read-only-ish network mount
 export CUDA_VISIBLE_DEVICES=7                          # your assigned free GPU
 export RDZV_ENDPOINT=127.0.0.1:29647                  # override the hardcoded :29500 (new env hook — see below)
@@ -292,8 +298,8 @@ python3 train_llm_redhat.py \
   --learning-rate 5e-6 --seed 42 --speed-steps 1
 ```
 
-**Observed — finite, DECREASING loss over 15 optimizer steps** (5 steps/epoch × 3 epochs;
-`grad_norm` collapses 217 → ~12). Real lines from `training_metrics_0.jsonl`:
+**Expected output — finite, DECREASING loss over 15 optimizer steps** (5 steps/epoch × 3
+epochs; `grad_norm` collapses 217 → ~12), as recorded in `training_metrics_0.jsonl`:
 
 ```
 step  2 epoch 0 loss 5.0361 lr 4.95e-06 grad_norm 217.85
@@ -302,24 +308,24 @@ step 11 epoch 2 loss 1.5709 lr 1.25e-06 grad_norm 16.52
 ✅ OSFT Training completed successfully!   Most recent checkpoint: .../hf_format/samples_30.0
 ```
 
-OSFT itself ran: `Reconstructing OSFT weights ...` over **18 OSFT parameters**; peak memory
+OSFT itself runs: `Reconstructing OSFT weights ...` over **18 OSFT parameters**; peak memory
 **8.24 GB**, peak **23,877 tok/s**. A full HF checkpoint (`hf_format/samples_30.0`,
-~809 MB safetensors) was written (deleted after evidence capture — see the checkpointing
+~809 MB safetensors) is written (delete it afterwards — see the checkpointing
 gotcha, unchanged from the MI355X notes).
 
-**flash-attn built AND engaged.** mini-trainer selected `flash_attention_2` on its own
-(flash_attn imports, so its gate passed) — **no `TESTING=true`**. The log shows FA2's
+**flash-attn built AND engaged.** mini-trainer selects `flash_attention_2` on its own
+(flash_attn imports, so its gate passes) — **no `TESTING=true`**. The log shows FA2's
 "only supports fp16/bf16" info-warning because the model is loaded fp32 and the attention
-runs under bf16 autocast; training was unaffected and the loss fell as above.
+runs under bf16 autocast; training is unaffected and the loss falls as above.
 
-**Single-GPU proof — `nvidia-smi` sampled *in-band* (filtered to `-i 7`)**, so the sample
-can only see GPU 7. Our training child (pid `1379681`, a child of `python3
-train_llm_redhat.py`) was the holder; VRAM climbed 0.5 → **8.1 GB** as the model loaded/trained:
+**GPU residency check — `nvidia-smi` sampled *in-band* (filtered with `-i <n>`)**, so the
+sample can only see the pinned GPU. The training child (a child of `python3
+train_llm_redhat.py`) should be the holder; VRAM climbs 0.5 → **8.1 GB** as the model
+loads/trains:
 
 ```
-=== sample 32 00:12:07 ===
-7, 8887 MiB, 4 %, 127.53 W                                   # GPU 7: mem.used, util, power
-1379681, 8110 MiB, GPU-9eb34eec-449b-7839-d362-d1e995e95239  # our pid holding 8.1 GB on GPU 7's UUID
+7, 8887 MiB, 4 %, 127.53 W          # GPU 7: mem.used, util, power
+<pid>, 8110 MiB, GPU-<uuid>         # the training pid holding 8.1 GB on GPU 7
 ```
 
 (util% reads low because each step is ~1.2 s and the 4 s sampler cadence lands between the
@@ -335,29 +341,29 @@ matches the run's reported 8.24 GB peak.)
    `ValueError: Either a revision or a version must be specified`, crashing *every* import of
    transformers. Fix: `pip install "kernels>=0.12,<0.13"` (lands 0.12.3). ROCm never hit
    this because it skips the `[cuda]` extra (which is what drags `kernels` in).
-2. **Redirect the HF *datasets* cache off the network mount.** With `HF_HOME` on the shared
-   `/mnt/gsma` mount, `datasets` tries to write its `cache-*.arrow` under
+2. **Redirect the HF *datasets* cache off a network mount.** With `HF_HOME` on a shared
+   network mount, `datasets` tries to write its `cache-*.arrow` under
    `$HF_HOME/datasets/...` and dies with `OSError: [Errno 1] Operation not permitted` (the
    mount rejects the op). Set `HF_DATASETS_CACHE=/dev/shm/...` (or any writable local dir);
    `HF_HOME` can stay on the mount for read-only model loads.
 3. **`RDZV_ENDPOINT` env hook added.** `osft_params` hardcoded `rdzv_endpoint=127.0.0.1:29500`;
-   on a shared box concurrent torchrun jobs collide on that port. The script now reads
+   on a shared machine concurrent torchrun jobs collide on that port. The script now reads
    `os.environ.get("RDZV_ENDPOINT", "127.0.0.1:29500")` — default behavior is unchanged; set
    `RDZV_ENDPOINT=127.0.0.1:<your-port>` to move it. (This is the only code change; it is
    NVIDIA-neutral and also helps the ROCm multi-tenant case.)
-4. **flash-attn build is slow** (~24 min here: flash-attn + mamba-ssm + causal-conv1d compile
+4. **flash-attn build is slow** (~24 min: flash-attn + mamba-ssm + causal-conv1d compile
    via nvcc). It succeeds on CUDA 13 with `CUDA_HOME=/usr/local/cuda-13.0` and
    `--no-build-isolation`. If it exceeds your time budget, `pip install "training-hub[grpo,lora]"`
    + `pip install "liger-kernel>=0.5.10"` + `export TESTING=true` gives the SDPA path (as on
    ROCm) with no flash-attn build.
 
-**Multi-GPU (deferred).** Only the single-GPU smoke was run (GPUs 0–3 were a co-tenant's
-production job). A multi-GPU pass would use `--nproc-per-node N` (mini-trainer wraps FSDP2
+**Multi-GPU on H100 is not covered here.** Only the single-GPU smoke was run. A multi-GPU
+pass would use `--nproc-per-node N` (mini-trainer wraps FSDP2
 via `torchrun`), needs `--effective-batch-size` ≥ world size and a dataset large enough to
-feed N ranks (the 9-row sample must be replicated, exactly as the MI355X 8-GPU run did), and
-should set `RDZV_ENDPOINT` to a free port. Not launched here.
+feed N ranks (the 9-row sample must be replicated, exactly as in the MI355X 8-GPU run), and
+should set `RDZV_ENDPOINT` to a free port.
 
-**Verdict: WORKS WITH CHANGES** on H100 / CUDA 13.0 — the two ROCm workarounds are *reversed*
+**Summary: works with changes** on H100 / CUDA 13.0 — the two ROCm workarounds are *reversed*
 (flash-attn builds & engages; no `TESTING=true`; plain `CUDA_VISIBLE_DEVICES`), at the cost of
 one new pin (`kernels<0.13`), one env redirect (`HF_DATASETS_CACHE`), and the slow flash-attn
 build. torch resolves to `2.11.0+cu130` (CUDA 13 intact).
@@ -466,7 +472,7 @@ Checkpoints are written under `<ckpt-output-dir>/hf_format/samples_*` (plus `sam
 **Other hardware (upstream claims — not verified here):** none claimed beyond NVIDIA CUDA and AMD ROCm.
 
 
-- **AMD/ROCm — first-party validated:** this folder's reference training environment was **AMD MI355X with ROCm 7** (`torch==2.11.0`), i.e. OSFT training through training_hub ran on AMD hardware here. On AMD, skip the CUDA-specific `[cuda]`/flash-attn install step (see Install). **Re-verified 2026-08-19 on MI355X + ROCm 7.2.4** (`torch==2.11.0+rocm7.2`, training-hub 0.9.7) — see "Verified on MI355X" under Install for the two extra steps ROCm needs (`liger-kernel`, `TESTING=true`), and **"8-GPU run (8x MI355X, ROCm 7.2.4)"** for the full-node run: FSDP2 world size 8, exit code 0, with in-band `rocm-smi` + PID evidence that all 8 GPUs were ours and busy.
+- **AMD/ROCm — first-party validated:** this folder's reference training environment was **AMD MI355X with ROCm 7** (`torch==2.11.0`), i.e. OSFT training through training_hub ran on AMD hardware here. On AMD, skip the CUDA-specific `[cuda]`/flash-attn install step (see Install). **Verified on MI355X + ROCm 7.2.4** (`torch==2.11.0+rocm7.2`, training-hub 0.9.7) — see the MI355X platform notes under Install for the two extra steps ROCm needs (`liger-kernel`, `TESTING=true`), and **"8-GPU run (8x MI355X, ROCm 7.2.4)"** for the full-node run: FSDP2 world size 8, exit code 0, with in-band `rocm-smi` + PID checks confirming all 8 GPUs were the job's own and busy.
 - **NVIDIA:** the same code runs on 8×H100; upstream training_hub documents the CUDA path explicitly — `pip install training-hub[cuda] --no-build-isolation` for GPU training with flash-attn, with the base PyPI package excluding "the CUDA-related dependencies which are required for GPU training" (github.com/Red-Hat-AI-Innovation-Team/training_hub README, Installation section).
 - OSFT in training_hub is backed by the RHAI Innovation Mini-Trainer per upstream's support matrix.
 

@@ -31,14 +31,14 @@ Files in this folder:
 - `requirements_primus.txt` — install paths (container / wheel / bare metal).
 - `readme_primus.md` — this document.
 
-> **Tested topology:** **Single node, 2x AMD Instinct MI355X (gfx950), ROCm 7.2.4, August
-> 2026 — the FRAMEWORK WORKS; the SHIPPED CONFIGS DO NOT RUN AS WRITTEN.** Primus +
+> **Tested topology:** **Single node, 2x AMD Instinct MI355X (gfx950), ROCm 7.2.4
+> — the FRAMEWORK WORKS; the SHIPPED CONFIGS DO NOT RUN AS WRITTEN.** Primus +
 > Megatron-Bridge SFT trained end-to-end in `rocm/primus:v26.5` with finite, decreasing
 > loss (600/600 iterations, ~250-280 ms/iter, zero NaN/skipped). But **all four configs in
 > `configs/` fail before training starts** — two independent bugs, both one-line fixes, both
 > now corrected in this folder. The AMD-only claim in §8 is **confirmed by execution**.
 > LoRA (`peft: lora`) applies its adapters but then **fails to load the base checkpoint**
-> in this image — see [§8.1](#81-mi355x-rocm-724--tested-august-2026). The launcher's
+> in this image — see [§8.1](#81-mi355x-rocm-724). The launcher's
 > `--data-path` plumbing is **dead code** on the Megatron-Bridge post-training path (§4).
 > Not tested: Qwen3-32B at the shipped scale (weights were not downloaded — the 0.6B
 > flavor of the same `qwen.qwen3` recipe was used), multi-node, `slurm` mode, MI300X/gfx942.
@@ -47,10 +47,10 @@ Files in this folder:
 
 ### AMD / ROCm (the only supported path)
 
-**Verified on 2x MI355X / ROCm 7.2.4 (August 2026) — the container route works.** Image
+**Verified on 2x MI355X / ROCm 7.2.4 — the container route works.** Image
 `rocm/primus:v26.5`, digest
-`sha256:3040bf42974d791dd42de2e36b3c919a00869a5754cfc57a06b96d004c55eed1` (pushed
-2026-07-23). It is **14.1 GB compressed / 54.8 GB on disk** — check free space before
+`sha256:3040bf42974d791dd42de2e36b3c919a00869a5754cfc57a06b96d004c55eed1`.
+It is **14.1 GB compressed / 54.8 GB on disk** — check free space before
 pulling. The image ships the whole stack pre-built at `/workspace/Primus` (Primus 0.2.0,
 checkout `b511d1b`, with `third_party/Megatron-Bridge` @ `9577b12` and
 `third_party/Megatron-LM` @ `d3528a2`), so **you do not need to clone anything** — the
@@ -79,13 +79,21 @@ git submodule update --init --recursive
 ```
 
 The `v26.5` tag was re-verified against
-[Docker Hub](https://hub.docker.com/r/rocm/primus/tags) in August 2026 — it is live
-(pushed 2026-07-23), alongside the more explicit alias `v26.5-pytorch2.12-te2.15` which
-points at the same image digest.
+[Docker Hub](https://hub.docker.com/r/rocm/primus/tags) — it is live, alongside the more
+explicit alias `v26.5-pytorch2.12-te2.15` which points at the same image digest.
 
-**Starting the container (exact flags used on MI355X):** note the GPU selection — see the
-`HIP_VISIBLE_DEVICES` warning in [§8.1](#81-mi355x-rocm-724--tested-august-2026). You must
+**Starting the container (flags for MI355X):** note the GPU selection — see the
+`HIP_VISIBLE_DEVICES` warning in [§8.1](#81-mi355x-rocm-724). You must
 scope GPUs with `--device`, **not** with `-e HIP_VISIBLE_DEVICES`.
+
+The `docker run` lines below refer to two host directories by environment variable — set
+them to suit your machine:
+
+```bash
+# Set these to suit your machine
+export OUTPUT_DIR=/path/to/outputs     # training artifacts, mounted at /work
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+```
 
 ```bash
 # Map the physical GPUs you want to their DRM nodes first:
@@ -101,9 +109,9 @@ docker run -d --name primus_mi355x \
   --ipc=host --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
   --shm-size 64G \
   -e HF_HOME=/root/.cache/huggingface \
-  -v /path/to/hf_cache:/root/.cache/huggingface \
-  -v /path/to/outputs:/work \
-  -v /path/to/outputs/data_root:/data \
+  -v $HF_HOME:/root/.cache/huggingface \
+  -v $OUTPUT_DIR:/work \
+  -v $OUTPUT_DIR/data_root:/data \
   rocm/primus:v26.5 sleep infinity
 
 # one required fix inside the container (see §8.1 "datasets too old"):
@@ -118,8 +126,6 @@ Megatron checkpoint to `/data/megatron_checkpoints/<model>`.
 **Option 2 — pip wheel (ships `primus-cli` only):**
 
 ```bash
-# NOTE: campaign venvs were removed during the 2026-08 repo reorg — rebuild from
-# requirements_primus.txt / the lines below.
 python -m venv primus-env && source primus-env/bin/activate
 pip install "primus==26.5.0" --no-deps \
   --extra-index-url https://amd-agi.github.io/Primus/simple/
@@ -141,9 +147,9 @@ AMD GPUs on ROCm; there is no CUDA image, no CUDA install path, and no NVIDIA ha
 support upstream. If you are on NVIDIA GPUs, use `../nemo/`, `../deepspeed/`, or any of the
 other trainers in this repo instead.
 
-**Evidenced negative — 8×NVIDIA H100 80GB, driver 580.173.02, CUDA 13.0 (2026-08-22).**
-This is the documented AMD-only outcome; see [§8.3](#83-nvidia-h100-cuda-130--not-supported-evidenced-2026-08-22)
-for the full transcript. In short, on this NVIDIA box:
+**Evidenced negative — 8×NVIDIA H100 80GB, driver 580.173.02, CUDA 13.0.**
+This is the documented AMD-only outcome; see [§8.3](#83-nvidia-h100-cuda-130--not-supported-evidenced)
+for the full transcript. In short, on an NVIDIA box:
 
 - **No ROCm stack exists** (as required): `rocm-smi` not on PATH, `/dev/kfd` absent,
   `/opt/rocm` absent — only `NVIDIA H100 80GB HBM3` GPUs are present.
@@ -223,9 +229,9 @@ on the `qwen.qwen3` post-training recipe.
 
 ## 5. Run
 
-**The command that actually trained on MI355X (August 2026).** This runs `primus-cli`
+**The command that trains on MI355X.** This runs `primus-cli`
 directly *inside* the already-started container (`--mode direct` semantics), which is the
-route that works — see [§8.1](#81-mi355x-rocm-724--tested-august-2026) for why the wrapper's
+route that works — see [§8.1](#81-mi355x-rocm-724) for why the wrapper's
 `--mode container` path is not the tested one.
 
 ```bash
@@ -344,16 +350,15 @@ Monitoring integrates with MLflow and TraceLens if configured in the experiment 
 - **AMD-only.** Primus is AMD's training framework for AMD Instinct GPUs on ROCm.
   Upstream's prerequisites: ROCm drivers >= 7.0, Docker >= 24.0 with ROCm support, and
   ROCm-compatible Instinct GPUs (MI300 series and up). Source: the
-  [AMD-AGI/Primus README](https://github.com/AMD-AGI/Primus), "Prerequisites" (checked
-  August 2026).
+  [AMD-AGI/Primus README](https://github.com/AMD-AGI/Primus), "Prerequisites".
 - **Supported arches in this folder's configs:** gfx942 (MI300X / MI325X) and gfx950
   (MI350X / MI355X); the launcher maps `--arch` to the right config directory. AMD's
   MLPerf Training 6.0 examples run on MI355X.
 - **Images:** `rocm/primus` on Docker Hub is the published training image for the
   Megatron-LM / TorchTitan / Megatron-Bridge backends; `rocm/jax-training:maxtext-v26.5`
   covers the MaxText backend. The `v26.5` tag was verified live on
-  [Docker Hub](https://hub.docker.com/r/rocm/primus/tags) in August 2026 (pushed
-  2026-07-23; alias `v26.5-pytorch2.12-te2.15`, same digest).
+  [Docker Hub](https://hub.docker.com/r/rocm/primus/tags) (alias
+  `v26.5-pytorch2.12-te2.15`, same digest).
 - **NVIDIA is NOT supported.** No CUDA image or install path exists upstream. The
   launcher's `rocm-smi` preflight will warn (not block) on non-ROCm hosts so `--dry-run`
   still works anywhere. **Confirmed, not just documented:** the whole stack that trained
@@ -364,9 +369,9 @@ Monitoring integrates with MLflow and TraceLens if configured in the experiment 
   Intel Gaudi/XPU, Apple MPS, Ascend NPU, TPU, Trainium, or CPU training path exists
   or is claimed.
 
-### 8.1 MI355X (ROCm 7.2.4) — tested August 2026
+### 8.1 MI355X (ROCm 7.2.4)
 
-**Verdict: WORKS WITH CHANGES.** The Primus + Megatron-Bridge stack trains correctly on
+**This path works with changes.** The Primus + Megatron-Bridge stack trains correctly on
 gfx950. The folder's *own configs* were broken and are now fixed; LoRA remains broken
 inside this image for a reason upstream of this folder.
 
@@ -376,7 +381,7 @@ vendor container**, `rocm/primus:v26.5`, digest
 `sha256:3040bf42974d791dd42de2e36b3c919a00869a5754cfc57a06b96d004c55eed1` (14.1 GB
 compressed, 54.8 GB on disk). This is the upstream-recommended path and the only one that
 carries the built backends; the pip wheel ships the launcher only. Versions in-image:
-torch **2.12.0+rocm7.15.0a20260720**, **primus 0.2.0** (checkout `b511d1b`, 2026-07-22),
+torch **2.12.0+rocm7.15.0a20260720**, **primus 0.2.0** (checkout `b511d1b`),
 **Megatron-Bridge `9577b12`**, **Megatron-LM `d3528a2`**, transformers 4.55.0→4.57.6.
 
 **Run command:** see [§5](#5-run). Model: **Qwen3-0.6B** via the `qwen.qwen3` recipe's
@@ -385,7 +390,7 @@ smallest flavor. 32B was not used because its weights are a ~65 GB download and 
 was to exercise the framework, not the parameter count. Dataset: SQuAD (forced by the
 recipe — see §4). TP 1 / PP 1 / CP 1, bf16_mixed, GBS 8, MBS 1, seq 1024, 2 ranks.
 
-**Evidence — SFT, 600/600 iterations, exit code 0:**
+**Expected output — SFT, 600/600 iterations, exit code 0:**
 
 ```
 iteration        1/     600 | consumed samples:    8 | elapsed time per iteration (ms): 10059.3 | lm loss: 9.745878E+00 | grad norm: 458.126 | number of nan iterations:   0 |
@@ -495,9 +500,9 @@ Time-boxed after three attempts; not pursued further.
 (no gfx942 hardware on this host), the MaxText/JAX image, and the wrapper's own
 `--mode container` path (see §9).
 
-### 8.2 8-GPU run (8x MI355X, ROCm 7.2.4) — tested August 2026
+### 8.2 8-GPU run (8x MI355X, ROCm 7.2.4)
 
-**Verdict: WORKS — scales cleanly to 8 GPUs as pure data parallel (DP 8), and only as
+**This scales cleanly to 8 GPUs as pure data parallel (DP 8), and only as
 pure data parallel.** The identical §8.1 SFT recipe ran 600/600 iterations on all eight
 MI355X at **~74 ms/iter** against the 2-GPU run's ~240–280 ms/iter — a **~3.5x** speedup
 at fixed global batch, about **88% of the ideal 4x**. Zero NaN, zero skipped iterations,
@@ -522,9 +527,9 @@ docker run -d --name primus_mi355x_gpu8 \
   --ipc=host --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
   --shm-size 64G \
   -e HF_HOME=/root/.cache/huggingface \
-  -v /mnt/data_1.5t/hf_cache:/root/.cache/huggingface \
-  -v /mnt/data_1.5t/outputs/train_llm_primus:/work \
-  -v /mnt/data_1.5t/outputs/train_llm_primus/data_root:/data \
+  -v $HF_HOME:/root/.cache/huggingface \
+  -v $OUTPUT_DIR:/work \
+  -v $OUTPUT_DIR/data_root:/data \
   rocm/primus:v26.5 sleep infinity
 
 docker exec primus_mi355x_gpu8 pip install "datasets==4.3.0"   # §8.1 "datasets too old"
@@ -556,7 +561,7 @@ seq 1024, `qwen3_600m_finetune_config`, SQuAD. Because global batch stays at 8, 
 drops from 4 micro-batches per iteration (DP 2) to 1 (DP 8) — that 4x reduction in
 per-rank work is exactly what the measured 3.5x speedup is cashing in.
 
-**Evidence — SFT, 600/600 iterations, exit code 0** (from
+**Expected output — SFT, 600/600 iterations, exit code 0** (from
 `output/local/local/qwen3_600m_sft_dp8/logs/post_trainer/rank-7/debug.log`; note there are
 now eight `rank-*` dirs and the loss lines are on **rank-7**, the last rank):
 
@@ -574,8 +579,7 @@ All 600 iteration lines report `number of nan iterations: 0` and
 11.6 s first iteration (kernel autotune / warmup) and ~11 periodic 2.5–5 s dataloader
 stalls. Whole run, including startup and the runtime pip installs, took **4 m 27 s**.
 
-**8-GPU proof — host `rocm-smi` mid-run** (full capture in
-`/mnt/data_1.5t/outputs/train_llm_primus/gpu8/rocm_smi_8gpu.txt`). All eight physical GPUs
+**8-GPU proof — host `rocm-smi` mid-run.** All eight physical GPUs
 are lit, each drawing ~370–405 W with 15.7–19.1 GiB resident — not a 2-GPU run wearing an
 8-rank hat:
 
@@ -688,18 +692,16 @@ not in state dict: ['decoder.final_layernorm._extra_state/shard_0_1', ...]"
 Confirmed and not pursued further — **SFT remains the working post-training method.**
 
 **Disk.** Checkpointing was disabled (`save_interval: 100000`) and **no weight files were
-written** — the entire 8-GPU run left 11 MB of logs under
-`/mnt/data_1.5t/outputs/train_llm_primus/gpu8/`. Free space on `/mnt/data_1.5t` was
-unchanged at 239 GB before and after. The `rocm/primus:v26.5` image was reused, not
-re-pulled.
+written** — the entire 8-GPU run left 11 MB of logs under `$OUTPUT_DIR`, and free disk was
+unchanged before and after. The `rocm/primus:v26.5` image was reused, not re-pulled.
 
-### 8.3 NVIDIA H100 (CUDA 13.0) — NOT SUPPORTED, evidenced (2026-08-22)
+### 8.3 NVIDIA H100 (CUDA 13.0) — NOT SUPPORTED, evidenced
 
-Tested on the cross-vendor verification box: **8×NVIDIA H100 80GB HBM3, driver 580.173.02,
+Tested on a cross-vendor verification box: **8×NVIDIA H100 80GB HBM3, driver 580.173.02,
 CUDA 13.0, Python 3.12.3**. This is the **correct, expected negative** — Primus is AMD-only
-by design. Unlike the pure-AMD campaign (which simply had no NVIDIA GPU to try), this result
-is now backed by execution on real NVIDIA hardware. **No NVIDIA GPU was consumed** beyond
-running the pure-Python launcher; the co-tenant GPUs 0–3 were never touched.
+by design, and this result is backed by execution on real NVIDIA hardware. **No NVIDIA GPU
+was consumed** beyond running the pure-Python launcher; the co-tenant GPUs 0–3 were never
+touched.
 
 **1. The ROCm prerequisites are absent (as they must be on NVIDIA):**
 
@@ -731,13 +733,13 @@ INFO - launching: ./primus-cli container --image rocm/primus:v26.5 ... train pos
 
 The launcher hands off to AMD's `rocm/primus:v26.5` container — ROCm-compiled PyTorch and
 gfx-targeted kernels that cannot execute on an H100. There is nothing to "port": the entire
-training stack is the ROCm image. **Verdict: AMD-only by design, confirmed on NVIDIA
+training stack is the ROCm image. **Primus is AMD-only by design, confirmed on NVIDIA
 hardware. Use `../nemo/`, `../megatron/`, `../deepspeed/`, or `../openrlhf/` on H100.**
 
 > **Note (launcher hygiene, vendor-neutral):** in `--mode container` the launcher builds a
 > `--env HF_TOKEN=<value>` argument and logs the full command at INFO, echoing the token in
 > plaintext. Harmless on a private host but worth redacting in shared logs; unrelated to the
-> NVIDIA verdict.
+> NVIDIA result.
 
 ## 9. Notes
 
@@ -765,5 +767,5 @@ hardware. Use `../nemo/`, `../megatron/`, `../deepspeed/`, or `../openrlhf/` on 
   `qwen.qwen3` post-training path neither of the first two levers is actually available —
   raising TP/PP fails at checkpoint load because the conversion hook only emits a TP1/PP1
   checkpoint, and `recompute_*` is silently dropped by the recipe's kwarg filter. See
-  [§8.2](#82-8-gpu-run-8x-mi355x-rocm-724--tested-august-2026) and §4. That leaves
+  [§8.2](#82-8-gpu-run-8x-mi355x-rocm-724) and §4. That leaves
   `micro_batch_size` and `seq_length` as the only working knobs here.

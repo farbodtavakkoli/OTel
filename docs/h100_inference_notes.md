@@ -1,33 +1,32 @@
-# H100 inference campaign — notes and evidence (August 2026)
+# H100 inference notes and evidence
 
-Field notes from serving the inference stacks on **8× NVIDIA H100 80GB HBM3** (Hopper cc 9.0),
-driver 580.173.02, CUDA 13.0, to fill in the NVIDIA column beside the completed MI355X
-campaign. The per-stack verdict table lives in the top-level [README](../README.md); this
+Notes from serving the inference stacks on **8× NVIDIA H100 80GB HBM3** (Hopper cc 9.0),
+driver 580.173.02, CUDA 13.0, covering the NVIDIA column beside the MI355X notes.
+The per-stack support table lives in the top-level [README](../README.md); this
 file holds the cross-cutting lessons and the ROCm→CUDA reversals. Companion AMD notes:
 [mi355x_inference_notes.md](mi355x_inference_notes.md) (its silent-corruption traps and the
 "demand GPU residency" rule are hardware-neutral and apply here too). Target models: LLM
 `Qwen/Qwen3.8-27B-FP8`, embedding `google/embeddinggemma-300m`, reranker
 `Qwen/Qwen3-Reranker-0.6B`, plus GGUF equivalents.
 
-> **Status:** filled in as stacks complete. Done and evidenced so far: `transformers`
-> (baseline), `tensorrtllm`, `llamacpp`, `sglang`. In flight: `vllm`, `ollama`, `tei`,
-> `lemonade`. Multi-GPU (TP) is deferred/limited — the 27B FP8 fits one 80 GB H100, so TP
+> **Coverage:** stacks evidenced here are `transformers` (baseline), `tensorrtllm`,
+> `llamacpp`, and `sglang`. Not yet covered: `vllm`, `ollama`, `tei`, `lemonade`.
+> Multi-GPU (TP) coverage is limited — the 27B FP8 fits one 80 GB H100, so TP
 > mostly buys concurrency, not capacity.
 
-## The headline: the box is proxy-gated, not offline — and that unblocks the NVIDIA stacks
+## The headline: a proxy-gated host is not an offline host — and that unblocks the NVIDIA stacks
 
-The MI355X box had no NVIDIA GPU; this one does, but its egress goes through
-`HTTP_PROXY/HTTPS_PROXY=proxy.conexus.svc.local:3128`, which **403s** every NVIDIA/HF host
-(nvcr.io, pypi.nvidia.com, download.pytorch.org, huggingface.co). pypi.org is allowlisted,
-so `pip install torch` works with the proxy on, but anything NVIDIA-hosted needs the proxy
-**unset**: `unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy` → all
-those hosts return 200/401. Docker (`docker.io` + `nvidia-container-toolkit`) was installed
+On a host whose egress goes through a corporate proxy set via
+`HTTP_PROXY`/`HTTPS_PROXY`, that proxy may **403** every NVIDIA/HF host
+(nvcr.io, pypi.nvidia.com, download.pytorch.org, huggingface.co) while pypi.org stays
+allowlisted, so `pip install torch` works with the proxy on but anything NVIDIA-hosted needs
+the proxy **unset**: `unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy`
+→ those hosts then return 200/401. Docker (`docker.io` + `nvidia-container-toolkit`) installs
 via apt and NGC images pull once the proxy is unset.
 
 ## TensorRT-LLM: the biggest gap in the repo — now runnable
 
-The one stack the MI355X campaign could not test at all (NVIDIA-only, no NVIDIA GPU there).
-On H100:
+The one stack that cannot be tested on MI355X at all (NVIDIA-only). On H100:
 
 - `pip install --extra-index-url https://pypi.nvidia.com/ tensorrt-llm` (proxy unset) →
   **tensorrt-llm 1.2.1** + nvidia-modelopt 0.37.0 + flashinfer. It clobbers torch to
@@ -37,7 +36,7 @@ On H100:
 - `import tensorrt_llm` then **succeeds (v1.2.1)** and the folder's own
   `probe_tensorrtllm.py` **exits 0** ("TensorRT-LLM appears usable on this host") — the exact
   probe that exits 1 on the AMD box.
-- **The target checkpoint is the catch, and the hand-off brief was wrong about it.**
+- **The target checkpoint is the catch.**
   `Qwen/Qwen3.8-27B-FP8` is not the dense `Qwen3_5ForCausalLM`; its config is
   `Qwen3_5ForConditionalGeneration`, `model_type: qwen3_5`, with `vision_config` — a
   Qwen3.5 **vision-language** model pinning transformers 5.8.0.dev0. TRT-LLM 1.2.1 (and
@@ -45,8 +44,8 @@ On H100:
   (`KeyError: 'qwen3_5'`) before FP8/weights — a version/arch gap, not FP8 or hardware, so
   modelopt requant would not help. A supported arch (`Qwen3-Reranker-0.6B`,
   `Qwen3ForCausalLM`) loads and generates on the PyTorch backend (588 MiB residency), proving
-  the runtime works. **Verdict: stack WORKS on H100; the specific 27B checkpoint is
-  blocked-by-version.**
+  the runtime works. The stack itself works on H100; it is the specific 27B checkpoint that is
+  blocked by engine version support.
 
 ## SGLang: the pip route now works (flips a documented ROCm limitation) — and it serves the 27B
 
@@ -71,9 +70,9 @@ Build is the clean reversal of the ROCm recipe: `cmake -B build -DGGML_CUDA=ON
 (Hopper); no arch flag needed. ~100 s cold build. All three leaves WORK with the required
 GPU-residency evidence: `offloaded N/N layers to GPU` + `CUDA0 model buffer` + nvidia-smi by
 PID (llm 29/29, embedding 25/25, reranker 29/29). Real outputs (coherent text at 370 tok/s,
-768-d embedding norm 1.0, correct 3-tier rerank). Note: `cmake`/`ninja` weren't on the box
-(pip-install them); the `/mnt/gsma` share rejects pip/`-hf` rename ops, so build tree +
-`LLAMA_CACHE` must live on tmpfs.
+768-d embedding norm 1.0, correct 3-tier rerank). Note: `cmake`/`ninja` may be missing on the
+host (pip-install them); a network share can reject the rename operations pip and `-hf` use,
+in which case the build tree + `LLAMA_CACHE` must live on local disk or tmpfs.
 
 ## Cross-cutting reversals and traps
 
@@ -82,11 +81,10 @@ PID (llm 29/29, embedding 25/25, reranker 29/29). Real outputs (coherent text at
   signal sampled from inside the job: `nvidia-smi` VRAM by PID, llama.cpp `offloaded N/N
   layers`, Ollama `100% GPU`. On a shared box an external sampler can also catch the
   co-tenant's PID — sample by PID/UUID.
-- **No GGUF files are cached on this box.** The MI355X GGUF path `/mnt/data_1.5t/hf_cache/…`
-  does not exist and there are no `*-GGUF` repos in the cache. The GGUF stacks (llamacpp,
-  ollama, lemonade) must **download** a GGUF (proxy unset) — a small one (few hundred MB)
-  serves for a smoke; the 29 GB `unsloth/Qwen3.8-27B-GGUF` Q8_0 is the prod model and fits
-  one H100.
+- **Do not assume GGUF files are already cached.** If `$HF_HOME` holds no `*-GGUF` repos, the
+  GGUF stacks (llamacpp, ollama, lemonade) must **download** a GGUF (proxy unset) — a small
+  one (few hundred MB) serves for a smoke test; the 29 GB `unsloth/Qwen3.8-27B-GGUF` Q8_0 is
+  the production model and fits one H100.
 - **The prebuilt flash-attn 2.8.3 wheel is ABI-broken against torch 2.13/cu130**
   (`undefined symbol _ZN3c10…materialize_cow_storage`). It bit vLLM-adjacent and RL serving
   paths; the fix is a source rebuild (works, ~15–24 min via nvcc) or `attn_implementation=

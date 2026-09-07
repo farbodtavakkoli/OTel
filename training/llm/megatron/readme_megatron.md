@@ -33,16 +33,16 @@ Files in this folder:
 > run end to end on **2x and then all 8x AMD Instinct MI355X (gfx950), ROCm 7.2/7.2.4, torch
 > 2.11.0+rocm7.2**, with a tiny custom GPT config — DP=2 and TP=2 on two GPUs, then
 > TP2/PP2/DP2, DP=8 and TP2/DP4 on eight. See
-> ["MI355X (ROCm 7.2) — tested"](#mi355x-rocm-72--tested-august-2026) and the
-> ["8-GPU run"](#8-gpu-run-8x-mi355x-rocm-724--tested-august-2026) subsection below. It
+> ["MI355X (ROCm 7.2) — tested"](#mi355x-rocm-72--tested) and the
+> ["8-GPU run"](#8-gpu-run-8x-mi355x-rocm-724) subsection below. It
 > **works with changes**: four flags must be flipped because TransformerEngine and Apex are
 > CUDA-only — and those same four flags are all that is needed at 8 GPUs too, with per-GPU
 > throughput flat from 2 to 8.
 > The **NVIDIA/NGC path is still unrun**, as is the Llama-3.1-8B geometry, the Megatron-Bridge
 > checkpoint conversion and checkpoint saving. The config was written against the Megatron-LM
 > `main` branch README, `docs/llama_mistral.md`, the Megatron Core MoE README,
-> `tools/preprocess_data.py`, and the `examples/gpt3` + `examples/mixtral` training scripts as
-> of **August 2026**, and it targets the house default of a single node with 8x H100 80GB
+> `tools/preprocess_data.py`, and the `examples/gpt3` + `examples/mixtral` training scripts for
+> the pinned versions below, and it targets the house default of a single node with 8x H100 80GB
 > launched with `torchrun`. Megatron has hundreds of flags that move between releases; run
 > `python pretrain_gpt.py --help` in your checkout before a long run.
 
@@ -115,14 +115,14 @@ hardware-agnostic (they just build a `torchrun` command line), but the shipped f
 read from NVIDIA upstream — re-check attention/fusion flags against the ROCm fork before a
 long run. See "Hardware support & evidence" below for sources.
 
-#### MI355X (ROCm 7.2) — tested, August 2026
+#### MI355X (ROCm 7.2) — tested
 
-**Verdict: works with changes.** Upstream NVIDIA/Megatron-LM trains on MI355X with a plain
+**This path works on MI355X, with the changes below.** Upstream NVIDIA/Megatron-LM trains on MI355X with a plain
 ROCm PyTorch wheel and **no TransformerEngine and no Apex**, but four flags must be flipped
 (all of them TE/Apex fused kernels that default to on). No source patch was needed — every
 change goes through the launcher's `--set`, so `megatron_cpt_config.toml` is untouched.
 
-Environment actually used:
+Environment validated:
 
 | | |
 |---|---|
@@ -135,19 +135,23 @@ Environment actually used:
 **Route: venv + source clone, not the container.** `rocm/megatron-lm:v26.1` is the
 documented AMD route and is almost certainly the better one for a production run (it ships
 AMD's TE/hipBLASLt/CK stack pre-built), but it was **not pulled here**: sibling ROCm images
-on this box are ~116GB on disk and the image would have been a large, slow write to a
+are ~116GB on disk and the image would have been a large, slow write to a
 shared root filesystem. The pip route costs a ~3GB wheel, so it was tried first — and it
 worked. Treat the container tag as documented-but-unverified from this folder's side.
 
 ```bash
+# Set these to suit your machine
+export OUTPUT_DIR=/path/to/outputs     # preprocessed data + training artifacts
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+
 cd training/llm/megatron
-python3 -m venv .env_train_llm_megatron            # git-ignored via .env_*/
-source .env_train_llm_megatron/bin/activate        # needed: torchrun must be on PATH
+python3 -m venv .env_megatron                      # git-ignored via .env_*/
+source .env_megatron/bin/activate                  # needed: torchrun must be on PATH
 
 pip install --index-url https://download.pytorch.org/whl/rocm7.2 torch==2.11.0
 pip install pybind11 "packaging>=24.2" numpy       # build deps for the helpers_cpp extension
-git clone --depth 1 https://github.com/NVIDIA/Megatron-LM.git .env_train_llm_megatron/Megatron-LM
-pip install --no-build-isolation -e .env_train_llm_megatron/Megatron-LM
+git clone --depth 1 https://github.com/NVIDIA/Megatron-LM.git .env_megatron/Megatron-LM
+pip install --no-build-isolation -e .env_megatron/Megatron-LM
 pip install -r requirements_megatron.txt
 ```
 
@@ -166,34 +170,33 @@ Notes on the install itself:
 
 ```bash
 export HIP_VISIBLE_DEVICES=4,5 CUDA_VISIBLE_DEVICES=4,5
-export HF_HOME=/mnt/data_1.5t/hf_cache
 python preprocess_megatron_data.py \
-  --megatron-repo .env_train_llm_megatron/Megatron-LM \
+  --megatron-repo .env_megatron/Megatron-LM \
   --tokenizer-model Qwen/Qwen2.5-0.5B \
-  --output-prefix /mnt/data_1.5t/outputs/train_llm_megatron/otel \
+  --output-prefix $OUTPUT_DIR/train_llm_megatron/otel \
   --workers 8
 # -> .../otel_text_document.bin (49968 B) + .idx; chat `messages` flattening worked as documented
 ```
 
 The tokenizer is the one deviation from the shipped defaults: `meta-llama/Llama-3.1-8B` is
-gated and the test account got `403 Cannot access gated repo`, so an ungated tokenizer was
-substituted. Nothing else about the preprocessing path changed.
+gated, and without access it returns `403 Cannot access gated repo`, so an ungated tokenizer
+was substituted. Nothing else about the preprocessing path changed.
 
 **Training** — the smoke used a tiny custom GPT (4 layers / hidden 512 for the first pass,
 8 layers / hidden 1024 for the timed pass) instead of the shipped Llama-3.1-8B geometry,
-with **saving off** and **no checkpoint load** (there is no converted Megatron checkpoint on
-this box). `--set key=false` makes the launcher omit the flag entirely, which is how `save`,
+with **saving off** and **no checkpoint load** (no converted Megatron checkpoint is
+available). `--set key=false` makes the launcher omit the flag entirely, which is how `save`,
 `load` and `tensorboard_dir` are switched off without editing the TOML:
 
 ```bash
-source .env_train_llm_megatron/bin/activate
-export HIP_VISIBLE_DEVICES=4,5 CUDA_VISIBLE_DEVICES=4,5 HF_HOME=/mnt/data_1.5t/hf_cache
+source .env_megatron/bin/activate
+export HIP_VISIBLE_DEVICES=4,5 CUDA_VISIBLE_DEVICES=4,5
 export $(grep -v '^#' ../dev.env | xargs)          # HF_TOKEN, never echoed
 
 python train_llm_megatron.py \
-  --megatron-repo .env_train_llm_megatron/Megatron-LM \
+  --megatron-repo .env_megatron/Megatron-LM \
   --nproc-per-node 2 --train-iters 200 \
-  --data-path /mnt/data_1.5t/outputs/train_llm_megatron/otel_text_document \
+  --data-path $OUTPUT_DIR/train_llm_megatron/otel_text_document \
   --set master_port=29750 \
   --set transformer_impl='"local"' \
   --set tokenizer_model='"Qwen/Qwen2.5-0.5B"' \
@@ -214,7 +217,7 @@ python train_llm_megatron.py \
   --set tensorboard_dir=false
 ```
 
-Log lines from that run (DP=2, TP=1, exit 0):
+**What a healthy run looks like** (DP=2, TP=1, exit 0):
 
 ```
 iteration    1/  200 | elapsed time per iteration (ms): 7553.4 | throughput per GPU (TFLOP/s/GPU): 1.7   | lm loss: 1.196653E+01 | grad norm: 11.835
@@ -268,16 +271,16 @@ Other ROCm observations:
   RCCL — these were on for every run above.
 - `CUDA_DEVICE_MAX_CONNECTIONS=1` and `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`,
   which the launcher exports, are accepted by the ROCm build (HIP maps both).
-- **You must `source` the venv**, not just call `.env_.../bin/python train_llm_megatron.py`:
+- **You must `source` the venv**, not just call `.env_megatron/bin/python train_llm_megatron.py`:
   the launcher shells out to bare `torchrun`, which fails with
   `FileNotFoundError: ... 'torchrun'` if the venv's `bin/` is not on `PATH`.
 - Untested on ROCm from this folder: the Llama-3.1-8B geometry, Megatron-Bridge checkpoint
   conversion, checkpoint save/resume, CP > 1, and FP8. (TP=2, PP=2 and DP=8 are all tested —
   see the 8-GPU subsection below.)
 
-### 8-GPU run (8x MI355X, ROCm 7.2.4) — tested August 2026
+### 8-GPU run (8x MI355X, ROCm 7.2.4)
 
-**Verdict: WORKS — no changes beyond the 2-GPU recipe.** The exact four-flag recipe above
+**This works with no changes beyond the 2-GPU recipe.** The exact four-flag recipe above
 scales from 2 to all 8 MI355X unmodified. **Nothing new was needed**: no source patch, no
 extra package, no RCCL/NCCL tuning variable, no batch-size rescue, no OOM, no hang. Three
 parallelism layouts were run back to back and all three exited 0 with finite, monotonically
@@ -306,21 +309,20 @@ so per-GPU TFLOP/s is directly comparable. Config **C** isolates tensor-parallel
 pipeline cost. Larger TP (4 or 8) was not used: at hidden 1024 / 16 heads the per-GPU shard
 becomes too thin for the collective to be worth measuring.
 
-Exact launch (config A; B and C differ only in the two parallel sizes, `global_batch_size`
-and `master_port`). Everything ran under the machine-wide GPU mutex:
+Launch (config A; B and C differ only in the two parallel sizes, `global_batch_size`
+and `master_port`). Run everything under the machine-wide GPU mutex:
 
 ```bash
 cd training/llm/megatron
-source .env_train_llm_megatron/bin/activate
+source .env_megatron/bin/activate
 export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export HF_HOME=/mnt/data_1.5t/hf_cache
 set -a; . ./dev.env; set +a                        # HF_TOKEN, never echoed
 python -c "import torch;assert torch.cuda.device_count()==8"   # assert before training
 
 python train_llm_megatron.py \
-  --megatron-repo .env_train_llm_megatron/Megatron-LM \
+  --megatron-repo .env_megatron/Megatron-LM \
   --nproc-per-node 8 --train-iters 200 \
-  --data-path /mnt/data_1.5t/outputs/train_llm_megatron/otel_text_document \
+  --data-path $OUTPUT_DIR/train_llm_megatron/otel_text_document \
   --set master_port=29630 \
   --set tensor_model_parallel_size=2 \
   --set pipeline_model_parallel_size=2 \
@@ -345,7 +347,7 @@ python train_llm_megatron.py \
   --set tensorboard_dir=false
 ```
 
-Real log lines — config A (TP=2, PP=2, DP=2), the model-parallel one:
+**Expected output** — config A (TP=2, PP=2, DP=2), the model-parallel one:
 
 ```
 iteration    1/  200 | elapsed time per iteration (ms): 26515.0 | lm loss: 1.198454E+01 | number of nan iterations:   0
@@ -353,7 +355,7 @@ iteration  100/  200 | elapsed time per iteration (ms):  147.8 | throughput per 
 iteration  190/  200 | elapsed time per iteration (ms):  149.4 | throughput per GPU (TFLOP/s/GPU): 41.8 | lm loss: 7.692151E+00 | grad norm: 5.836
 iteration  200/  200 | elapsed time per iteration (ms):  149.9 | throughput per GPU (TFLOP/s/GPU): 41.6 | lm loss: 7.688103E+00 | grad norm: 4.983
 [Rank 1] (after 1 iterations) memory (MB) | allocated: 1336.86 | max allocated: 1530.72 | reserved: 1994.00
-2026-08-19 16:10:42 - INFO - training/llm/megatron - command completed successfully
+INFO - training/llm/megatron - command completed successfully
 ```
 
 Config B (DP=8) — the scaling datapoint:
@@ -370,9 +372,8 @@ Megatron's own argument dump confirms the groups were really built (not silently
 `inprocess_active_world_size 8`, and `tensor_model_parallel_size 2 / pipeline_model_parallel_size 2 /
 context_parallel_size 1 / data_parallel_size 2` for config A.
 
-**`rocm-smi` proof — all 8 GPUs busy** (sampled every 5 s during the runs; full capture in
-`/mnt/data_1.5t/outputs/train_llm_megatron/gpu8/rocm_smi_8gpu.txt`). Peak sample, 16:11:50Z,
-mid-run:
+**`rocm-smi` proof — all 8 GPUs busy** (sampled every 5 s during the runs; full capture
+written under `$OUTPUT_DIR/train_llm_megatron/gpu8/rocm_smi_8gpu.txt`). Peak mid-run sample:
 
 ```
 Device  Temp     Power    SCLK     PwrCap   VRAM%  GPU%
@@ -387,7 +388,7 @@ Device  Temp     Power    SCLK     PwrCap   VRAM%  GPU%
 ```
 
 8/8 GPUs at 96-100 % utilisation, **5852 W total socket power**, 2.3 GHz SCLK. The
-model-parallel run A sampled the same way (16:10:22Z) shows 8/8 at 98-100 % and 3919 W. The
+model-parallel run A sampled the same way shows 8/8 at 98-100 % and 3919 W. The
 sample taken 5 s after run A ended reads 2-3 % util / 2474 W, so the busy samples are the
 training itself and not background load. VRAM is only 6 % of 288 GB per GPU because the
 model is deliberately tiny — the authoritative per-rank figures are torch's own: 6518 MB
@@ -403,7 +404,7 @@ reserved on DP=8, 1994 MB on TP2/PP2.
 **Per-GPU throughput does not degrade at all going 2 -> 8 — weak-scaling efficiency is
 ~100 % (measured 105-110 %, i.e. flat within run-to-run clock/noise variance).** Aggregate
 throughput therefore goes from ~200 TFLOP/s on 2 GPUs to ~880 TFLOP/s on 8. Do not read the
->100 % as genuinely super-linear; read it as "RCCL all-reduce over 8 ranks on this box is
+>100 % as genuinely super-linear; read it as "RCCL all-reduce over 8 ranks on a single node is
 effectively free at this model size, and `overlap_grad_reduce` hides what is left."
 
 Tensor parallelism scales just as cleanly, which was the real risk here: **TP=2 costs the
@@ -437,22 +438,21 @@ of every step, plus PP point-to-point sends. Expected, not a defect — raise
   trap: turning it on with `tensor_model_parallel_size = 1` makes Megatron abort with
   "Cannot use sequence parallelism without tensor parallelism". Config B (TP=1) would hit
   that, so SP is off everywhere here.
-- Check `.env_train_llm_megatron/bin/activate` for a stale `export CUDA_VISIBLE_DEVICES=...`
-  appended by an earlier 2-GPU session (this folder's venv is clean, but siblings are not).
-  Always re-export both `HIP_VISIBLE_DEVICES` and `CUDA_VISIBLE_DEVICES` after `source`, and
-  assert `torch.cuda.device_count() == 8` before launching.
-- Keep `--set save=false --set save_interval=100000` for smoke runs. Nothing was written:
-  the whole 8-GPU output directory is 464 KB of logs, and `df` on `/mnt/data_1.5t` read
-  239 G free before and after.
+- Check `.env_megatron/bin/activate` for a stale `export CUDA_VISIBLE_DEVICES=...`
+  appended by an earlier 2-GPU session. Always re-export both `HIP_VISIBLE_DEVICES` and
+  `CUDA_VISIBLE_DEVICES` after `source`, and assert `torch.cuda.device_count() == 8` before
+  launching.
+- Keep `--set save=false --set save_interval=100000` for smoke runs. Nothing is written
+  beyond logs: the whole 8-GPU output directory is 464 KB.
 - First iteration takes 17-27 s in every layout (kernel autotune + RCCL group setup); steady
   state arrives by roughly iteration 20. Do not judge throughput before iteration 50.
 
 Still untested at 8 GPUs: `context_parallel_size > 1`, TP > 2, FP8, the real Llama-3.1-8B
 geometry, and checkpoint save/load.
 
-### NVIDIA H100 (NGC PyTorch container) — tested, August 2026
+### NVIDIA H100 (NGC PyTorch container) — tested
 
-**Verdict: WORKS. This is the primary, intended route, and it is the one the MI355X section
+**This path works, and it is the primary, intended route — the one the MI355X section
 could not take.** The MI355X run had to flip **four** TE/Apex fused-kernel flags OFF because
 TransformerEngine and Apex are CUDA-only and were not installed. In the NGC PyTorch
 container they are **pre-built and version-matched**, so all four flags go **back to their
@@ -462,7 +462,7 @@ Megatron defaults (ON)** — no `--set no_*` overrides, `transformer_impl` stays
 **single H100**, exit 0, finite monotonically-decreasing loss, zero NaN/skipped iterations.
 `megatron_cpt_config.toml` is untouched — every change is a launcher `--set`, same as MI355X.
 
-Environment actually used:
+Environment validated:
 
 | | |
 |---|---|
@@ -474,11 +474,11 @@ Environment actually used:
 | TransformerEngine / Apex / flash-attn | **`transformer-engine 2.4.0`, Apex (with `fused_weight_gradient_mlp_cuda` + `amp_C`), `flash-attn 2.7.4.post1`, cuDNN 9.10.2 — ALL pre-built in the container** |
 | transformers / other extras | `transformers 5.15.1`, installed from `requirements_megatron.txt` (the container ships torch/TE/Apex but **not** transformers/dotenv/nltk) |
 
-**Route: the NGC container, pinned to a single GPU.** Docker with the NVIDIA runtime (CDI)
-is available on this box. `nvcr.io` is blocked by the house proxy (403) — you **must unset
-the proxy** to pull (see the box's network note); `pypi.org` stays reachable with the proxy
-on. The container was pinned to exactly one physical GPU **by UUID** so it could never see
-the co-tenant GPUs; `nvidia-smi` inside the container showed exactly one device.
+**Route: the NGC container, pinned to a single GPU.** This needs Docker with the NVIDIA
+runtime (CDI). If an HTTP proxy sits in front of the host, `nvcr.io` may be 403-blocked —
+**unset the proxy** to pull; `pypi.org` normally stays reachable with the proxy
+on. Pin the container to exactly one physical GPU **by UUID** so it can never see
+co-tenant GPUs; `nvidia-smi` inside the container should then show exactly one device.
 
 ```bash
 # 1. Pull (proxy MUST be unset for nvcr.io; ~14 GB compressed). Pick a recent YY.MM-py3 tag.
@@ -551,8 +551,8 @@ sudo docker exec -e HF_HOME=/models -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=
 ```
 
 Tokenizer deviation (same class of deviation as MI355X): `meta-llama/Llama-3.1-8B` is gated
-and not cached on this box, and `Qwen/Qwen2.5-0.5B` (the MI355X substitute) is not cached
-either. **`Qwen/Qwen3-0.6B` is fully cached**, so it was used for both preprocessing and
+and was not cached on the test node, and `Qwen/Qwen2.5-0.5B` (the MI355X substitute) was not
+cached either. **`Qwen/Qwen3-0.6B` was fully cached**, so it was used for both preprocessing and
 training. Its vocab is 151643, so a randomly-initialised model starts at `lm loss ≈
 ln(151643) ≈ 11.93` — which is exactly what both runs below show. Nothing else about the
 preprocessing path changed.
@@ -586,13 +586,13 @@ sudo docker exec -e HF_HOME=/models -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=
     --set tensorboard_dir=false
 ```
 
-Real log lines from that smoke (DP=1, TP=1, exit 0):
+**What a healthy smoke looks like** (DP=1, TP=1, exit 0):
 
 ```
 iteration    1/  20 | elapsed time per iteration (ms): 4613.4 | throughput per GPU (TFLOP/s/GPU): 2.7 | lm loss: 1.194369E+01 | grad norm: 13.477 | number of nan iterations: 0
 iteration   10/  20 | elapsed time per iteration (ms):  404.1 | throughput per GPU (TFLOP/s/GPU): 30.9 | lm loss: 1.128362E+01 | grad norm: 6.455
 iteration   20/  20 | elapsed time per iteration (ms):  393.8 | throughput per GPU (TFLOP/s/GPU): 31.7 | lm loss: 1.106648E+01 | grad norm: 4.822
-2026-08-23 04:43:55 - INFO - training/llm/megatron - command completed successfully
+INFO - training/llm/megatron - command completed successfully
 ```
 
 **Training — 200-iteration timed pass, `global_batch_size = 16`, checkpoint saving ON.**
@@ -607,25 +607,25 @@ iteration    1/  200 | elapsed time per iteration (ms): 4546.2 | throughput per 
 iteration   50/  200 | elapsed time per iteration (ms):  372.0 | throughput per GPU (TFLOP/s/GPU): 67.1 | lm loss: 1.028933E+01 | grad norm: 7.135
 iteration  200/  200 | elapsed time per iteration (ms):  390.6 | throughput per GPU (TFLOP/s/GPU): 63.9 | lm loss: 7.945034E+00 | grad norm: 6.831
 [Rank 0] (after 10 iterations) memory (MB) | allocated: 7294.80 | max allocated: 9594.57 | reserved: 9636.00
-[2026-08-23 04:47:08] successfully saved checkpoint from iteration 200 to /out/ckpt [ t 1/1, gtp_remat 1/1, p 1/1 ]
-2026-08-23 04:47:17 - INFO - training/llm/megatron - command completed successfully
+successfully saved checkpoint from iteration 200 to /out/ckpt [ t 1/1, gtp_remat 1/1, p 1/1 ]
+INFO - training/llm/megatron - command completed successfully
 ```
 
 Loss starts at 11.93 (`ln(151643)`, correct for random init on this tokenizer) and falls
-monotonically to 7.95 over 200 iterations; zero NaN, zero skipped. The saved checkpoint was
-~11 GB (`iter_0000100/`, `iter_0000200/`, `latest_checkpointed_iteration.txt` = `200`) and was
-**deleted after capturing this evidence** (it lived in scratch, not in the repo).
+monotonically to 7.95 over 200 iterations; zero NaN, zero skipped. The saved checkpoint is
+~11 GB (`iter_0000100/`, `iter_0000200/`, `latest_checkpointed_iteration.txt` = `200`);
+write it to scratch, not into the repo.
 
 **GPU residency proof.** `nvidia-smi` sampled mid-run — inside the container only the single
-pinned GPU exists (it enumerates as index 0 but is physical GPU 6, UUID
-`GPU-e4fe48bc-…`), and the host view confirms the co-tenant GPUs 0–3 were never touched:
+pinned GPU exists (it enumerates as index 0 but is physical GPU 6), and the host view
+confirms the co-tenant GPUs 0–3 are never touched:
 
 ```
 # inside container (query-compute-apps): the training PID owns memory on the one GPU
-pid 1614914 | used_gpu_memory 10442 MiB
-0, GPU-e4fe48bc-0c29-f21e-6523-759f964bf823, NVIDIA H100 80GB HBM3, 31 %, 8878 MiB, 181.47 W
+pid <pid> | used_gpu_memory 10442 MiB
+0, GPU-<uuid>, NVIDIA H100 80GB HBM3, 31 %, 8878 MiB, 181.47 W
 
-# host nvidia-smi at the same moment: GPU 6 is mine and busy; 0-3 are the co-tenant job
+# host nvidia-smi at the same moment: GPU 6 is the training run and busy; 0-3 are the co-tenant job
 6,  33 %, 12526 MiB      <- this run
 0, 100 %, 67124 MiB      <- co-tenant production job, untouched
 1, 100 %, 67070 MiB
@@ -647,7 +647,7 @@ load-bearing finding here is **qualitative and decisive**: on H100 the four fuse
 and it trains and checkpoints clean. A meaningful TE-vs-no-TE throughput number needs the real
 Llama-3.1-8B geometry (see below), which is deferred with the multi-GPU work.
 
-**What a multi-GPU pass would need (DEFERRED — GPUs 0–3 are a co-tenant production job).**
+**What a wider multi-GPU pass would need (not run here — GPUs 0–3 were a co-tenant production job).**
 Nothing new on the software side: launch the same container with `--gpus '"device=…,…"'`
 listing your free GPUs (or all 8 once they free up), pass `--nproc-per-node N`, and set the
 parallel sizes with `--set tensor_model_parallel_size` / `pipeline_model_parallel_size` /
@@ -657,11 +657,11 @@ do SP without TE), but with TE present on H100 you can set `sequence_parallel=tr
 `tensor_model_parallel_size > 1` and reclaim the activation memory. FP8 (`--fp8-format`) also
 becomes available on Hopper via TE and is worth a datapoint. FP8, `sequence_parallel`, CP > 1,
 and the real Llama-3.1-8B geometry remain untested from this folder, but the **2-GPU
-tensor-parallel pass below is now measured** (a later wave, once GPUs 6+7 were free).
+tensor-parallel pass below is measured**.
 
-### 2-GPU run (2× H100, TP=2) — tested, August 2026
+### 2-GPU run (2× H100, TP=2) — tested
 
-**Verdict: WORKS — real 2-rank tensor parallelism, TransformerEngine on, no source patch.**
+**This works — real 2-rank tensor parallelism, TransformerEngine on, no source patch.**
 This adds the parallelism the single-GPU section could not: `tensor_model_parallel_size=2`
 splits every attention/MLP weight matrix across the two ranks (each rank holds half of each
 parallelized layer — distinct from data- or optimizer-sharding, which replicate the layer and
@@ -677,9 +677,9 @@ launcher flags changed (`--nproc-per-node 2` + the three parallel sizes).
 | Route | identical NGC container `nvcr.io/nvidia/pytorch:25.06-py3`, torch `2.8.0a0+…nv25.06` / CUDA 12.9, `megatron-core 0.20.0+f481e63`, `transformer-engine 2.4.0`, `nvidia-resiliency-ext 0.6.0` (nvrx fix), `transformers 5.15.1` |
 | Parallelism | **TP=2, PP=1, CP=1, DP=1** (world size 2). `sequence_parallel` left `false` (optional; it is the documented H100 win to enable at TP>1) |
 
-**Container — pinned to exactly GPUs 6 and 7.** On this shared node the container was launched
-with `--gpus '"device=6,7"'`, so it sees only those two devices (`nvidia-smi -L` inside
-enumerates GPU 0 = physical 6 UUID `GPU-e4fe48bc-…`, GPU 1 = physical 7 UUID `GPU-9eb34eec-…`).
+**Container — pinned to exactly GPUs 6 and 7.** On a shared node, launch the container
+with `--gpus '"device=6,7"'` so it sees only those two devices (`nvidia-smi -L` inside then
+enumerates GPU 0 = physical 6, GPU 1 = physical 7).
 Install is identical to the single-GPU route (clone Megatron `f481e63`, `pip install
 "nvidia-resiliency-ext>=0.6.0"`, `pip install -r requirements_megatron.txt`); Megatron-core
 was made importable via `PYTHONPATH=/opt/Megatron-LM` (the pure-Python package needs no build
@@ -769,34 +769,34 @@ successfully saved checkpoint from iteration 150 to /out/ckpt [ t 1/2, gtp_remat
 /out/ckpt/iter_0000150/__0_0.distcp   /out/ckpt/iter_0000150/__1_0.distcp   (latest_checkpointed_iteration.txt = 150)
 ```
 
-The checkpoint (~11 GB) was **deleted after capturing this evidence** (it lived in `/out`
-scratch, not the repo).
+The checkpoint is ~11 GB — keep it in `/out` scratch, not in the repo, and delete it when
+you are done.
 
 **GPU residency proof — BOTH GPUs 6 and 7 busy, one training PID each.** `nvidia-smi
---query-compute-apps` mid-run showed a distinct rank PID owning memory on each of the two GPUs
+--query-compute-apps` mid-run shows a distinct rank PID owning memory on each of the two GPUs
 (this is what TP=2 requires — two live ranks, not one):
 
 ```
 # inside container (query-compute-apps): one rank PID per GPU
-GPU-e4fe48bc-…  pid 1749756  used_gpu_memory 8786 MiB   # physical GPU 6, rank 0
-GPU-9eb34eec-…  pid 1749757  used_gpu_memory 8530 MiB   # physical GPU 7, rank 1
+GPU-<uuid-a>  pid <pid0>  used_gpu_memory 8786 MiB   # physical GPU 6, rank 0
+GPU-<uuid-b>  pid <pid1>  used_gpu_memory 8530 MiB   # physical GPU 7, rank 1
 
-# host view: GPUs 6 and 7 are mine and both busy …
+# host view: GPUs 6 and 7 are the training run and both busy …
 6, 27 %,  8802 MiB
 7, 70 %,  8546 MiB
-# … and the co-tenant GPUs 0-3 show ONLY their production PIDs (1273508-11), untouched:
+# … and the co-tenant GPUs 0-3 show ONLY their production PIDs, untouched:
 0, 100 %, 65984 MiB   1, 100 %, 66948 MiB   2, 100 %, 67148 MiB   3, 100 %, 63888 MiB
 ```
 
 **Shared-node safety.** GPUs 0–3 were sampled from the host repeatedly during the run and never
-showed any PID other than the co-tenant production job's (1273508–1273511); `--gpus
+showed any PID other than the co-tenant production job's; `--gpus
 '"device=6,7"'` guarantees the container cannot address them.
 
 **8-GPU (TP2/PP2/DP2) is projected, NOT measured here.** The MI355X 8-GPU section ran that
-geometry; on H100 the co-tenant production job holds GPUs 0–3, so only 6+7 were free this wave.
+geometry; on the H100 node only GPUs 6+7 were free.
 The software path is unchanged — same container, `--nproc-per-node 8`, `--set
 tensor_model_parallel_size=2 pipeline_model_parallel_size=2 context_parallel_size=1` — and TP=2
-is now demonstrated real; the 8-GPU scaling number is deferred until 0–3 free up.
+is demonstrated real; the 8-GPU scaling number on H100 remains unmeasured.
 
 **H100 quirks / what changed vs MI355X:**
 
@@ -1052,10 +1052,10 @@ Everything lands under `[checkpoint].save`:
 **Other hardware (upstream claims — not verified here):** none claimed beyond NVIDIA (NGC-first) and AMD (rocm/megatron-lm builds).
 
 
-| Platform | Status | Evidence (checked August 2026) |
+| Platform | Status | Evidence |
 |---|---|---|
 | NVIDIA CUDA | First-class upstream | [Megatron-LM README](https://github.com/NVIDIA/Megatron-LM) — NGC container recommended; TransformerEngine/Apex are NVIDIA components. |
-| AMD ROCm | **Tested — 2x and 8x MI355X (gfx950), ROCm 7.2/7.2.4, torch 2.11.0+rocm7.2; works with 4 flag changes** (see ["MI355X (ROCm 7.2) — tested"](#mi355x-rocm-72--tested-august-2026) and ["8-GPU run"](#8-gpu-run-8x-mi355x-rocm-724--tested-august-2026)) | Run in this repo on upstream Megatron-LM `f481e63` with **no TE/Apex**. 8-GPU: TP2/PP2/DP2, DP=8 and TP2/DP4 all exit 0, per-GPU TFLOP/s flat from 2 to 8. Vendor sources: [`rocm/megatron-lm` Docker Hub tags](https://hub.docker.com/r/rocm/megatron-lm/tags) (`v26.1`, `v25.11`, `v25.10`, `v25.9_gfx942`/`gfx950`, `latest` — verified via the Docker Hub API); [ROCm AI-Ecosystem docs, "Training with Primus and Megatron"](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/training/recipes/primus-megatron.html); [AMD-AGI/Primus](https://github.com/AMD-AGI/Primus) README lists Megatron-LM as a supported backend with `rocm/primus` images. |
+| AMD ROCm | **Tested — 2x and 8x MI355X (gfx950), ROCm 7.2/7.2.4, torch 2.11.0+rocm7.2; works with 4 flag changes** (see ["MI355X (ROCm 7.2) — tested"](#mi355x-rocm-72--tested) and ["8-GPU run"](#8-gpu-run-8x-mi355x-rocm-724)) | Run in this repo on upstream Megatron-LM `f481e63` with **no TE/Apex**. 8-GPU: TP2/PP2/DP2, DP=8 and TP2/DP4 all exit 0, per-GPU TFLOP/s flat from 2 to 8. Vendor sources: [`rocm/megatron-lm` Docker Hub tags](https://hub.docker.com/r/rocm/megatron-lm/tags) (`v26.1`, `v25.11`, `v25.10`, `v25.9_gfx942`/`gfx950`, `latest` — verified via the Docker Hub API); [ROCm AI-Ecosystem docs, "Training with Primus and Megatron"](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/training/recipes/primus-megatron.html); [AMD-AGI/Primus](https://github.com/AMD-AGI/Primus) README lists Megatron-LM as a supported backend with `rocm/primus` images. |
 | Intel XPU / Apple | No supported path | Not mentioned by upstream or vendor docs. |
 
 ## 8. Notes

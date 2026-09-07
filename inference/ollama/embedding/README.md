@@ -58,11 +58,18 @@ replace.
 | [`../../../inference/vllm/reranker`](../../../inference/vllm/reranker) | vLLM scoring API — the production GPU-serving answer |
 
 > **Tested topology:** 2x AMD Instinct MI355X (gfx950, 288 GB each), physical GPUs **2
-> and 3**, ROCm 7.2.4, Ubuntu, Docker 29.7.2, Python 3.12.3. Verified **2026-08-20**.
+> and 3**, ROCm 7.2.4, Ubuntu, Docker 29.7.2, Python 3.12.3.
 
-## Install — the exact docker route that worked
+## Install — the docker route
 
 Ollama is a static Go binary in a container; there is nothing to build.
+
+```bash
+# Set these to suit your machine
+export DATA_DIR=/path/to/data                    # Ollama model store (ollama create COPIES)
+export LLAMA_CACHE=/path/to/hf_cache/llama_cpp   # existing GGUF cache, mounted read-only
+export OUTPUT_DIR=/path/to/outputs               # inference artifacts
+```
 
 ```bash
 docker pull ollama/ollama:rocm
@@ -98,8 +105,8 @@ ls -l /dev/dri/by-path/     # pci-0000:a5:00.0-render -> ../renderD144
 docker run -d \
   --device /dev/kfd \
   --device /dev/dri/renderD144 \
-  -v /mnt/data_450g/ollama:/root/.ollama \
-  -v /mnt/data_1.5t/hf_cache/llama_cpp:/ggufs:ro \
+  -v $DATA_DIR/ollama:/root/.ollama \
+  -v $LLAMA_CACHE:/ggufs:ro \
   -p 11434:11434 \
   --name ollama_embed \
   ollama/ollama:rocm
@@ -107,11 +114,11 @@ docker run -d \
 
 Two deviations from the canonical run line, both deliberate:
 
-- **`-v /mnt/data_450g/ollama:/root/.ollama` instead of the named volume `-v ollama:…`.**
-  A docker named volume lives under `/var/lib/docker` on `/`, which has only **~99 GB
-  free**. `ollama create` **copies** models into the store; shared with the 27B LLM the
-  store reached **55 GB**, which must not land on `/`.
-- **`-v /mnt/data_1.5t/hf_cache/llama_cpp:/ggufs:ro`** exposes the already-downloaded
+- **`-v $DATA_DIR/ollama:/root/.ollama` instead of the named volume `-v ollama:…`.**
+  A docker named volume lives under `/var/lib/docker` on the root filesystem.
+  `ollama create` **copies** models into the store; shared with the 27B LLM the
+  store reaches **55 GB**, which must not land on the root filesystem.
+- **`-v $LLAMA_CACHE:/ggufs:ro`** exposes the already-downloaded
   GGUF so the Modelfile registers it with no download at all.
 
 ### Confirm the backend sees only your GPU
@@ -199,10 +206,10 @@ DOCUMENT_TEMPLATE = "title: none | text: {text}"
 Measured impact against the saved Transformers reference — same model, same texts, the
 prefixes are the *only* difference:
 
-| Client behaviour | worst \|Δ cosine\| vs baseline | Verdict |
+| Client behaviour | worst \|Δ cosine\| vs baseline | Result |
 |---|---|---|
-| **Prefixes applied** (default) | **0.0034** | ✅ PASS |
-| `--no_prompt_template` | **0.1751** | ❌ FAIL |
+| **Prefixes applied** (default) | **0.0034** | ✅ agrees with the baseline |
+| `--no_prompt_template` | **0.1751** | ❌ diverges |
 
 Raw text does not merely shift the scores, it compresses the whole similarity range and
 destroys discrimination — the irrelevant Eiffel Tower document jumps from `-0.0125` to
@@ -212,13 +219,12 @@ and *looks* fine; this is the embedding equivalent of a silent CPU fallback.
 ## Client / smoke command
 
 ```bash
-python3 -m venv .env_inference_embedding_ollama
-.env_inference_embedding_ollama/bin/pip install -r requirements_embedding_ollama.txt
+cd .. && python3 -m venv .env_ollama && .env_ollama/bin/pip install -r requirements.txt && cd embedding
 
-.env_inference_embedding_ollama/bin/python inference_embedding_ollama.py \
+../.env_ollama/bin/python inference_embedding_ollama.py \
   --port 11434 \
-  --reference /mnt/data_1.5t/outputs/inference_embedding_transformers/reference_embedding_fp32_1gpu.json \
-  --out /mnt/data_1.5t/outputs/inference_embedding_ollama/embeddings_single_gpu.json
+  --reference $OUTPUT_DIR/inference_embedding_transformers/reference_embedding_fp32_1gpu.json \
+  --out $OUTPUT_DIR/inference_embedding_ollama/embeddings_single_gpu.json
 ```
 
 Equivalent raw curl (note the manual prefix):
@@ -232,7 +238,7 @@ curl -s http://127.0.0.1:11434/api/embed -d '{
 
 ## Results — single GPU (physical GPU 2, `renderD144`)
 
-Real client output:
+**Expected client output**
 
 ```text
 endpoint        : http://127.0.0.1:11434/api/embed
@@ -318,14 +324,14 @@ That was measured:
 ```bash
 # instance A — physical GPU 2, port 11434
 docker run -d --device /dev/kfd --device /dev/dri/renderD144 \
-  -v /mnt/data_450g/ollama:/root/.ollama \
-  -v /mnt/data_1.5t/hf_cache/llama_cpp:/ggufs:ro \
+  -v $DATA_DIR/ollama:/root/.ollama \
+  -v $LLAMA_CACHE:/ggufs:ro \
   -p 11434:11434 --name ollama_embed ollama/ollama:rocm
 
 # instance B — physical GPU 3, port 11435
 docker run -d --device /dev/kfd --device /dev/dri/renderD152 \
-  -v /mnt/data_450g/ollama:/root/.ollama \
-  -v /mnt/data_1.5t/hf_cache/llama_cpp:/ggufs:ro \
+  -v $DATA_DIR/ollama:/root/.ollama \
+  -v $LLAMA_CACHE:/ggufs:ro \
   -p 11435:11434 --name ollama_embed_gpu3 ollama/ollama:rocm
 ```
 
@@ -366,8 +372,8 @@ worst_abs_delta : 0.0034  (tolerance 0.01)
 agreement       : PASS
 ```
 
-Note the two daemons share one read-mostly model store on `/mnt/data_450g/ollama`; that
-worked cleanly here because both models were already created. Create models from a single
+Note the two daemons share one read-mostly model store at `$DATA_DIR/ollama`; that works
+cleanly as long as both models have already been created. Create models from a single
 daemon, then scale out readers.
 
 The other multi-model pattern — the 27B LLM and this embedder co-resident on the same
@@ -377,7 +383,7 @@ two-GPU daemon, both `100% GPU` — is documented in
 ## Cross-check vs the Transformers baseline
 
 `../../../inference/transformers/embedding` is the correctness baseline; its saved reference
-vectors live at `/mnt/data_1.5t/outputs/inference_embedding_transformers/`. The client
+vectors live at `$OUTPUT_DIR/inference_embedding_transformers/`. The client
 compares against `reference_embedding_fp32_1gpu.json`
 (`google/embeddinggemma-300m`, float32, `normalized: true`, `embedding_dim: 768`) using
 the same two queries and four documents.
@@ -406,22 +412,21 @@ retrieval purposes.** The residual ~0.003 is Q8_0 quantisation noise, an order o
 magnitude below anything that changes a ranking — the document ordering is identical for
 both queries. `embedding_dim`, normalisation, and ranking all match exactly.
 
-## H100 (NVIDIA) — verified 2026-08-22
+## H100 (NVIDIA)
 
 Single-GPU smoke on **NVIDIA H100 80GB HBM3** (Hopper cc 9.0, driver 580.173.02, CUDA 13.0),
-physical **GPU 4 only** (shared node). Container/run-line details and the "GGUFs had to be
-downloaded" finding are in [`../README.md`](../README.md).
+physical **GPU 4 only**. Container/run-line details and the GGUF-download note are in
+[`../README.md`](../README.md).
 
-**Model:** the **exact same** GGUF the Modelfile references — `ggml-org/embeddinggemma-300M-GGUF:Q8_0`
-— but it is **not cached on this box** (the `FROM` path `/mnt/data_1.5t/hf_cache/llama_cpp/...`
-is MI355X-era and absent), so it was downloaded fresh. The registered layer sha
+**Model:** the **exact same** GGUF the Modelfile references — `ggml-org/embeddinggemma-300M-GGUF:Q8_0`.
+When it is not already under `$LLAMA_CACHE`, download it fresh. The registered layer sha
 `b5ce9d77a3fc…` is **byte-identical to the MI355X run**, so this is the same model, just fetched
 rather than mounted from cache.
 
 ### Exact commands
 
 ```bash
-# GGUF (proxy unset — HF is proxy-blocked here):
+# GGUF (unset the proxy if HF is proxy-blocked on your host):
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 hf download ggml-org/embeddinggemma-300M-GGUF embeddinggemma-300M-Q8_0.gguf \
   --local-dir $GGUF/embeddinggemma-300M-GGUF
@@ -431,13 +436,13 @@ hf download ggml-org/embeddinggemma-300M-GGUF embeddinggemma-300M-Q8_0.gguf \
 sudo docker cp Modelfile.embeddinggemma.h100 ollama_h100:/root/Modelfile.embeddinggemma
 sudo docker exec ollama_h100 ollama create embeddinggemma -f /root/Modelfile.embeddinggemma
 
-# client (venv on tmpfs; requests only). No Transformers reference JSON exists on this box,
-# so --reference was omitted; correctness is shown by dim/norm/ranking + agreement with the
+# client (venv on tmpfs; requests only). With no Transformers reference JSON available,
+# --reference is omitted; correctness is shown by dim/norm/ranking + agreement with the
 # MI355X numbers below:
 python inference_embedding_ollama.py --port 11440 --model embeddinggemma --api native
 ```
 
-### Real output — dim 768, L2-normalised, correct geometry
+### Expected output — dim 768, L2-normalised, correct geometry
 
 ```text
 endpoint        : http://127.0.0.1:11440/api/embed
@@ -488,29 +493,28 @@ the LLM's:
 
 ```text
 # nvidia-smi -i 4 --query-compute-apps=pid,process_name,used_memory --format=csv
-1717079, /usr/lib/ollama/llama-server, 5942 MiB     # the LLM
-1718422, /usr/lib/ollama/llama-server, 1030 MiB     # this embedder
+<pid>, /usr/lib/ollama/llama-server, 5942 MiB     # the LLM
+<pid>, /usr/lib/ollama/llama-server, 1030 MiB     # this embedder
 ```
 
 **25/25 layers on GPU, 1030 MiB resident on GPU 4** — and it coexists with the 27B-class LLM on
 the *same* card, both `100% GPU`, which is Ollama's real strength (one endpoint, embeddings +
-generation, both GPU-resident). GPU 4 = UUID `GPU-e13d18b6-…`; GPUs 0–3 (production) untouched.
+generation, both GPU-resident). Only the pinned card is touched.
 
 ### Single vs multi-GPU on H100
 
-Single-GPU only this wave (shared node; multi-GPU deferred). The MI355X finding is unchanged: a
+Single-GPU only here. The MI355X finding is unchanged: a
 393 MB embedder is **never** split and should not be — the right multi-GPU pattern is
 **one instance per GPU behind a load balancer** (horizontal scale-out), which on H100 means a
-second container with `--gpus '"device=5"'` on port 11441. Not launched here (GPUs 0–3 busy,
-5/7 held by other agents).
+second container with `--gpus '"device=5"'` on port 11441.
 
-### H100 verdict
+### H100 summary
 
-**PASS.** `ollama/ollama` (0.32.15, CUDA-13 userspace) served EmbeddingGemma-300M on H100 out
+`ollama/ollama` (0.32.15, CUDA-13 userspace) serves EmbeddingGemma-300M on H100 out
 of the box. `25/25` layers on GPU, `PROCESSOR: 100% GPU`, 1030 MiB on GPU 4 by `nvidia-smi`,
 768-dim L2-normalised vectors with correct ranking that match the MI355X/fp32 numbers to ~3
 decimals. Only deviations from the MI355X recipe: the container image tag + `--gpus` pinning,
-and the GGUF was downloaded (not cached). The two caveats from MI355X still bite identically —
+and downloading the GGUF rather than mounting it from cache. The two caveats from MI355X still bite identically —
 **apply the task prefixes client-side** (the GGUF has no template), and it is the low-friction
 co-resident answer, **not** the high-throughput one (2048 context, one slot by default; use
 `../../vllm/embedding` or `../../tei/embedding` for batch).
@@ -524,8 +528,8 @@ co-resident answer, **not** the high-throughput one (2048 context, one slot by d
 | `--device /dev/kfd` | required | ROCm compute node; without it there is no GPU at all |
 | `--device /dev/dri/renderD144` | GPU 2 | per-GPU pinning; **use this instead of exposing the whole `/dev/dri`** |
 | `--device /dev/dri/renderD152` | GPU 3 | second instance for scale-out |
-| `-v /mnt/data_450g/ollama:/root/.ollama` | 387 GB free | model store; a named volume lands on `/` which has only ~99 GB |
-| `-v /mnt/data_1.5t/hf_cache/llama_cpp:/ggufs:ro` | read-only | reuse the cached GGUF, no download |
+| `-v $DATA_DIR/ollama:/root/.ollama` | a disk with room | model store; a named volume lands on the root filesystem instead |
+| `-v $LLAMA_CACHE:/ggufs:ro` | read-only | reuse the cached GGUF, no download |
 | `-p 11434:11434` / `-p 11435:11434` | default / +1 | Ollama's default port; a common benchmark layout suggests 8300 — this folder uses **11434** and **11435** |
 
 ### Server environment (`-e`)
@@ -557,7 +561,7 @@ co-resident answer, **not** the high-throughput one (2048 context, one slot by d
 
 ## Output
 
-Results JSON is written under `/mnt/data_1.5t/outputs/inference_embedding_ollama/`, not
+Results JSON is written under `$OUTPUT_DIR/inference_embedding_ollama/`, not
 into the repo, so `git status` stays clean:
 
 | File | Contents |
@@ -605,27 +609,28 @@ the two are directly diffable.
    percentage refers to layer offload, not to every byte.
 
 5. **`ollama create` copies the blob into the store.** Trivial for 319 MB, but the same
-   store shared with the 27B LLM reached 55 GB — which is why it must not sit on `/`.
+   store shared with the 27B LLM reaches 55 GB — which is why it must not sit on the
+   root filesystem.
 
 6. **The 5-minute `keep_alive` default will unload the model between batches**, giving a
    surprise 1.24 s cold load. Raise `OLLAMA_KEEP_ALIVE` (or pass `--keep_alive 30m`) for
    a steady service.
 
-7. **Outbound calls to ollama.com fail on this host and are harmless** —
-   `model show cloud cache hydration failed … context deadline exceeded` is the model
-   recommendation refresh, not serving.
+7. **Outbound calls to ollama.com may fail on an air-gapped or proxied host, and are
+   harmless** — `model show cloud cache hydration failed … context deadline exceeded` is
+   the model recommendation refresh, not serving.
 
 8. **Never set `CUDA_VISIBLE_DEVICES=""` on ROCm.** Device selection here is done purely
    by which `renderD*` nodes are passed into the container; Ollama's config echo shows
    `CUDA_VISIBLE_DEVICES:` and `HIP_VISIBLE_DEVICES:` unset.
 
-## VERDICT
+## Summary
 
-**✅ PASS — Ollama on ROCm/MI355X serves EmbeddingGemma correctly, with proven GPU
+**✅ Ollama on ROCm/MI355X serves EmbeddingGemma correctly, with proven GPU
 residency and near-exact agreement with the Transformers baseline.**
 
-- `ollama/ollama:rocm` (`0.32.14`) ran gfx950 **out of the box** — no build, no patch, no
-  `HSA_OVERRIDE_GFX_VERSION`. Registration from the cached GGUF took **1.4 s** with zero
+- `ollama/ollama:rocm` (`0.32.14`) runs gfx950 **out of the box** — no build, no patch, no
+  `HSA_OVERRIDE_GFX_VERSION`. Registration from a cached GGUF takes **1.4 s** with zero
   network; cold load **1.24 s**.
 - **Correctness is the headline:** worst |Δ cosine| **0.0034** vs the fp32 Transformers
   baseline, first-16-dim cosine **0.9992 / 0.9998**, identical document ranking. Q8_0

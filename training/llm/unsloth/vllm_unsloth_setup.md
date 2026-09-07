@@ -1,19 +1,19 @@
 # GRPO env (`.grpo_env`) — Unsloth + vLLM, reproducible setup
 
 This is the **isolated** environment for GRPO experiments that need vLLM (fast rollouts).
-It is **separate** from the main training venv (`/home/adminuser/.venv`, torch 2.11) and does
+It is **separate** from the main training venv (`~/.venv`, torch 2.11) and does
 not touch it.
 
 > ⚠️ **READ THIS FIRST — the env evolved.** The original build below targeted vLLM 0.10.2
 > (torch 2.8) to match TRL 0.24's server mode. **That vLLM is too old to serve gemma-4**
-> (no `Gemma4ForConditionalGeneration`, no `rope_parameters` schema). For **inference** we
-> upgraded the env to **vLLM 0.26.0 + torch 2.11 + transformers 5.5.4**, which serves the
+> (no `Gemma4ForConditionalGeneration`, no `rope_parameters` schema). For **inference** the
+> env was upgraded to **vLLM 0.26.0 + torch 2.11 + transformers 5.5.4**, which serves the
 > bnb-4bit gemma-4 model successfully — see "**VERIFIED: vLLM inference on bnb-4bit gemma-4**"
 > below. The torch-2.8 sections are kept for history / the (still-unfinished) TRL-server path.
 
 ---
 
-## ✅ VERIFIED: vLLM inference on bnb-4bit gemma-4 (2026-08-17)
+## Verified: vLLM inference on bnb-4bit gemma-4
 
 Standalone `vllm serve` of `gemma-4-31b-it-unsloth-bnb-4bit` **works** and generates
 correctly (`COMPLETION: 'hello from gemma4'`, finish=stop). This is the proven recipe.
@@ -43,7 +43,8 @@ requires, but not the 5.15.x that introduced the per-layer `head_dim` regression
 
 ### Build the config overlay
 ```bash
-SNAP=/mnt/gsma/gsma/gsma/models/hub/models--unsloth--gemma-4-31b-it-unsloth-bnb-4bit/snapshots/8e256fc6d63003fc0ca8c91b976e6dcc38433385
+# $HF_HOME is your Hugging Face cache root
+SNAP=$HF_HOME/hub/models--unsloth--gemma-4-31b-it-unsloth-bnb-4bit/snapshots/<snapshot-hash>
 OVER=/tmp/gemma4bnb_cfgfix
 rm -rf "$OVER"; mkdir -p "$OVER"
 for f in "$SNAP"/*; do ln -s "$f" "$OVER/$(basename "$f")"; done
@@ -59,10 +60,10 @@ PY
 
 ### Serve it (GPU 0, text-only, offline)
 ```bash
-source /home/adminuser/.grpo_env/bin/activate
+source ~/.grpo_env/bin/activate
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES=0
-export PATH="/home/adminuser/.grpo_env/bin:/usr/local/cuda/bin:$PATH"
+export PATH="$HOME/.grpo_env/bin:/usr/local/cuda/bin:$PATH"
 vllm serve /tmp/gemma4bnb_cfgfix \
   --served-model-name gemma4bnb \
   --dtype bfloat16 --max-model-len 4096 --gpu-memory-utilization 0.90 \
@@ -88,7 +89,7 @@ curl -s --noproxy '*' http://127.0.0.1:8000/v1/chat/completions -H "Content-Type
 
 ## (Historical) torch-2.8 build for TRL-0.24 server mode
 
-- **Path:** `/home/adminuser/.grpo_env`  (`source /home/adminuser/.grpo_env/bin/activate`)
+- **Path:** `~/.grpo_env`  (`source ~/.grpo_env/bin/activate`)
 - **Python:** 3.12.3
 - **Why a separate env:** vLLM ≤0.11 hard-pins **torch 2.8.0**, while Unsloth's main pipeline
   runs torch 2.11. Unsloth 2026.8.9 *also* supports torch 2.8 (declares `torch>=2.4,<2.12`
@@ -128,8 +129,8 @@ curl -s --noproxy '*' http://127.0.0.1:8000/v1/chat/completions -H "Content-Type
 ## Build order (what was installed, in sequence)
 
 ```bash
-python3.12 -m venv /home/adminuser/.grpo_env
-source /home/adminuser/.grpo_env/bin/activate
+python3.12 -m venv ~/.grpo_env
+source ~/.grpo_env/bin/activate
 
 # 1) vLLM first — it pins the exact torch 2.8.0 / torchvision / torchaudio (cu128) stack.
 pip install "vllm==0.10.2"
@@ -174,7 +175,7 @@ These are the gotchas discovered while stabilizing the env. Re-apply if rebuildi
 
 Server (dedicated GPU, e.g. GPU 0):
 ```bash
-source /home/adminuser/.grpo_env/bin/activate
+source ~/.grpo_env/bin/activate
 CUDA_VISIBLE_DEVICES=0 python -m trl.scripts.vllm_serve \
     --model <bnb-4bit snapshot path> --port 8000 --gpu_memory_utilization 0.9
 ```
@@ -369,9 +370,9 @@ yarl==1.24.5
 **Goal:** a fast GRPO loop = train the LoRA on GPUs 1–7 (Unsloth) while a vLLM server on
 GPU 0 does the rollouts, with TRL syncing the updated adapter to the server every step.
 
-### ✅✅ FULL FAST LOOP VERIFIED END-TO-END (2026-08-17)
+### Full fast loop verified end-to-end
 A 2-GPU GRPO smoke run against the separate vLLM server completed a full step with correct
-rewards. Server access log proves every protocol call succeeded:
+rewards. A healthy server access log shows every protocol call succeeding:
 ```
 init_communicator     200   (NCCL weight-sync handshake)
 update_named_param  ×1126 200  (entire LoRA adapter synced to the server)
@@ -411,7 +412,7 @@ Two code fixes were required and are IN PLACE:
 | TRL **0.29.1** `vllm_serve.py` imports | ✅ | ✅ (version-gates on `vllm.__version__`) |
 | Serves gemma-4 | ❌ (arch not registered) | ✅ |
 
-**Fix (verified 2026-08-17):** `pip install --no-deps trl==0.29.1`. TRL 0.29.1's
+**Fix (verified):** `pip install --no-deps trl==0.29.1`. TRL 0.29.1's
 `vllm_serve.py` branches on `Version(vllm.__version__)` to pick `StructuredOutputsParams`
 and `vllm.utils.network_utils.get_open_port` for vLLM 0.26. **Import-verified with both:**
 - `trl.scripts.vllm_serve` imports against vLLM 0.26 ✅
@@ -444,8 +445,8 @@ mid-training under TRL 0.29 (imports pass; a 2-step run is the real test).
 ### Fallback if the TRL/vLLM pairing can't be reconciled
 On-device GRPO (no vLLM) already works in the **main venv** — slow (~300–465 s/step) but
 correct. Use a bounded probe (`--max_steps 150`, `--max_completion_length 768`) to answer
-"does GRPO help GSMA" without the fast loop, and revisit the vLLM path after a TRL/Unsloth
-upgrade.
+"does GRPO help on my task" without the fast loop, and revisit the vLLM path after a
+TRL/Unsloth upgrade.
 
 ### Also useful now (independent of the fast loop)
 The verified inference server is exactly what the **offline eval / deployment** path needs

@@ -21,8 +21,8 @@ Files in this folder:
 - `readme_rapidfire.md` — this document.
 - `dev.env` — **you create this**; holds `HF_TOKEN`. Git-ignored, never committed.
 
-> **Tested topology:** **VERIFIED on 1× NVIDIA H100 80GB (CUDA 13.0), 2026-08-22** (single-GPU
-> SFT sweep; multi-GPU deferred) **and on 1× and 8× AMD MI355X (ROCm 7.2.4), 2026-08-19.** On
+> **Tested topology:** **verified on 1× NVIDIA H100 80GB (CUDA 13.0)** (single-GPU
+> SFT sweep; multi-GPU deferred) **and on 1× and 8× AMD MI355X (ROCm 7.2.4).** On
 > H100 a 2-config SFT grid trained to 40 total steps concurrently on one GPU with decreasing
 > loss and a loadable PEFT adapter — see [NVIDIA H100 (CUDA 13) — attempted](#nvidia-h100-cuda-13--attempted),
 > which also documents the CUDA `CUDA_VISIBLE_DEVICES` pinning rule (the **opposite** of ROCm's
@@ -32,7 +32,8 @@ Files in this folder:
 > [8-GPU run](#8-gpu-run-8x-mi355x-rocm-724) — note `HIP_VISIBLE_DEVICES` must be left **unset**
 > there. The original note follows:
 > This folder was written against upstream RapidFire AI
-> and TRL documentation as of **August 2026** (rapidfireai 0.16.1) and has not been executed.
+> and TRL documentation for the pinned versions below (rapidfireai 0.16.1) and had not been
+> executed when that note was written.
 > It targets the repo default of a single node with 8xH100 80GB, but RapidFire AI's whole
 > premise is that it also works on one GPU — the scheduler time-slices configs through GPU
 > memory, so the same command runs on 1 GPU or 8. Treat every flag below as needing a smoke
@@ -75,10 +76,10 @@ rapidfireai start
 
 ### AMD / ROCm
 
-**Upstream says not supported. Locally it WORKS — verdict: works with changes.**
+**Upstream says not supported. It works anyway, with changes.**
 See the [AMD MI355X (ROCm 7.2) — attempted](#amd-mi355x-rocm-72--attempted) section below for
 the full evidence. Short version: upstream's prerequisites (verified against the
-[RapidFire AI README](https://github.com/RapidFireAI/rapidfireai), August 2026) do explicitly
+[RapidFire AI README](https://github.com/RapidFireAI/rapidfireai)) do explicitly
 require an *NVIDIA GPU using the 7.x or 8.x Compute Capability* and *NVIDIA CUDA Toolkit
 11.8+*, and there is no ROCm install path or documentation upstream — but that requirement is
 a **documented prerequisite and an install-time NVIDIA assumption, not a hard CUDA dependency
@@ -241,22 +242,21 @@ Every flag on `train_llm_rapidfire.py`:
 
 | Hardware | Status | Evidence |
 |---|---|---|
-| NVIDIA GPU, compute capability 7.x/8.x | Required | Upstream README "Prerequisites": NVIDIA GPU (CC 7.x/8.x), CUDA Toolkit 11.8+, Python 3.12.x, PyTorch 2.8+ — <https://github.com/RapidFireAI/rapidfireai> (checked August 2026) |
-| NVIDIA H100 80GB (Hopper cc9.0), CUDA 13.0 | **Works with changes** | Verified locally 2026-08-22 on **1 GPU** (multi-GPU deferred): 2-config SFT grid trained to 40 total steps concurrently on one GPU, per-config `train_loss` 1.338→0.733, loadable PEFT adapter saved, `torch 2.13.0+cu130`. Needs a transformers 4.57.6→**5.5.0** + trl→1.10.0 upgrade after `rapidfireai init --train`, and `kernels` **uninstalled** (unpicklable-closure crash). Pin ONE GPU via `CUDA_VISIBLE_DEVICES` (**opposite** of ROCm). See [NVIDIA H100 (CUDA 13) — attempted](#nvidia-h100-cuda-13--attempted) |
+| NVIDIA GPU, compute capability 7.x/8.x | Required | Upstream README "Prerequisites": NVIDIA GPU (CC 7.x/8.x), CUDA Toolkit 11.8+, Python 3.12.x, PyTorch 2.8+ — <https://github.com/RapidFireAI/rapidfireai> |
+| NVIDIA H100 80GB (Hopper cc9.0), CUDA 13.0 | **Works with changes** | Verified locally on **1 GPU** (multi-GPU deferred): 2-config SFT grid trained to 40 total steps concurrently on one GPU, per-config `train_loss` 1.338→0.733, loadable PEFT adapter saved, `torch 2.13.0+cu130`. Needs a transformers 4.57.6→**5.5.0** + trl→1.10.0 upgrade after `rapidfireai init --train`, and `kernels` **uninstalled** (unpicklable-closure crash). Pin ONE GPU via `CUDA_VISIBLE_DEVICES` (**opposite** of ROCm). See [NVIDIA H100 (CUDA 13) — attempted](#nvidia-h100-cuda-13--attempted) |
 | Single GPU up to multi-GPU node | Supported | Upstream: the scheduler time-slices configs through one GPU and auto-distributes across all visible GPUs |
-| AMD Instinct MI355X (gfx950), ROCm 7.2 | **Works with changes** | Verified locally 2026-08-19 on **1 GPU and on all 8**: 8-config SFT grid trained to 200/200 steps concurrently across 8× MI355X (85–88% use, ~15.1GB VRAM each, 4.8× wall-clock vs 1 GPU), `torch 2.11.0+rocm7.2`. Needs the ROCm-torch reinstall after `rapidfireai init --train`, and `HIP_VISIBLE_DEVICES` must be left **unset** for multi-GPU. See [AMD MI355X (ROCm 7.2) — attempted](#amd-mi355x-rocm-72--attempted) and [8-GPU run](#8-gpu-run-8x-mi355x-rocm-724) |
+| AMD Instinct MI355X (gfx950), ROCm 7.2 | **Works with changes** | Verified locally on **1 GPU and on all 8**: 8-config SFT grid trained to 200/200 steps concurrently across 8× MI355X (85–88% use, ~15.1GB VRAM each, 4.8× wall-clock vs 1 GPU), `torch 2.11.0+rocm7.2`. Needs the ROCm-torch reinstall after `rapidfireai init --train`, and `HIP_VISIBLE_DEVICES` must be left **unset** for multi-GPU. See [AMD MI355X (ROCm 7.2) — attempted](#amd-mi355x-rocm-72--attempted) and [8-GPU run](#8-gpu-run-8x-mi355x-rocm-724) |
 | AMD / ROCm, per upstream | Undocumented | No ROCm path anywhere upstream; prerequisites are NVIDIA-explicit — but the gate is an `nvidia-smi`-only probe in the installer, not a CUDA code dependency |
 | CPU-only | RAG/evals mode only (closed-model APIs), not this folder's fit mode | Upstream README overview |
 
 **Other hardware (upstream claims — not verified here):** none beyond NVIDIA CUDA.
 Upstream's prerequisites are NVIDIA-explicit (CC 7.x/8.x, CUDA 11.8+); the only
 non-NVIDIA mode claimed is CPU-only *evals/RAG against closed-model APIs*, which is not
-a training path. No AMD, Intel Gaudi/XPU, Apple MPS, Ascend, TPU, or Trainium claims
-(checked August 2026).
+a training path. No AMD, Intel Gaudi/XPU, Apple MPS, Ascend, TPU, or Trainium claims.
 
 ## AMD MI355X (ROCm 7.2) — attempted
 
-**Status: WORKS WITH CHANGES.** Executed 2026-08-19 on 1× AMD Instinct MI355X (gfx950, 288GB,
+**Status: works with changes.** Validated on 1× AMD Instinct MI355X (gfx950, 288GB,
 `HIP_VISIBLE_DEVICES=6`), ROCm 7.2.4, Ubuntu, Python 3.12.3, `torch 2.11.0+rocm7.2`,
 `rapidfireai 0.16.1`. Four SFT sweeps ran to completion on the GPU, including the full
 documented 2×2 = 4-config grid.
@@ -265,7 +265,7 @@ documented 2×2 = 4-config grid.
 > one per GPU. That result, its evidence, and the extra ROCm environment rule multi-GPU needs
 > are in [8-GPU run (8x MI355X, ROCm 7.2.4)](#8-gpu-run-8x-mi355x-rocm-724) below.
 
-### Verdict
+### Summary
 
 | Question | Answer |
 |---|---|
@@ -290,7 +290,7 @@ The chain, all in the installed wheel:
    **`🎯 Using CPU`** and appends `torch==2.8.0`, `torchvision==0.23.0`, `torchaudio==2.8.0`
    with `--upgrade` from **plain PyPI** (i.e. the CUDA build).
 
-Observed verbatim from `rapidfireai init --train` on this box:
+What `rapidfireai init --train` prints on a ROCm host:
 
 ```
    Did not detect GPU compute capability (nvidia-smi unavailable).
@@ -333,14 +333,19 @@ throws on `2.11.0+rocm7.2`. Ignore it; it does not block anything.
 
 Order matters: ROCm torch must go on **after** `init`, because `init` always clobbers it.
 
+Set these to suit your machine first — the commands below use them throughout:
+
+```bash
+# Set these to suit your machine
+export OUTPUT_DIR=/path/to/outputs     # RapidFire experiments and logs
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+```
+
 ```bash
 cd training/llm/rapidfire
-# NOTE: campaign venvs were removed during the 2026-08 repo reorg — rebuild from
-# requirements_rapidfire.txt (or the pinned steps below).
 python3 -m venv .env_rapidfire
 source .env_rapidfire/bin/activate
 export HIP_VISIBLE_DEVICES=6 CUDA_VISIBLE_DEVICES=6   # your GPU(s)
-export HF_HOME=/mnt/data_1.5t/hf_cache
 
 pip install -U pip setuptools wheel
 pip install rapidfireai==0.16.1 python-dotenv==1.2.2
@@ -377,9 +382,9 @@ itself with a warning (`MLflow server not available at http://127.0.0.1:8852`) a
 proceeds. Start it only if you want the dashboard.
 
 ```bash
-export HIP_VISIBLE_DEVICES=6 CUDA_VISIBLE_DEVICES=6 HF_HOME=/mnt/data_1.5t/hf_cache
-export RF_EXPERIMENT_PATH=/mnt/data_1.5t/outputs/train_llm_rapidfire/experiments
-export RF_LOG_PATH=/mnt/data_1.5t/outputs/train_llm_rapidfire/logs
+export HIP_VISIBLE_DEVICES=6 CUDA_VISIBLE_DEVICES=6   # HF_HOME set above
+export RF_EXPERIMENT_PATH=$OUTPUT_DIR/rapidfire/experiments
+export RF_LOG_PATH=$OUTPUT_DIR/rapidfire/logs
 
 python train_llm_rapidfire.py --trainer_type sft --model_name Qwen/Qwen3-0.6B \
   --experiment_name rf-amd-final-004 --max_steps 4 \
@@ -423,20 +428,20 @@ working on AMD — configs being paged in and out of GPU memory, exactly as desi
 
 ### 8-GPU run (8x MI355X, ROCm 7.2.4)
 
-**Status: WORKS.** Executed 2026-08-19 on all 8× AMD Instinct MI355X (gfx950, 288GB each),
+**Status: works.** Validated on all 8× AMD Instinct MI355X (gfx950, 288GB each),
 ROCm 7.2.4, Python 3.12.3, `torch 2.11.0+rocm7.2`, `rapidfireai 0.16.1`. An 8-config SFT grid
 ran to completion with **all 8 GPUs held simultaneously** — 8/8 at 85–88% utilisation and
 ~15.1GB VRAM each. No upstream source was patched; the only AMD-specific requirement is an
 environment-variable rule (below).
 
-#### Exact working command
+#### Working command
 
 ```bash
 cd training/llm/rapidfire
 source .env_rapidfire/bin/activate
-export HF_HOME=/mnt/data_1.5t/hf_cache
-export RF_EXPERIMENT_PATH=/mnt/data_1.5t/outputs/train_llm_rapidfire/gpu8/experiments
-export RF_LOG_PATH=/mnt/data_1.5t/outputs/train_llm_rapidfire/gpu8/logs
+# HF_HOME / OUTPUT_DIR: see the "Set these to suit your machine" block above
+export RF_EXPERIMENT_PATH=$OUTPUT_DIR/rapidfire/gpu8/experiments
+export RF_LOG_PATH=$OUTPUT_DIR/rapidfire/gpu8/logs
 
 # >>> THE 8-GPU ROCm RULE <<< both must be UNSET (see "GPU visibility on ROCm" below).
 unset HIP_VISIBLE_DEVICES CUDA_VISIBLE_DEVICES
@@ -525,7 +530,7 @@ sets its `CUDA_VISIBLE_DEVICES` before HIP initialises in that process.
 `rocm-smi` was sampled every 5s from *inside* the job for its whole life, alongside
 `rocm-smi --showpids` so samples are attributable to this run's own PIDs.
 
-Per-GPU peaks (experiment `rf-gpu8-20260819-221030`, 8 configs × 200 steps, wall **87s**):
+Per-GPU peaks (one 8-config × 200-step experiment, wall **87s**):
 
 | GPU | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
 |---|---|---|---|---|---|---|---|---|
@@ -533,8 +538,8 @@ Per-GPU peaks (experiment `rf-gpu8-20260819-221030`, 8 configs × 200 steps, wal
 | peak VRAM (GB) | 15.08 | 15.08 | 15.15 | 15.15 | 15.15 | 15.15 | 15.15 | 15.08 |
 | scheduling events | 5 | 5 | 5 | 5 | 5 | 5 | 5 | 5 |
 
-- **Peak concurrency: 8/8.** Every sample from 22:11:27 onward showed all 8 GPUs holding
-  >1GB VRAM, and `--showpids` reported 9 KFD processes (8 workers + the parent) on the GPUs.
+- **Peak concurrency: 8/8.** Every sample once training was under way showed all 8 GPUs
+  holding >1GB VRAM, and `--showpids` reported 9 KFD processes (8 workers + the parent).
 - All 8 runs reached **200/200 steps**, advancing in lockstep through the chunk barriers
   (50/200 → 100/200 → 150/200 → 200/200 for all 8 within a few seconds of each other).
 - Per chunk-trainer throughput: **6.52 steps/s mean** (min 3.67, max 8.76) across the 32
@@ -623,14 +628,14 @@ once per config sequentially.
 
 ## NVIDIA H100 (CUDA 13) — attempted
 
-**Status: WORKS WITH CHANGES.** Executed 2026-08-22 on 1× NVIDIA H100 80GB HBM3 (Hopper cc9.0,
+**Status: works with changes.** Validated on 1× NVIDIA H100 80GB HBM3 (Hopper cc9.0,
 `CUDA_VISIBLE_DEVICES=7`), driver 580.173.02, **CUDA 13.0**, Ubuntu, Python 3.12.3,
 `torch 2.13.0+cu130`, on an **offline** node (HF Hub 403-blocked, `HF_HUB_OFFLINE=1`).
 Single-GPU SFT sweep only; multi-GPU (2, then 8) is **deferred** (production co-tenant on GPUs
 0–3). A 2-config LoRA grid on `LiquidAI/LFM2.5-350M` trained to 40 total optimizer steps
 concurrently on one GPU with decreasing loss and a loadable adapter.
 
-### Verdict
+### Summary
 
 | Question | Answer |
 |---|---|
@@ -750,8 +755,8 @@ to the fully-cached **`LiquidAI/LFM2.5-350M`** (chat template present).
 
 ```bash
 export CUDA_VISIBLE_DEVICES=7                  # <-- pin ONE GPU (see visibility table above)
-export HF_HOME=/mnt/gsma/gsma/gsma/models HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
-export HF_DATASETS_CACHE=/dev/shm/h100/dscache_rapidfire   # .arrow writes fail on /mnt/gsma
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1             # HF_HOME points at the model cache (set above)
+export HF_DATASETS_CACHE=/dev/shm/h100/dscache_rapidfire   # .arrow writes can fail on a network model-cache mount
 export RF_EXPERIMENT_PATH=/dev/shm/h100/out/rapidfire/experiments RF_LOG_PATH=/dev/shm/h100/out/rapidfire/logs
 
 python train_llm_rapidfire.py \
@@ -761,8 +766,8 @@ python train_llm_rapidfire.py \
   --batch_size 1 --grad_acc_steps 1 --logging_steps 1 --max_length 1024
 ```
 
-REAL output — the scheduler interleaving 2 configs across 2 chunks on ONE GPU, both to 20/20
-(`rapidfire.log`):
+**Expected output** — the scheduler interleaving 2 configs across 2 chunks on ONE GPU, both
+to 20/20 (`rapidfire.log`):
 
 ```
 Scheduled run 2 on workers (0,) for chunk 0    Run 2 completed steps - 3/20
@@ -783,12 +788,12 @@ Loss decreasing — per-config `train_loss` across successive chunk-trainers, lr
 {'train_runtime': '0.3535', 'train_samples_per_second': '14.15', 'train_loss': '0.7334'}
 ```
 
-GPU-7-ONLY residency (nvidia-smi `--query-compute-apps=pid,used_memory,gpu_uuid` sampled from
-inside the run; GPU 7 = `GPU-9eb34eec-…-d1e995e95239`):
+GPU-7-only residency (nvidia-smi `--query-compute-apps=pid,used_memory,gpu_uuid` sampled from
+inside the run, matching the worker PID against GPU 7's UUID):
 
 ```
-1428909, 2012 MiB, GPU-9eb34eec-449b-7839-d362-d1e995e95239   # my worker, only ever on GPU 7
-# GPUs 4,5,6 max_used = 0–1 MiB throughout;  GPUs 0–3 held only the co-tenant PIDs 1273508-11
+<worker pid>, 2012 MiB, GPU-<uuid of GPU 7>   # the worker, only ever on GPU 7
+# GPUs 4,5,6 max_used = 0–1 MiB throughout;  GPUs 0–3 held only the co-tenant job's PIDs
 ```
 
 A second 1-chunk run (`--num_chunks 1 --learning_rates 2e-4`) wrote a **loadable PEFT adapter**

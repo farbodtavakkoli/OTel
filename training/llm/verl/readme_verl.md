@@ -26,11 +26,11 @@ Files in this folder:
 > end-to-end on 2x MI355X — and then on **all 8x MI355X at the folder's default topology**
 > (`--gpus-per-node 8 --rollout-tp 2`, Qwen3-4B) — inside the first-party `rocm/verl`
 > container with the **vLLM** rollout engine; see
-> [§ MI355X (ROCm 7.2) tested](#mi355x-rocm-72--tested-2026-08-19) for the
+> [§ MI355X (ROCm 7.2) tested](#mi355x-rocm-72--tested) for the
 > exact route, commands, quirks and logs, and the 8-GPU subsection at its end.
 > NVIDIA remains UNTESTED here — the flags were
 > written against upstream docs and the `examples/grpo_trainer/run_qwen3_4b_fsdp.sh`
-> reference script as of August 2026, targeting a single node with 8xH100 80GB. verl's
+> reference script, targeting a single node with 8xH100 80GB. verl's
 > config surface moves fast; run with `--dry-run` first and diff the printed overrides
 > against the current upstream example before trusting them.
 >
@@ -42,6 +42,14 @@ Files in this folder:
 **Use the container.** verl pins a training engine, an inference engine, and Ray against
 each other; a hand-built venv is the single most common source of "it imports but rollouts
 hang" failures.
+
+The container commands below use two placeholders — set them once to suit your machine:
+
+```bash
+# Set these to suit your machine
+export OUTPUT_DIR=/path/to/outputs     # run artifacts and logs (mounted into the container)
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache (mounted into the container)
+```
 
 ### NVIDIA (CUDA)
 
@@ -103,9 +111,9 @@ Follow the AMD tutorial rather than the CUDA instructions above.
 
 The first-party claim above **held up locally** — see the next section for what actually ran.
 
-## MI355X (ROCm 7.2) — TESTED (2026-08-19)
+## MI355X (ROCm 7.2) — TESTED
 
-**Verdict: WORKS — as a container. The pip/venv route does not reach a trainable state.**
+**This path works as a container. The pip/venv route does not reach a trainable state.**
 GRPO ran end-to-end on **2x AMD Instinct MI355X (gfx950, 288GB, ROCm 7.2.4 host)** using the
 first-party `rocm/verl` image, with the **vLLM** rollout engine and the FSDP2 trainer. This
 folder's own launcher, converter and reward file were used unmodified; only *run flags*
@@ -118,7 +126,7 @@ docker pull rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2
 # 12 GB compressed -> 42.5 GB on disk. Only 3 tags exist under rocm/verl; this is the newest.
 ```
 
-The container's ROCm 7.0.2 userspace ran fine against this host's **ROCm 7.2.4 kernel driver**.
+The container's ROCm 7.0.2 userspace ran fine against a **ROCm 7.2.4 kernel driver** on the host.
 
 Contents actually shipped in that image (the tag understates the verl version):
 
@@ -147,7 +155,7 @@ Contents actually shipped in that image (the tag understates the verl version):
   **lazily**, so `use_remove_padding=True` is fine on ROCm as long as a ROCm flash-attn
   exists, which it does inside the image.)
 
-### Exact commands that worked
+### Commands that worked
 
 `--group-add render` fails (`unable to find group render`) because the image has no `render`
 group — pass **numeric GIDs**. GPUs were pinned to physical 0,1 by exposing only their render
@@ -186,12 +194,12 @@ python3 train_llm_verl.py \
 |---|---|---|
 | `--train-batch-size 512` / `--mini-batch-size 256` | `4` / `4` | the shipped sample has **10 rows** |
 | `--max-prompt-length 1024` | `2560` | sample prompts run to **2189 tokens**; with `data.filter_overlong_prompts=True` the default silently drops **5 of the 10 rows** |
-| `--gpus-per-node 8` | `2` | only 2 GPUs allotted |
+| `--gpus-per-node 8` | `2` | only 2 GPUs allotted for this smoke |
 | `--rollout-tp 2` | `1` | Qwen3-0.6B needs no rollout TP |
 | `--save-freq 20` / `--test-freq 5` | `-1` / `-1` | checkpointing + eval off for the smoke |
 | `--reward-fn compute_score` | `compute_score_format` | see "reward collapse" below |
 
-### Evidence
+### Expected output
 
 4/4 GRPO steps, exit 0, on `Qwen/Qwen3-0.6B`:
 
@@ -253,7 +261,7 @@ There is therefore **no vLLM-free rollout path** on current verl.
 6. **verl writes a Hydra `outputs/` dir into the CWD** — root-owned when run in the
    container, so `rm -rf` it from a container, not the host.
 7. **Reward collapse is easy to hit.** With the shipped `compute_score`, every rollout scored
-   exactly `0.1` (the "non-empty completion" floor) on this telecom sample, so GRPO's
+   exactly `0.1` (the "non-empty completion" floor) on the shipped telecom sample, so GRPO's
    group-relative advantage was identically 0 and `actor/grad_norm` stayed `0.0` for all four
    steps — the trainer stepped, but the update was numerically a no-op. This is precisely the
    failure the "Reward function contract" section warns about, reproduced on real hardware.
@@ -262,9 +270,9 @@ There is therefore **no vLLM-free rollout path** on current verl.
 8. **Benign teardown noise:** `RuntimeError: DataLoader worker ... is killed by signal:
    Killed.` prints after training completes; the process still exits 0.
 
-### 8-GPU run (8x MI355X, ROCm 7.2.4) — tested August 2026
+### 8-GPU run (8x MI355X, ROCm 7.2.4)
 
-**Verdict: WORKS — scales cleanly from 2 to 8 GPUs with no code change and no new flags.**
+**This path scales cleanly from 2 to 8 GPUs with no code change and no new flags.**
 The 2-GPU smoke above was re-run on **all 8 MI355X** with this folder's *default* topology
 (`--gpus-per-node 8 --rollout-tp 2`) and the folder's *default model* (`Qwen/Qwen3-4B`),
 5 GRPO steps, exit 0, both passes. Nothing in `train_llm_verl.py`, `prepare_data_verl.py`,
@@ -288,7 +296,7 @@ trainer -> rollout every step (`timing_s/update_weights` ~1.8-2.3 s). The classi
 failure points did **not** materialise: no RCCL timeout on weight resync, no Ray
 placement-group error claiming all 8 GPUs, no vLLM engine-init failure at TP2.
 
-#### Exact commands
+#### Commands
 
 ```bash
 # 1. container — all 8 GPUs (numeric GIDs; the image has no `render` group)
@@ -303,8 +311,8 @@ docker run -d --name verl_mi355x_gpu8 \
   --shm-size 64G --network=host \
   -e HF_HOME=/hf_cache \
   -v "$PWD":/workspace/train_llm_verl \
-  -v /mnt/data_1.5t/hf_cache:/hf_cache \
-  -v /mnt/data_1.5t/outputs/train_llm_verl/gpu8:/outputs \
+  -v "$HF_HOME":/hf_cache \
+  -v "$OUTPUT_DIR/verl/gpu8":/outputs \
   -w /outputs \
   rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2 sleep infinity
 
@@ -362,7 +370,7 @@ Everything else carried over verbatim: `VLLM_USE_TRITON_FLASH_ATTN=0`,
 `RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0` (quirk 2), no `HIP_VISIBLE_DEVICES`/
 `CUDA_VISIBLE_DEVICES` (quirk 1), `compute_score_format` (quirk 7).
 
-#### Evidence — training
+#### Expected output — training
 
 5/5 steps, `rc=0`, on `Qwen/Qwen3-4B`, 8 GPUs (second pass; the first pass reproduced it):
 
@@ -391,49 +399,49 @@ known-bad AITER **fused-MoE** path is never taken. The `VLLM_ROCM_USE_AITER_MOE=
 insurance from the 2-GPU run was kept. If you swap in an MoE model and rollouts come out as
 nonsense, set `VLLM_ROCM_USE_AITER=0` and retry.
 
-#### Evidence — all 8 GPUs, sampled *inside* the run, PID-verified
+#### Checking all 8 GPUs are yours — sample *inside* the run, PID-verified
 
-`rocm-smi` was sampled from a background loop running for the lifetime of the training
-process (not after it), every ~20 s. Per-sample summary, one column per GPU:
+Sample `rocm-smi` from a background loop running for the lifetime of the training
+process (not after it), every ~20 s. A healthy per-sample summary, one column per GPU:
 
 ```
-17:29:47  use=[ 0,0,0,0,0,0,0,0]      vram%=[ 0 x8]   maxW=261   <- lock acquired, idle
-17:30:50  use=[ 0,0,0,0,0,0,0,0]      vram%=[ 2 x8]   maxW=312   <- 8 FSDP2 ranks loading
-17:31:39  use=[ 0,0,0,0,0,0,0,0]      vram%=[74 x8]   maxW=326   <- vLLM KV caches allocated on all 8
-17:32:07  use=[100 x8]                vram%=[64 x8]   maxW=548   <- generation + update, ALL 8 BUSY
-17:32:37  use=[ 9 x8]                 vram%=[30 x8]   maxW=358   <- teardown
+t0      use=[ 0,0,0,0,0,0,0,0]      vram%=[ 0 x8]   maxW=261   <- lock acquired, idle
+t0+1m   use=[ 0,0,0,0,0,0,0,0]      vram%=[ 2 x8]   maxW=312   <- 8 FSDP2 ranks loading
+t0+2m   use=[ 0,0,0,0,0,0,0,0]      vram%=[74 x8]   maxW=326   <- vLLM KV caches allocated on all 8
+t0+2m20 use=[100 x8]                vram%=[64 x8]   maxW=548   <- generation + update, ALL 8 BUSY
+t0+2m50 use=[ 9 x8]                 vram%=[30 x8]   maxW=358   <- teardown
 ```
 
-(The first pass, with a cold AITER JIT cache, peaked harder still: all 8 at 76-77 % use and
+(A first pass with a cold AITER JIT cache peaks harder still: all 8 at 76-77 % use and
 **830-868 W** each during the actor update.)
 
-At the 17:32:07 sample, 16 processes held VRAM — exactly the predicted layout:
+At the busy sample, 16 processes held VRAM — exactly the predicted layout:
 
 ```
-3803376..3803383  ray::WorkerDict   x8   ~13.0-13.3 GB each   <- FSDP2 trainer, 1 rank per GPU
-3814220..3814374  VLLM::Worker_TP   x8   ~186 GB each         <- 4 engines x TP2, gpu_mem_util 0.6 of 288 GB
+<pid> x8   ray::WorkerDict   ~13.0-13.3 GB each   <- FSDP2 trainer, 1 rank per GPU
+<pid> x8   VLLM::Worker_TP   ~186 GB each         <- 4 engines x TP2, gpu_mem_util 0.6 of 288 GB
 ```
 
-**PID cross-check (the part that matters on a shared box).** Every PID reported by
-`rocm-smi --showpids` was resolved *live, in the same sample* to its owning container via
+**PID cross-check (the part that matters on a shared box).** Resolve every PID reported by
+`rocm-smi --showpids` *live, in the same sample*, to its owning container via
 `/proc/<pid>/cgroup`:
 
 ```
-my container id=3eef378ca0f7
-pid=3803376 comm=ray::WorkerDict   owner=3eef378ca0f7 MINE
-pid=3814220 comm=VLLM::Worker_TP   owner=3eef378ca0f7 MINE
-pid=3810095 comm=ray::vLLMHttpSe   owner=3eef378ca0f7 MINE
+my container id=<container-id>
+pid=<pid> comm=ray::WorkerDict   owner=<container-id> MINE
+pid=<pid> comm=VLLM::Worker_TP   owner=<container-id> MINE
+pid=<pid> comm=ray::vLLMHttpSe   owner=<container-id> MINE
 ...
-sample 17:32:07 -> MINE=51  OTHER=0
+busy sample -> MINE=51  OTHER=0
 ```
 
-51/51 GPU-touching processes belonged to this run's container, and zero belonged to anything
-else, at the same instant all 8 GPUs read 100 % busy. Three lines earlier in the run showed
+51/51 GPU-touching processes belonged to the run's own container, and zero belonged to
+anything else, at the same instant all 8 GPUs read 100 % busy. Earlier lines showed
 `OTHER` with an *empty* owner — those are PIDs that exited between the `--showpids` call and
 the `/proc` read (transient AITER JIT workers), not another tenant.
 
-> **Do not sample `rocm-smi` from a separate shell after the fact.** This box runs several
-> agents' 8-GPU jobs back to back; a sample taken seconds after your run exits will happily
+> **Do not sample `rocm-smi` from a separate shell after the fact.** On a box that runs
+> 8-GPU jobs back to back, a sample taken seconds after your run exits will happily
 > show *someone else's* job at 100 %. Put the sampler inside the same locked script as the
 > training, and resolve PIDs to your own container while they are still alive.
 
@@ -460,7 +468,7 @@ toward the folder default of 512 so each rank gets a full micro-batch, and consi
 `--rollout-tp` only if the model no longer fits at TP2.
 
 Startup cost is the other 8-GPU tax: **~6 min** cold (AITER JIT builds + 4 vLLM engines +
-CUDA-graph capture) vs **~3 min** warm on the second pass in the same container. Ray, RCCL
+CUDA-graph capture) vs **~3 min** warm on a second pass in the same container. Ray, RCCL
 and the vLLM engines all came up clean at 8 GPUs — no placement-group contention, no
 `update_weights` timeout.
 
@@ -469,18 +477,18 @@ and the vLLM engines all came up clean at 8 GPUs — no placement-group contenti
 `--save-freq -1` was used, so **no checkpoints were written** (verified: no
 `.safetensors`/`.pt`/`checkpoints/` anywhere under the output dir). The only artefacts are
 logs plus a 104 KB root-owned Hydra `outputs/` config dump. Note the `rocm/verl` image is
-**42.5 GB on disk** — if it has been pruned since the last run you must re-pull it (12 GB
-over the wire, ~2 min here), which is the single largest disk cost of this folder.
+**42.5 GB on disk** — if it has been pruned you must re-pull it (12 GB
+over the wire, ~2 min), which is the single largest disk cost of this folder.
 
-## NVIDIA H100 (CUDA 13.0) — TESTED (2026-08-22)
+## NVIDIA H100 (CUDA 13.0) — TESTED
 
-**Verdict: WORKS-WITH-CHANGES — as a container. GRPO stepped end-to-end (4/4 steps, exit 0)
+**This path works with changes, as a container. GRPO stepped end-to-end (4/4 steps, exit 0)
 on 1x H100 80GB** using the upstream `verlai/verl` CUDA image, vLLM rollout + FSDP2 trainer,
 `Qwen/Qwen3-0.6B`. Three run-flag/override changes were needed vs. the MI355X recipe — none
 touched this folder's `train_llm_verl.py`, `prepare_data_verl.py` or `reward_verl.py` code,
 but two of them were **Hydra overrides the launcher does not expose** (see "Changes" below),
 so they were passed by calling `verl.trainer.main_ppo` directly. Single-GPU smoke only;
-multi-GPU is deferred (see end).
+multi-GPU on H100 was not exercised (see end).
 
 ### The image tag in the README/requirements is dead — use `uv.cu130`
 
@@ -495,7 +503,7 @@ curl -s "https://hub.docker.com/v2/repositories/verlai/verl/tags/?page_size=100&
 ```
 
 Host: 8x H100 80GB HBM3, driver **580.173.02**, CUDA 13.0, Python 3.12.3. Docker 29.1.3,
-nvidia runtime configured. The proxy (`proxy.conexus.svc.local:3128`) 403s Docker Hub — you
+nvidia runtime configured. If a corporate proxy 403s Docker Hub, you
 must `unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy` before pulling.
 
 ```bash
@@ -515,8 +523,8 @@ resolves to it. The sync is fully offline from the baked cache (~9 s):
 sudo docker run -d --name verl_h100_smoke \
   --gpus '"device=4"' --ipc host --shm-size 16g \
   -e HF_HOME=/models -e HF_TOKEN="$HF_TOKEN" \
-  -v /mnt/gsma/gsma/gsma/models:/models \
-  -v "$PWD":/work -v /dev/shm/h100/out/verl:/out \
+  -v "$HF_HOME":/models \
+  -v "$PWD":/work -v "$OUTPUT_DIR/verl":/out \
   verlai/verl:uv.cu130 sleep infinity
 
 sudo docker exec verl_h100_smoke nvidia-smi -L      # MUST show exactly ONE H100
@@ -535,7 +543,7 @@ What the vllm slice materialised (re-verified with `python -c "import torch,verl
 | triton | 3.6.0 · tensordict 0.10.0 |
 | flash_attn | **NOT installed in the vllm slice** — present only in the uv cache (2.8.3). This is the pivotal H100 change; see below. |
 
-### Exact command that worked
+### Command that worked
 
 The folder launcher hardcodes `use_remove_padding=True` and cannot set `attn_implementation`
 or the verl-0.9 `reward.*` keys, so the smoke calls `verl.trainer.main_ppo` directly. Data
@@ -574,7 +582,7 @@ cd /work && python3 -m verl.trainer.main_ppo \
 
 | Knob | MI355X (2-GPU) | H100 (1-GPU) | Reason |
 |---|---|---|---|
-| `--gpus-per-node` / `n_gpus_per_node` | 2 | **1** | one free GPU allotted (GPUs 0–3 were a production job) |
+| `--gpus-per-node` / `n_gpus_per_node` | 2 | **1** | one free GPU allotted (GPUs 0–3 held by a co-tenant job) |
 | `--rollout-tp` | 1 | 1 | Qwen3-0.6B needs no rollout TP |
 | model | Qwen3-0.6B | Qwen3-0.6B | small model; FSDP2 actor + colocated vLLM fit on one 80 GB card |
 | `use_remove_padding` | True | **False** | avoids verl's remove-padding path (which pulls in flash-attn) |
@@ -593,11 +601,11 @@ cd /work && python3 -m verl.trainer.main_ppo \
    (`verl/workers/config/model.py:185`) still defaults `attn_implementation="flash_attention_2"`
    when building the HF actor/ref, so `AutoModelForCausalLM.from_pretrained` re-raises the same
    error. The fix is to force **`+actor_rollout_ref.model.override_config.attn_implementation=sdpa`**.
-   H100 supports flash-attn (a prebuilt wheel exists), and per the brief the reversal of the
+   H100 supports flash-attn (a prebuilt wheel exists), and the natural reversal of the
    ROCm workaround is to *use* fa2 — but installing it here is a **compile**:
    `uv pip install flash-attn==2.8.3 --no-build-isolation` for torch 2.11+cu130/py3.12 found no
    matching prebuilt wheel and started an nvcc source build that OOM-killed the container
-   (exit 137) inside the 25-min box. `sdpa` is the documented fallback and cost nothing —
+   (exit 137). `sdpa` is the documented fallback and cost nothing —
    the vLLM **rollout** still uses its own baked `vllm_flash_attn`, so only the trainer/ref
    forward runs on SDPA. A follow-up could pre-bake flash-attn into the image or sync a slice
    that includes it; for a smoke, SDPA is correct and complete.
@@ -621,10 +629,9 @@ and sees exactly one GPU as index 0); no `RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0` 
 *run* (Ray prints it as a `FutureWarning` but the CPU reward actors ran fine without it, since
 no AITER/Triton import happens in the num_gpus=0 TaskRunner on CUDA); no AITER JIT warmup.
 
-### Evidence — training
+### Expected output — training
 
-4/4 GRPO steps, `rc=0`, on `Qwen/Qwen3-0.6B`, 1×H100. Real log lines (from
-`/dev/shm/h100/out/verl/train_h100.log`):
+4/4 GRPO steps, `rc=0`, on `Qwen/Qwen3-0.6B`, 1×H100:
 
 ```
 step:0 - val-core/otel_local/acc/mean@1:0.3120   <- custom reward IS routing on otel_local
@@ -644,36 +651,36 @@ numerical no-op); and 4 steps on 10 rows is not a learning curve. What is proven
 full RL loop — vLLM rollout generation, custom-reward scoring, GRPO advantage, FSDP2 actor
 update, weight resync — executes correctly on Hopper.
 
-### Evidence — GPU 4 residency, sampled live mid-run, PID-verified
+### Checking GPU 4 residency — sample live mid-run, PID-verified
 
-`nvidia-smi --id=<GPU-4 UUID>` at 05:19:15 while `Training Progress` read 1/4, with every
+Run `nvidia-smi --id=<GPU-4 UUID>` while `Training Progress` reads 1/4, with every
 compute PID resolved to its owning container via `/proc/<pid>/cgroup`:
 
 ```
-GPU4 (UUID GPU-e13d18b6-...-cd489ad01b55): util=100%  mem=70897 MiB  power=330 W
-  pid=1681003 comm=ray::WorkerDict  mem=69474 MiB  owner=d7c7db7e0dd2  MINE   <- FSDP2 actor
-  pid=1683720 comm=VLLM::Worker     mem= 1400 MiB  owner=d7c7db7e0dd2  MINE   <- colocated rollout
-my container id=d7c7db7e0dd2
+GPU4 (UUID <gpu-uuid>): util=100%  mem=70897 MiB  power=330 W
+  pid=<pid> comm=ray::WorkerDict  mem=69474 MiB  owner=<container-id>  MINE   <- FSDP2 actor
+  pid=<pid> comm=VLLM::Worker     mem= 1400 MiB  owner=<container-id>  MINE   <- colocated rollout
+my container id=<container-id>
 ```
 
-Both GPU-4 PIDs belong to this run's container; the classic verl colocated layout (FSDP2
-actor + vLLM engine sharing one GPU). Peak trainer memory was
+Both GPU-4 PIDs should belong to the run's own container; this is the classic verl colocated
+layout (FSDP2 actor + vLLM engine sharing one GPU). Peak trainer memory was
 `actor/perf/max_memory_allocated_gb:57.9` (reserved 70.8 GB) — comfortable on 80 GB at
-`gpu_memory_utilization=0.5`. GPUs 0–3 (the production job) stayed at their own 100%/~65 GB
+`gpu_memory_utilization=0.5`. GPUs 0–3 (the co-tenant job) stayed at their own 100%/~65 GB
 and were **never visible to this container** (`nvidia-smi -L` inside showed exactly one H100).
 
 > **Shared-node hygiene:** the container was pinned with `--gpus '"device=4"'`, so it can
 > only ever touch GPU 4. Do not sample the whole node and claim a GPU — resolve PIDs to your
 > own container id (`docker inspect -f '{{.Id}}'`) while they are alive, as above.
 
-### Multi-GPU (deferred)
+### Multi-GPU (not exercised on H100)
 
-Single-GPU only this wave. A 2- or 8-GPU pass on H100 would need: `trainer.n_gpus_per_node`
+Single-GPU only here. A 2- or 8-GPU pass on H100 would need: `trainer.n_gpus_per_node`
 raised to the GPU count; the **batch-divisibility** rule from the MI355X 8-GPU run
 (`train_batch_size × rollout.n` must be divisible by world size — e.g. `rollout.n=8` for 8
 GPUs on the 10-row sample); and, if a larger model (Qwen3-4B) is used, `rollout-tp 2` and a
 higher `gpu-mem-util`. The `sdpa` and `reward.custom_reward_function` overrides above carry
-over unchanged. Do not launch it until GPUs 0–3 are free and the lead coordinates.
+over unchanged. On a shared node, only launch it once the GPUs you need are actually free.
 
 ### Housekeeping
 
@@ -879,7 +886,7 @@ HF model you can serve with vLLM or push to the Hub.
 |---|---|---|
 | NVIDIA (H100/A100 class) | Primary target | Upstream `verlai/verl` Docker images and install docs — <https://verl.readthedocs.io/en/latest/start/install.html> |
 | AMD MI300X / MI325X (`gfx942`) | First-party supported | [`docs/amd_tutorial/amd_quick_start.rst`](https://github.com/volcengine/verl/blob/main/docs/amd_tutorial/amd_quick_start.rst) (updated 2026-07-24): FSDP/FSDP2/Megatron, vLLM + SGLang, Colocate + Fully Async |
-| AMD MI350X / MI355X (`gfx950`) | **First-party supported — VERIFIED HERE, 2 AND 8 GPUs** | 2026-08-19: 4 GRPO steps on 2x MI355X, then 5 GRPO steps on **8x MI355X** (Qwen3-4B, FSDP2 world 8 + 4x vLLM TP2, all 8 GPUs at 100% with PID-verified ownership), ROCm 7.2.4 host, `rocm/verl` image, non-zero `grad_norm`, finite loss/KL/reward, exit 0. See [§ MI355X tested](#mi355x-rocm-72--tested-2026-08-19) above |
+| AMD MI350X / MI355X (`gfx950`) | **First-party supported — VERIFIED HERE, 2 AND 8 GPUs** | 4 GRPO steps on 2x MI355X, then 5 GRPO steps on **8x MI355X** (Qwen3-4B, FSDP2 world 8 + 4x vLLM TP2, all 8 GPUs at 100% with PID-verified ownership), ROCm 7.2.4 host, `rocm/verl` image, non-zero `grad_norm`, finite loss/KL/reward, exit 0. See [§ MI355X tested](#mi355x-rocm-72--tested) above |
 | AMD ROCm images | Published — **pulled and run** | Docker Hub `rocm/verl` — tag `verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2` (2026-07-31, 12 GB compressed / 42.5 GB on disk). Only 3 tags exist. Ships verl **0.8.0.dev0**, not 0.7.1. Plus `docker/rocm/Dockerfile.rocm` for source builds |
 | Ascend NPU | Documented upstream | verl docs carry an `ascend_tutorial` section; not exercised here |
 

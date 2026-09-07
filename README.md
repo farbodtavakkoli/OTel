@@ -113,7 +113,7 @@ workloads.
 |   |-- tei/                  # Embedding
 |   |-- ktransformers/        # CPU-GPU hybrid MoE serving
 |   `-- tensorrtllm/          # NVIDIA LLM serving
-`-- docs/                     # Hardware campaign notes (MI355X and H100)
+`-- docs/                     # Hardware platform notes (MI355X and H100)
 ```
 
 Training is organized by modality because each modality/framework pair has its own
@@ -148,15 +148,15 @@ the workloads beneath it.
 Taken together, the repository's recipes can train models and run inference on AMD,
 NVIDIA, Apple, and Intel hardware. Verification depth differs by platform. "Verified"
 means a repository path was executed with recorded commands, environment details,
-outputs, and a verdict, rather than being listed solely from an upstream compatibility
+outputs, and results, rather than being listed solely from an upstream compatibility
 claim.
 
 | Platform | Training and inference coverage | Verification status |
 |---|---|---|
-| **AMD Instinct MI355X** | Training and inference campaigns on 8 x MI355X with ROCm 7.2.4 | **Extensive.** TensorRT-LLM is NVIDIA-only. The KTransformers ROCm kernel path was tested, but its serving layer is blocked by CUDA-pinned dependencies. |
+| **AMD Instinct MI355X** | Training and inference verified on 8 x MI355X with ROCm 7.2.4 | **Extensive.** TensorRT-LLM is NVIDIA-only. The KTransformers ROCm kernel path was tested, but its serving layer is blocked by CUDA-pinned dependencies. |
 | **NVIDIA H100** | Every applicable training folder and inference stack was exercised on H100 | **Extensive.** Training used real 1-GPU smoke runs and measured 2-GPU sharding where applicable. Any 8-GPU figure is a projection unless a folder explicitly states otherwise. `training/llm/primus` is AMD-only by design. |
-| **Apple silicon** | Selected training and inference paths through compatible MPS, Metal, MLX, and CPU backends | **Preliminary.** Apple coverage is not yet comparable to the full AMD and NVIDIA campaigns. Confirm support in the selected recipe before use. |
-| **Intel hardware** | Selected training and inference paths through compatible XPU, SYCL, AMX, and CPU backends | **Preliminary.** Intel coverage is not yet comparable to the full AMD and NVIDIA campaigns. Support varies by framework and device. |
+| **Apple silicon** | Selected training and inference paths through compatible MPS, Metal, MLX, and CPU backends | **Preliminary.** Apple coverage is not yet comparable to the full AMD and NVIDIA verification. Confirm support in the selected recipe before use. |
+| **Intel hardware** | Selected training and inference paths through compatible XPU, SYCL, AMX, and CPU backends | **Preliminary.** Intel coverage is not yet comparable to the full AMD and NVIDIA verification. Support varies by framework and device. |
 
 Not every framework supports every platform. Hardware mentioned only from upstream
 documentation remains labeled as unverified in the per-folder README.
@@ -287,7 +287,7 @@ embeddings = model.encode(sentences, normalize_embeddings=True)
 | [`docs/mi355x_inference_notes.md`](docs/mi355x_inference_notes.md) | ROCm serving lessons and FP8 findings |
 | [`docs/h100_training_notes.md`](docs/h100_training_notes.md) | CUDA training evidence and cross-framework lessons |
 | [`docs/h100_inference_notes.md`](docs/h100_inference_notes.md) | CUDA serving evidence and TensorRT-LLM/SGLang findings |
-| Each recipe README (`readme_<framework>.md` in the recipe folder) | Exact installation, smoke and full runs, arguments, outputs, evidence, and verdict |
+| Each recipe README (`readme_<framework>.md` in the recipe folder) | Exact installation, smoke and full runs, arguments, outputs, evidence, and platform status |
 
 ## Responsible Use and Limitations
 

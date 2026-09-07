@@ -20,19 +20,19 @@ Files in this folder:
 - `requirements_torchtune.txt` — pinned 0.6.x environment.
 - `readme_torchtune.md` — this file.
 
-> **Tested topology:** **AMD MI355X (gfx950) / ROCm 7.2.4 — tested August 2026, works.**
+> **Tested topology:** **AMD MI355X (gfx950) / ROCm 7.2.4 — tested, works.**
 > 1× GPU: `lora_finetune_single_device`, Qwen2.5-0.5B LoRA CPT, 5 steps, finite loss.
-> **8× GPU: also tested and works** — `lora_finetune_distributed` (FSDP2) with the new
+> **8× GPU: also tested and works** — `lora_finetune_distributed` (FSDP2) with the
 > `config_cpt_lora_8gpu.yaml`, world size 8, 80 steps, all 8 GPUs busy, per-GPU VRAM
 > lower than the same-geometry 1-GPU run. See [§7a](#7a-mi355x-rocm-72--tested) and
-> [§7b the 8-GPU run](#8-gpu-run-8x-mi355x-rocm-724--tested-august-2026).
+> [§7b the 8-GPU run](#8-gpu-run-8x-mi355x-rocm-724).
 >
-> **NVIDIA H100 80GB / CUDA 13.0 — also tested August 2026, works with changes.**
+> **NVIDIA H100 80GB / CUDA 13.0 — also tested, works with changes.**
 > 1× GPU (physical GPU 7): `lora_finetune_single_device`, Qwen2.5-1.5B LoRA CPT, `torch
 > 2.13.0+cu130` + `torchtune 0.6.1` + **`torchao==0.10.0`**, 27 steps, per-epoch loss
-> decreasing, adapters saved, 8.9 GB peak by-PID on GPU 7. See [§7c](#7c-h100-cuda-130--tested-august-2026).
-> Multi-GPU on H100 is **deferred** (GPUs 0–3 were a production job).
-> The shipped **Qwen2.5-7B default is still untested** (we test the 0.5B/1.5B of the same family).
+> decreasing, adapters saved, 8.9 GB peak by-PID on GPU 7. See [§7c](#7c-h100-cuda-130).
+> Multi-GPU on H100 is **not covered here**.
+> The shipped **Qwen2.5-7B default is still untested** (the 0.5B/1.5B of the same family are).
 > The data converter (`prepare_data_torchtune.py`) is stdlib-only and produces 10 rows.
 
 ## 1. Install
@@ -68,7 +68,7 @@ shard names differ (Qwen 7B is usually four `model-0000N-of-00004.safetensors`).
 
 There is still **no official AMD/ROCm support statement** from torchtune upstream (no ROCm
 CI, benchmark, or vendor image — and since the project is unmaintained, none is coming).
-**But "no support statement" turned out not to mean "does not work."** We tested it:
+**But "no support statement" does not mean "does not work."** As tested here,
 `torchtune==0.6.1` installs and trains fine on top of a **stable** ROCm torch wheel. It is
 pure Python on top of torch, so it neither builds nor loads any CUDA kernels of its own.
 
@@ -80,8 +80,14 @@ Two corrections to what this folder used to claim:
   the already-installed ROCm torch; pip does not try to pull a CUDA torch over it.
 
 ```bash
+# Set these to suit your machine
+export OUTPUT_DIR=/path/to/outputs     # training artifacts / adapters
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+```
+
+```bash
 cd training/llm/torchtune
-python3.12 -m venv .env_train_llm_torchtune && source .env_train_llm_torchtune/bin/activate
+python3.12 -m venv .env_torchtune && source .env_torchtune/bin/activate
 
 # 1) ROCm torch FIRST, from the ROCm index
 pip install --index-url https://download.pytorch.org/whl/rocm7.2 torch torchvision
@@ -227,7 +233,7 @@ or load them with PEFT (`training/llm/peft/merge_adapter.py` after converting).
 **Other hardware (upstream claims — not verified here):** legacy project; follows torch device support (incl. Apple MPS for some recipes) with no vendor certification.
 
 
-| Platform | Status | Evidence (checked August 2026) |
+| Platform | Status | Basis |
 |---|---|---|
 | NVIDIA CUDA | **Works — verified here** (last stable 0.6.x) | Smoke-tested on 1× **H100 80GB, CUDA 13.0**, `torch 2.13.0+cu130` + `torchtune 0.6.1` + **`torchao==0.10.0`**: 27 LoRA CPT steps, per-epoch loss decreasing, adapters saved. See §7c. Upstream benchmark tables ([torchtune README](https://github.com/pytorch/torchtune)) are all NVIDIA (4090/A6000/A100); CUDA-first install lines. |
 | AMD ROCm | **Works — verified here** (nothing official upstream) | Smoke-tested on 1× MI355X (gfx950), ROCm 7.2.4, `torch 2.11.0+rocm7.2` + `torchtune 0.6.1` (stable wheel, no nightly, no `--no-deps`): 5 LoRA CPT steps, finite loss. See §7a. Upstream still has no ROCm CI/doc/image and is unmaintained ([issue #2883](https://github.com/pytorch/torchtune/issues/2883)), so torchtitan/Megatron are still the better long-term AMD targets. |
@@ -235,12 +241,12 @@ or load them with PEFT (`training/llm/peft/merge_adapter.py` after converting).
 
 ### 7a. MI355X (ROCm 7.2) — tested
 
-**Verdict: WORKS WITH ONE CONFIG FIX.** The fix is *not* AMD-specific — the shipped config
+**This path works with one config fix.** The fix is *not* AMD-specific — the shipped config
 named a loss class that does not exist in torchtune 0.6.1 and would fail identically on
 NVIDIA. Nothing had to change for ROCm itself.
 
 **Host:** 8× AMD Instinct MI355X (gfx950, 288 GB VRAM), ROCm 7.2.4, Python 3.12.3, no NVIDIA GPUs.
-**Tested:** single device (physical GPU 2 via `HIP_VISIBLE_DEVICES=2`), August 2026.
+**Tested:** single device (physical GPU 2 via `HIP_VISIBLE_DEVICES=2`).
 
 **Versions that resolved:**
 
@@ -251,17 +257,17 @@ NVIDIA. Nothing had to change for ROCm itself.
 | torchtune | `0.6.1` (plain `pip install`, **no** `--no-deps`) |
 | torchao / torchdata / datasets | `0.10.0` / `0.11.0` / `5.0.1` |
 
-**Model choice.** The shipped default is Qwen2.5-7B; we smoked on **Qwen/Qwen2.5-0.5B**
+**Model choice.** The shipped default is Qwen2.5-7B; the smoke uses **Qwen/Qwen2.5-0.5B**
 instead. Same `qwen2_5` model family and tokenizer layout (`vocab.json` + `merges.txt`) and
 the same `QWEN2` checkpointer path, so it exercises every code path the 7B would — but it
 downloads as one 954 MB `model.safetensors` shard instead of four ~4 GB shards, which
-matters on a host where disk was the binding constraint. Torchtune 0.6.1 ships
-`lora_qwen2_5_0_5b` as a first-class builder, so this needed only CLI overrides.
+matters when disk is the binding constraint. Torchtune 0.6.1 ships
+`lora_qwen2_5_0_5b` as a first-class builder, so this needs only CLI overrides.
 
-**Exact smoke command** (run from inside `training/llm/torchtune/`):
+**Smoke command** (run from inside `training/llm/torchtune/`):
 
 ```bash
-source .env_train_llm_torchtune/bin/activate   # exports HIP/CUDA_VISIBLE_DEVICES=2, HF_HOME
+source .env_torchtune/bin/activate             # pin the GPU with HIP/CUDA_VISIBLE_DEVICES
 export $(grep -v '^#' ../dev.env | xargs)      # HF_TOKEN
 
 python3 train_llm_torchtune.py \
@@ -274,10 +280,10 @@ python3 train_llm_torchtune.py \
   checkpointer.checkpoint_files=[model.safetensors] \
   gradient_accumulation_steps=1 epochs=1 max_steps_per_epoch=5 \
   save_adapter_weights_only=True \
-  output_dir=/mnt/data_1.5t/outputs/train_llm_torchtune/smoke_final
+  output_dir=$OUTPUT_DIR/train_llm_torchtune/smoke_final
 ```
 
-**Evidence:**
+**Expected output:**
 
 ```
 INFO:torchtune.utils._logging:Model is initialized with precision torch.bfloat16.
@@ -295,8 +301,8 @@ GPU[2] : GPU use (%): 65      GPU[2] : GPU Memory Allocated (VRAM%): 3
 GPU[2] : Temperature (Sensor junction) (C): 42.0   Current Socket Graphics Package Power (W): 259.0
 ```
 
-All 5 losses finite, dataset packed (10 rows → packed sequences), adapter written. Also ran
-3 epochs × 5 steps in an earlier pass with the same finite-loss behaviour.
+All 5 losses finite, dataset packed (10 rows → packed sequences), adapter written. A longer
+3 epochs × 5 steps pass shows the same finite-loss behaviour.
 
 **Quirks found on ROCm:**
 
@@ -316,14 +322,14 @@ All 5 losses finite, dataset packed (10 rows → packed sequences), adapter writ
    a **full 0.92 GiB model copy plus a recipe_state every epoch**. Pass
    `save_adapter_weights_only=True` for smoke runs — it drops each epoch's write to 0.02 GiB.
 6. **Outputs off the repo disk.** Override `output_dir` to
-   `/mnt/data_1.5t/outputs/train_llm_torchtune/` rather than the in-folder `./outputs`.
+   `$OUTPUT_DIR/train_llm_torchtune/` rather than the in-folder `./outputs`.
 
 **Not tested in this section:** the Qwen2.5-7B default. The 8-GPU distributed path *was*
 subsequently tested — see the next subsection.
 
-### 8-GPU run (8x MI355X, ROCm 7.2.4) — tested August 2026
+### 8-GPU run (8x MI355X, ROCm 7.2.4)
 
-**Verdict: WORKS WITH CHANGES.** The distributed path runs clean on 8× MI355X: FSDP2
+**This path works with changes.** The distributed path runs clean on 8× MI355X: FSDP2
 shards, all 8 ranks train, loss decreases, exit code 0, no teardown hang. The "changes" are
 **not ROCm fixes** — they are (a) a *separate config* for the distributed recipe, and (b) a
 *bigger dataset*, because the shipped 10-row sample cannot feed 8 ranks. Nothing AMD-specific
@@ -332,24 +338,25 @@ had to change.
 **Why a new config.** torchtune recipes come in pairs and each half owns its config surface.
 `lora_finetune_distributed` reads `fsdp_cpu_offload` / `fsdp_reshard_after_forward` /
 `custom_sharded_layers`, and rejects single-device-only keys (`optimizer_in_bwd`, low-bit
-optimizers). So the proven 1-GPU `config_cpt_lora.yaml` was left untouched and a new
-**`config_cpt_lora_8gpu.yaml`** was added, carrying forward the `CEWithChunkedOutputLoss`
+optimizers). So the proven 1-GPU `config_cpt_lora.yaml` is left untouched and a separate
+**`config_cpt_lora_8gpu.yaml`** carries forward the `CEWithChunkedOutputLoss`
 fix from §7a. Same model as the 1-GPU run (**Qwen2.5-0.5B**), *not* the untested 7B default.
 
-**Exact launch command** (from inside `training/llm/torchtune/`, everything under `flock`):
+**Launch command** (from inside `training/llm/torchtune/`, everything under `flock` so the
+job owns all 8 GPUs):
 
 ```bash
-source .env_train_llm_torchtune/bin/activate
-export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7   # MUST override: activate pins these to "2"
+source .env_torchtune/bin/activate
+export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7   # MUST override any single-GPU pin in activate
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export HF_HOME=/mnt/data_1.5t/hf_cache
+# HF_HOME as exported in the install section
 
 tune run --nnodes 1 --nproc_per_node 8 --master_port 29690 \
   lora_finetune_distributed --config config_cpt_lora_8gpu.yaml \
-  dataset.data_files=/mnt/data_1.5t/outputs/train_llm_torchtune/gpu8/otel_cpt_x256.jsonl \
+  dataset.data_files=$OUTPUT_DIR/train_llm_torchtune/gpu8/otel_cpt_x256.jsonl \
   tokenizer.max_seq_len=2048 batch_size=2 gradient_accumulation_steps=1 \
   epochs=1 max_steps_per_epoch=80 save_adapter_weights_only=True \
-  output_dir=/mnt/data_1.5t/outputs/train_llm_torchtune/gpu8/run_long
+  output_dir=$OUTPUT_DIR/train_llm_torchtune/gpu8/run_long
 ```
 
 **Parallelism / geometry.** FSDP2 (`fully_shard`) data parallel, world size 8, 1 node.
@@ -360,7 +367,7 @@ Qwen2.5-0.5B ties its embedding/output weights, so `output` is not a separately 
 module. LoRA r=16 on `q_proj,v_proj,output_proj` + MLP; only adapters are trainable, but
 FSDP still shards the frozen base weights.
 
-**Real log lines** (80-step run, `run_long.log`):
+**Expected output** (80-step run):
 
 ```
 ASSERT device_count=8 torch=2.11.0+rocm7.2
@@ -369,32 +376,33 @@ INFO:torchtune.utils._logging:FSDP is enabled. Instantiating model and loading c
 INFO:torchtune.utils._logging:Memory stats after model init:  GPU peak memory allocation: 0.66 GiB
 Step 1  | loss:2.2638285160064697 ... peak_memory_alloc:4.512502193450928
 Step 80 | loss:0.42030152678489685 ... tokens_per_second_per_gpu:15001.66796875
-=== PHASE B exit=0 ===   === 2026-08-19T19:32:41+00:00 DONE rc=0 ===
 ```
 
-**8-GPU `rocm-smi` evidence** — sampler ran *inside* the lock, in-band with training
-(`gpu8/rocm_smi_inband*.txt`), never sampled from a separate shell after the fact:
+The run should finish with exit code 0.
+
+**Checking all 8 GPUs with `rocm-smi`** — run the sampler *inside* the lock, in-band with
+training, never from a separate shell after the fact:
 
 ```
-SAMPLE 2026-08-19T19:27:51  GPU use (%): 99 99 99 99 99 99 99 99   VRAM%: 4 4 4 4 4 4 4 4
-SAMPLE 2026-08-19T19:32:26  GPU use (%): 25 26 25 25 24 24 25 25   VRAM%: 4 4 4 4 4 4 4 4
-SAMPLE 2026-08-19T19:32:39  GPU use (%): 78 77 78 77 77 76 76 75   VRAM%: 4 4 4 4 4 4 4 4
+SAMPLE  GPU use (%): 99 99 99 99 99 99 99 99   VRAM%: 4 4 4 4 4 4 4 4
+SAMPLE  GPU use (%): 25 26 25 25 24 24 25 25   VRAM%: 4 4 4 4 4 4 4 4
+SAMPLE  GPU use (%): 78 77 78 77 77 76 76 75   VRAM%: 4 4 4 4 4 4 4 4
 ```
 
-**PID cross-check** (same sample: `rocm-smi --showpids` vs `pgrep -af`) — this box is shared,
-so the GPUs being busy proves nothing on its own; the VRAM must be held by *our* pids:
+**PID cross-check** (same sample: `rocm-smi --showpids` vs `pgrep -af`) — on a shared machine
+the GPUs being busy proves nothing on its own; the VRAM must be held by *your* pids:
 
 ```
-681271 python3 1 13581639680      # rocm-smi --showpids: 8 pids, one GPU each, ~13.6-14.0 GB
-681272 ... 681278                 # (rank workers) + 681036 pt_elastic (the launcher)
-pgrep -af, same sample: 681271..681278 = .../recipes/lora_finetune_distributed.py --config config_cpt_lora_8gpu.yaml
+<pid> python3 1 13581639680       # rocm-smi --showpids: 8 pids, one GPU each, ~13.6-14.0 GB
+<pid+1> ... <pid+7>               # (rank workers) + one pt_elastic (the launcher)
+pgrep -af, same sample: those pids = .../recipes/lora_finetune_distributed.py --config config_cpt_lora_8gpu.yaml
 ```
 
-The second run repeated it with pids `722415-722422`. Other agents' pids appeared in the same
-`--showpids` table with `VRAM USED = 0` and were excluded.
+Other tenants' pids appear in the same `--showpids` table with `VRAM USED = 0` and can be
+excluded.
 
 **Per-GPU VRAM delta vs single device** (identical per-GPU geometry — bs 2, seq 2048, 80 steps;
-the 1-GPU baseline ran in the same locked script immediately before the 8-GPU run):
+the 1-GPU baseline runs in the same locked script immediately before the 8-GPU run):
 
 | Metric (per GPU) | 1× GPU `single_device` | 8× GPU FSDP2 | Delta |
 |---|---|---|---|
@@ -408,18 +416,19 @@ because at 0.5B the activations (which do *not* shard) dominate, and per-GPU thr
 ~3× because all-gather/reduce-scatter traffic dwarfs the compute for a model this small.
 **8 GPUs are the wrong tool for a 0.5B LoRA** — this run proves the *path*, not a speedup.
 
-**What differed from the 1-GPU run:**
+**What differs from the 1-GPU run:**
 
-1. **Different recipe + new config** — `lora_finetune_distributed` + `config_cpt_lora_8gpu.yaml`
-   (new file; the 1-GPU config was not mutated).
-2. **The stale venv pin bites here.** `.env_train_llm_torchtune/bin/activate` exports
-   `HIP_VISIBLE_DEVICES=2` / `CUDA_VISIBLE_DEVICES=2` (lines 71-72). Sourcing it and launching
-   with `--nproc_per_node 8` gives you 8 processes fighting over **one** GPU. Always re-export
-   both to `0,1,...,7` *after* sourcing, and assert `torch.cuda.device_count() == 8`.
+1. **Different recipe + separate config** — `lora_finetune_distributed` +
+   `config_cpt_lora_8gpu.yaml` (the 1-GPU config is not mutated).
+2. **A stale venv pin bites here.** If `.env_torchtune/bin/activate` exports
+   `HIP_VISIBLE_DEVICES=2` / `CUDA_VISIBLE_DEVICES=2` from an earlier single-GPU run, sourcing
+   it and launching with `--nproc_per_node 8` gives you 8 processes fighting over **one** GPU.
+   Always re-export both to `0,1,...,7` *after* sourcing, and assert
+   `torch.cuda.device_count() == 8`.
 3. **Bigger dataset required.** The shipped sample is 10 rows / 12,492 tokens — it cannot fill
-   8 ranks. We replicated it ×64 (640 rows) and ×256 (2560 rows) into
-   `/mnt/data_1.5t/outputs/train_llm_torchtune/gpu8/`, outside the repo. **Row survival: all
-   2560/2560 rows survived** — `text_completion_dataset` packs with `split_across_pack=True`,
+   8 ranks. Replicate it ×64 (640 rows) and ×256 (2560 rows) into
+   `$OUTPUT_DIR/train_llm_torchtune/gpu8/`, outside the repo. **Row survival: all
+   2560/2560 rows survive** — `text_completion_dataset` packs with `split_across_pack=True`,
    so nothing is silently dropped for exceeding `max_seq_len` (unlike SFT datasets, which do
    drop long rows). Treat the result as a **pipeline proof, not a learning result**: the loss
    fall 2.26 → 0.42 is memorisation of 256 copies of the same 10 documents.
@@ -432,27 +441,25 @@ because at 0.5B the activations (which do *not* shard) dominate, and per-GPU thr
    `torch/distributed/tensor/_random.py`). Cosmetic; training is unaffected.
 6. Same ROCm quirks as §7a otherwise: flex attention selected automatically, the cosmetic
    fused-RMSNorm dtype warning, `device: cuda` correct on ROCm. Fused AdamW worked on all 8.
-7. **Clean teardown** — `PHASE B exit=0`, no `torchrun` restart/abort messages, no NCCL/RCCL
+7. **Clean teardown** — exit code 0, no `torchrun` restart/abort messages, no NCCL/RCCL
    timeout, no orphaned rank processes (VRAM back to 0 in the sample after the run).
 
-Reproducing: run everything through the machine-wide lock (`flock /tmp/mi355x_gpu8.lock`) if
-you share this box, and keep outputs off the repo disk. Raw logs, in-band `rocm-smi` samples
-and a condensed `EVIDENCE.md` are under `/mnt/data_1.5t/outputs/train_llm_torchtune/gpu8/`
-(weights deleted after capture).
+Reproducing: run everything through a machine-wide lock (`flock /tmp/mi355x_gpu8.lock`) if
+the machine is shared, and keep outputs off the repo disk (under `$OUTPUT_DIR`).
 
 **Weights on disk:** `assets/Qwen2.5-0.5B/` is **954 MB and deliberately left untracked** —
 do not commit it. Re-download it with the `tune download` line in §1, or point
-`checkpointer.checkpoint_dir` at a copy under `/mnt/data_1.5t`.
+`checkpointer.checkpoint_dir` at a copy on a larger disk outside the repo.
 
-### 7c. H100 (CUDA 13.0) — tested August 2026
+### 7c. H100 (CUDA 13.0)
 
-**Verdict: WORKS WITH CHANGES.** torchtune 0.6.1 runs clean on H100/CUDA-13 once two
+**This path works with changes.** torchtune 0.6.1 runs clean on H100/CUDA-13 once two
 things are pinned: **`torchao==0.10.0`** (the 0.6.1 import path) and the **`CEWithChunkedOutputLoss`**
 fix already carried in `config_cpt_lora.yaml` from §7a. Neither change is NVIDIA-specific.
-The only *hardware*-driven note is that we assembled the base model from a locally-cached
-Qwen2.5-1.5B checkpoint because outbound HuggingFace was proxy-blocked on this node (see below) —
-that is an environment quirk, not a torchtune limitation. Single-device only this wave; GPUs
-0–3 were running someone else's production job, so we used **physical GPU 7** exclusively.
+The only *environment*-driven note is that the base model was assembled from a locally-cached
+Qwen2.5-1.5B checkpoint because outbound HuggingFace was proxy-blocked on that node (see below) —
+that is an environment quirk, not a torchtune limitation. Single-device only, pinned to one
+free card (**physical GPU 7**).
 
 **Host:** 8× NVIDIA H100 80GB HBM3, driver **580.173.02**, **CUDA 13.0**, Hopper cc `(9, 0)`,
 Python 3.12.3. Tested single device on **GPU 7** (`CUDA_VISIBLE_DEVICES=7`), master port 29644.
@@ -468,7 +475,7 @@ Python 3.12.3. Tested single device on **GPU 7** (`CUDA_VISIBLE_DEVICES=7`), mas
 | torchdata / datasets / safetensors | `0.11.0` / `5.0.1` / `0.8.0` |
 | numpy / omegaconf / tokenizers | `2.5.2` / `2.3.1` / `0.23.1` |
 
-**Install that worked** (exact commands):
+**Validated install:**
 
 ```bash
 python3 -m venv .env_torchtune && source .env_torchtune/bin/activate
@@ -478,23 +485,23 @@ pip install "torchao==0.10.0" --no-deps          # 0.6.1 imports torchao.dtypes.
 python -c "import torch;print(torch.__version__,torch.version.cuda)"  # 2.13.0+cu130 13.0 (re-check: not clobbered)
 ```
 
-**Model choice.** The proxy on this node returns `403 Forbidden` for huggingface.co, so
+**Model choice.** Where a proxy returns `403 Forbidden` for huggingface.co,
 `tune download Qwen/Qwen2.5-0.5B` fails (`httpx.ProxyError: 403`). The shared HF cache
-(`HF_HOME=/mnt/gsma/gsma/gsma/models`) had no Qwen2.5 *causal* base, so we assembled one from
+(`$HF_HOME`) had no Qwen2.5 *causal* base, so one was assembled from
 the cached **`qwen2.5_1.5b_telelog_classification/checkpoint-2200`** checkpoint: it is a
 `Qwen2ForSequenceClassification` fine-tune whose backbone *is* Qwen2.5-1.5B (28 layers, hidden
-1536, `tie_word_embeddings: true`, vocab 151936). We wrote a `Qwen2ForCausalLM` `config.json`,
-copied its `vocab.json`+`merges.txt`, symlinked the intact shard 1, and rewrote shard 2 with
+1536, `tie_word_embeddings: true`, vocab 151936). Write a `Qwen2ForCausalLM` `config.json`,
+copy its `vocab.json`+`merges.txt`, symlink the intact shard 1, and rewrite shard 2 with
 the classifier head `score.weight` **stripped** (torchtune's `qwen2_hf_to_tune` converter
 raises `Found unexpected key: "score.weight"` otherwise). Result: a clean 338-tensor causal
 LM. On a normal (un-proxied) host just use the §7a `Qwen2.5-0.5B` download instead — the code
 path is identical. For 1.5B the torchtune builder is **`lora_qwen2_5_1_5b_base`** (note the
 `_base` suffix; only 0.5B is bare `lora_qwen2_5_0_5b`).
 
-**Exact smoke command** (run from inside `training/llm/torchtune/`, `$DEST` = the assembled base dir):
+**Smoke command** (run from inside `training/llm/torchtune/`, `$DEST` = the assembled base dir):
 
 ```bash
-export CUDA_VISIBLE_DEVICES=7 MASTER_PORT=29644 HF_HOME=/mnt/gsma/gsma/gsma/models
+export CUDA_VISIBLE_DEVICES=7 MASTER_PORT=29644   # HF_HOME as exported in the install section
 python train_llm_torchtune.py \
   --recipe lora_finetune_single_device --nproc-per-node 1 --extra \
   model._component_=torchtune.models.qwen2_5.lora_qwen2_5_1_5b_base \
@@ -510,10 +517,10 @@ python train_llm_torchtune.py \
 
 **Step count:** 10 rows packed at `max_seq_len=1024` → **9 packed sequences/epoch**; with
 `batch_size=1`, `gradient_accumulation_steps=1`, world=1 that is **9 optimizer steps/epoch ×
-3 epochs = 27 real steps** (the §7a MI355X run used `max_steps_per_epoch=5`; we lifted the cap
-and ran 3 epochs so the loss trend is visible). Exit code 0.
+3 epochs = 27 real steps** (the §7a MI355X run used `max_steps_per_epoch=5`; here the cap is
+lifted and 3 epochs run so the loss trend is visible). The run finishes with exit code 0.
 
-**Evidence** (real log lines):
+**Expected output:**
 
 ```
 INFO:torchtune.utils._logging:Model is initialized with precision torch.bfloat16.
@@ -523,26 +530,25 @@ Packing dataset: 100%|██████████| 10/10 [00:00<00:00, 152.49
 3|19|Loss: 2.7127492427825928  3|22|Loss: 0.909440815448761    3|27|Loss: 2.100238561630249
         GPU peak memory allocation: 6.41 GiB
 INFO:torchtune.utils._logging:Adapter checkpoint of size 0.03 GiB saved to .../epoch_2/adapter_model.safetensors
-PHASE_DONE rc=0
 ```
 
 Per-step loss is noisy (only 10 packed docs, LoRA rank 16), but the **per-epoch trend
 decreases monotonically** — mean `2.0621 → 2.0282 → 1.8938`, min `1.0458 → 0.9861 → 0.9094`.
 Treat this as a **pipeline proof, not a learning result** (same caveat as §7a/§7b). Three
-adapters written (`epoch_0/1/2`, 35 MB `.safetensors` each).
+adapters are written (`epoch_0/1/2`, 35 MB `.safetensors` each).
 
-**GPU-7 residency** — `nvidia-smi` sampled *inside* the run, filtered to GPU 7's UUID and to
-our training PID (`nvidia-smi` ignores `CUDA_VISIBLE_DEVICES`, so you must filter by
-`gpu_uuid` + pid, not assume index 0 is yours):
+**GPU residency check** — sample `nvidia-smi` *inside* the run, filtered to the pinned GPU's
+UUID and to your training PID (`nvidia-smi` ignores `CUDA_VISIBLE_DEVICES`, so you must filter
+by `gpu_uuid` + pid, not assume index 0 is yours):
 
 ```
-GPU-9eb34eec-449b-7839-d362-d1e995e95239, 1342848, /dev/shm/h100/venvs/torchtune/bin/python, 7586 MiB
-7, GPU-9eb34eec-449b-7839-d362-d1e995e95239, 2 %, 6243 MiB     # index 7, util, mem.used
+GPU-<uuid>, <pid>, <venv>/bin/python, 7586 MiB
+7, GPU-<uuid>, 2 %, 6243 MiB     # index 7, util, mem.used
 ```
 
-Our PID climbed 518 MiB (init) → **8899 MiB peak** on GPU 7; GPUs 0–3 (the production job,
-~64 GB/rank) were never touched. Low util % samples reflect the tiny/fast workload (~5 it/s),
-not idleness — the 6–8.9 GB VRAM held by our exact PID is the residency proof.
+The training PID climbs 518 MiB (init) → **8899 MiB peak** on GPU 7; other cards on a shared
+node stay untouched. Low util % samples reflect the tiny/fast workload (~5 it/s),
+not idleness — the 6–8.9 GB VRAM held by your exact PID is the residency signal.
 
 **Quirks / what changed vs. the MI355X recipe:**
 
@@ -557,28 +563,28 @@ not idleness — the 6–8.9 GB VRAM held by our exact PID is the residency proo
    on `device: cuda`. Nothing to add — the guard is on by default on the H100.
 3. **Attention = flex, no flash-attn to reverse.** torchtune selects the flex-attention
    (BlockMask) path automatically and exposes no `attn_implementation` knob in these configs,
-   so the brief's "swap sdpa→flash_attention_2" does not apply here — there is nothing to swap.
+   so the usual "swap sdpa→flash_attention_2" does not apply here — there is nothing to swap.
    (flash-attn *is* installable on H100, but torchtune never calls it.) `device: cuda` is
    already correct; no `HIP_VISIBLE_DEVICES` to drop from the config.
 4. **VRAM is a non-issue at this size.** 1.5B LoRA peaked at 6.41 GiB / ~8.9 GB by-PID — no
    OOM, no offload, no batch/seq reduction needed on the 80 GB card (vs 288 GB on MI355X).
-5. **Env-driven, not torchtune:** outbound HF is proxy-blocked (`403`), and the `/mnt/gsma`
-   share rejects the symlink/replace ops PyTorch's CUDA libs perform during install
-   (`OSError: [Errno 1] Operation not permitted` on `libcusparseLt.so.0`). We built the venv
-   on tmpfs (`/dev/shm/h100/venvs/torchtune`, symlinked back as `.env_torchtune`) and kept
-   weights+outputs under `/dev/shm/h100/out/torchtune`. On a normal CUDA host the plain §1
-   install into an in-folder `.venv` works.
+5. **Env-driven, not torchtune:** on the offline node outbound HF is proxy-blocked (`403`),
+   and the shared network mount rejects the symlink/replace ops PyTorch's CUDA libs perform
+   during install (`OSError: [Errno 1] Operation not permitted` on `libcusparseLt.so.0`). The
+   fix is to build the venv on tmpfs (`/dev/shm/h100/venvs/torchtune`, symlinked back as
+   `.env_torchtune`) and keep weights+outputs under `/dev/shm/h100/out/torchtune`. On a normal
+   CUDA host the plain §1 install into an in-folder `.venv` works.
 
-**Multi-GPU (2, then 8) — DEFERRED, not run.** GPUs 0–3 held a production job this wave, so
-only the single-device path was exercised. An 8-GPU pass would mirror §7b exactly: switch to
+**Multi-GPU (2, then 8) — not covered here.** Only the single-device path was exercised. An
+8-GPU pass would mirror §7b exactly: switch to
 `--recipe lora_finetune_distributed` + `config_cpt_lora_8gpu.yaml` (carrying the
 `CEWithChunkedOutputLoss` fix and the `torchao==0.10.0` pin), replicate the 10-row sample so it
 can fill 8 ranks, launch with `tune run --nnodes 1 --nproc_per_node 8 --master_port 29644`, and
-assert `torch.cuda.device_count()==<free GPUs>`. Expect FSDP2 sharding to work on H100 as it did
-on MI355X; the lead coordinates that once GPUs 0–3 free up.
+assert `torch.cuda.device_count()==<free GPUs>`. Expect FSDP2 sharding to work on H100 as it does
+on MI355X.
 
-**Weights on disk:** the assembled base and all adapters lived under `/dev/shm/h100/` and were
-deleted after evidence capture — nothing added to the repo.
+**Weights on disk:** keep the assembled base and all adapters outside the repo (e.g. under
+`/dev/shm/...`) and delete them afterwards — nothing should be added to the repo.
 
 ## 8. Notes
 

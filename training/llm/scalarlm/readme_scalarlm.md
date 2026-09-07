@@ -29,7 +29,7 @@ Files:
 The client needs the `scalarlm` SDK plus two helpers:
 
 ```bash
-python3.12 -m venv ~/.venv-scalarlm && source ~/.venv-scalarlm/bin/activate
+python3.12 -m venv .env_scalarlm && source .env_scalarlm/bin/activate
 pip install -r requirements_scalarlm.txt
 ```
 
@@ -256,34 +256,30 @@ All settings travel in `train_args`, which the server materializes into the job 
 
 This folder is a **client** — training hardware is the server deployment's concern, and the client runs anywhere Python runs. For the server side, the ScalarLM project (www.scalarlm.com) describes the stack as vLLM for inference plus Megatron-LM for distributed training, dispatched via Slurm inside Kubernetes, and states it is GPU-agnostic: it "runs on NVIDIA and AMD GPUs without code changes", with production deployments at TensorWave on AMD MI300X and the same Helm charts and `ml/` directory working on NVIDIA A100 and H100 clusters. Consult the ScalarLM docs for deploying a server on your hardware.
 
-## MI355X box (ROCm 7.2) — client test
+## MI355X platform notes (ROCm 7.2) — client test
 
-Client-side verification on an 8×MI355X / ROCm 7.2.4 / Python 3.12.3 host (August 2026). No GPUs were used — the client is pure Python and hardware-agnostic; this section tests the **client**, not a training deployment.
+Client-side verification on an 8×MI355X / ROCm 7.2.4 / Python 3.12.3 host. No GPUs are needed — the client is pure Python and hardware-agnostic; this section tests the **client**, not a training deployment.
 
-**Installed & verified** (venv `.env_train_scalarlm`, `pip install -r requirements_scalarlm.txt`):
+**Installed & verified** (venv `.env_scalarlm`, `pip install -r requirements_scalarlm.txt`):
 - `scalarlm 1.151` (PyPI; the SDK's real package is `masint` — `scalarlm` re-exports it), `python-dotenv 1.2.2`, `PyYAML 6.0.3` — all pins install as-is on Python 3.12, no adjustments needed.
 - `import scalarlm` + `SupermassiveIntelligence()` construction: OK. URL resolution confirmed in the SDK: `SCALARLM_API_URL` → `MASINT_API_URL` → default `http://localhost:8000`.
 - `scalarlm --help` CLI: OK (`logs plot ls squeue stats clear_queue cancel delete`).
 - `train.py --help` / no-server dry run: dataset formatting, config write and archive creation all succeed; the run stops exactly at the network call with `aiohttp ClientConnectorError: Cannot connect to host localhost:8000` — expected without a server. *(Recorded before the config-channel change; the sidecar write it mentions no longer happens.)*
 - `inference.py` without a server degrades as documented: each batch logs the traceback, is skipped, and an empty results file is written.
 
-**Local CPU dev server attempt** (`gdiamos/scalarlm-cpu:latest`, ~1.4 GB, no GPUs): came up healthy (`/v1/health` 200; serves `masint/tiny-random-llama`) after pre-seeding the HF cache (container→HF CDN downloads timed out on this host). `train.py` then **submitted successfully end-to-end**: job `QUEUED`, `model_name` job hash returned, `train_status.json` saved. Server-side execution failed with `ModuleNotFoundError: No module named 'cray_infra.huggingface'` — this folder's vendored `ml/` tree (shipped with each job) targets the **fork's** server, while the upstream `latest` container lacks that module. True end-to-end training needs a server built from the matching fork (or a deployment whose `cray_infra` matches this `ml/` tree). Container was removed after the test.
+**Local CPU dev server attempt** (`gdiamos/scalarlm-cpu:latest`, ~1.4 GB, no GPUs): came up healthy (`/v1/health` 200; serves `masint/tiny-random-llama`) after pre-seeding the HF cache (container→HF CDN downloads can time out behind a corporate proxy). `train.py` then **submitted successfully end-to-end**: job `QUEUED`, `model_name` job hash returned, `train_status.json` saved. Server-side execution failed with `ModuleNotFoundError: No module named 'cray_infra.huggingface'` — this folder's vendored `ml/` tree (shipped with each job) targets the **fork's** server, while the upstream `latest` container lacks that module. True end-to-end training needs a server built from the matching fork (or a deployment whose `cray_infra` matches this `ml/` tree). Container was removed after the test.
 
 **Gotchas found:**
 - `--sample_fraction 0.1` on the 5-example `data/llm_training_sample.json` truncates to 0 rows and the SDK rejects the empty archive (`ValueError: The file … is empty`) — use `--sample_fraction 1.0` with the shipped sample.
 - `scalarlm ls` CLI crashes (`UnboundLocalError` in `masint/cli/ls.py`) when the server has no models to list — SDK bug, not a folder issue.
 
-**Verdict: tested on MI355X.** The client installs and runs on this box — imports, CLI, formatting, config write, and job submission all verified, with submission proven live against a local CPU dev server. End-to-end training additionally requires a ScalarLM server deployment matching this folder's `ml/` fork; a full end-to-end re-test against such a server is planned.
+This client path is validated on MI355X: it installs and runs — imports, CLI, formatting, config write, and job submission all verified, with submission proven live against a local CPU dev server. End-to-end training additionally requires a ScalarLM server deployment matching this folder's `ml/` fork.
 
-### 8-GPU run (8× MI355X, ROCm 7.2.4) — DONE
+### 8-GPU run (8× MI355X, ROCm 7.2.4)
 
-> Supersedes the earlier "not applicable" note. That was written when no matching server image
-> existed on this box. One now does (`farbodatdocker/scalarlm:mi355-v1.0`), and the full end-to-end
-> exercise has been run.
-
-The client is still a thin HTTP job-submitter — multi-GPU behaviour is a property of the **server**
-deployment. What changed is that the server now exists here, so the end-to-end path was measured
-rather than deferred.
+The client is a thin HTTP job-submitter — multi-GPU behaviour is a property of the **server**
+deployment. With a matching server image available (`farbodatdocker/scalarlm:mi355-v1.0`), the
+end-to-end path below was measured rather than deferred.
 
 Workload: Qwen3-0.6B, 128 records, 30 steps, `adapter_type none` (full-parameter, maximum collective
 traffic), `gpus: 8, nodes: 1`, same image as both server and client.

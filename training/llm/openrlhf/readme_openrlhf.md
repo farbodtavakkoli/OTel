@@ -20,21 +20,29 @@ Files in this folder:
 - `readme_openrlhf.md` — this document.
 - `dev.env` — **you create this**; holds `HF_TOKEN`. Git-ignored, never committed.
 
-> **Tested topology:** **UNTESTED on NVIDIA; partially tested on AMD.** The 8xH100 target
-> below has not been executed. What *has* been run is 1x AMD Instinct MI355X (gfx950,
-> ROCm 7.2, August 2026): **SFT and DPO train** in a plain ROCm venv, and **PPO and GRPO
+> **Tested topology:** **the 8xH100 target is untested; partially tested on AMD.** The 8xH100 target
+> below has not been executed (a single-H100 run is documented under Install). What *has* been run is 1x AMD Instinct MI355X (gfx950,
+> ROCm 7.2): **SFT and DPO train** in a plain ROCm venv, and **PPO and GRPO
 > train too — but only inside a container that already ships a ROCm build of vLLM**
-> (verified in `rocm/verl:...vllm0.20.2` on 4x MI355X, 2026-08-19). See
+> (verified in `rocm/verl:...vllm0.20.2` on 4x MI355X). See
 > "AMD MI355X (ROCm 7.2) — attempted" under Install for the exact route per tier.
 > This folder was written against the upstream OpenRLHF
-> README and `examples/scripts/` as of **August 2026** (OpenRLHF 0.10.x) and has not been
-> executed. It targets the repo default of a single node with 8xH100 80GB, using the Hybrid
+> README and `examples/scripts/` for the pinned versions below (OpenRLHF 0.10.x).
+> It targets the repo default of a single node with 8xH100 80GB, using the Hybrid
 > Engine (`--train.colocate_all`) so the actor, reference model and vLLM engines share those
 > 8 GPUs. Multi-node via Ray is a documented upstream path (and the reason to use this
 > framework at all) but is not exercised here. Verify every flag against your installed
 > version before a real run — see "Upstream API uncertainty" in Notes.
 
 ## Install
+
+Set these once per shell; the commands below reference them:
+
+```bash
+# Set these to suit your machine
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+export OUTPUT_DIR=/path/to/outputs     # training artifacts and run logs
+```
 
 ### NVIDIA (CUDA)
 
@@ -69,7 +77,7 @@ moves quickly), install from source with `git clone ... && pip install -e .`.
 #### NVIDIA H100 (CUDA 13.0) — TESTED, works in a plain venv (no container)
 
 **This was actually run** on 1x NVIDIA H100 80GB HBM3 (Hopper, cc 9.0), driver 580.173.02,
-CUDA 13.0, Ubuntu, Python 3.12.3, August 2026 — a single free GPU (physical GPU 6) on a
+CUDA 13.0, Ubuntu, Python 3.12.3 — a single free GPU (physical GPU 6) on a
 shared 8-GPU node. **The headline result is the mirror image of the MI355X story: the RL
 tiers are NOT blocked here.** On AMD, PPO/GRPO needed the `rocm/verl` container purely
 because `pip install vllm` ships a CUDA-only wheel; on NVIDIA that wheel *is* the native
@@ -80,7 +88,7 @@ surgery. Per-tier verdict:
 | Tier | Launcher route | Status on H100 (plain venv) | Note |
 |---|---|---|---|
 | **SFT** | `deepspeed --module openrlhf.cli.train_sft` | **WORKS** — loss 2.04 → 3.6e-6, 148 steps, HF checkpoint written, 11.5 GB resident on GPU 6 | needs the flash-attn fix below (or `sdpa`) |
-| **DPO** | `deepspeed --module openrlhf.cli.train_dpo` | **expected to work** (same DeepSpeed path as SFT; not separately re-run in this wave) | preference-triple data, same install |
+| **DPO** | `deepspeed --module openrlhf.cli.train_dpo` | **expected to work** (same DeepSpeed path as SFT; not separately re-run on H100) | preference-triple data, same install |
 | **PPO / GRPO** (+ RLOO / REINFORCE++ / Dr. GRPO) | `train_ppo_ray` (Ray + vLLM) | **UNBLOCKED — vLLM 0.27.1 installs natively** (see the RL note below) | the AMD blocker (CUDA-only vLLM wheel) does not exist here |
 
 ##### The exact install that worked
@@ -102,7 +110,7 @@ pip check   # -> "No broken requirements found."
 ```
 
 **torch is NOT clobbered.** vLLM 0.27.1 pins `torch==2.13.0`, which is exactly the version
-`pip install torch` resolved on this box, so the `[vllm]` install is a no-op for torch and
+`pip install torch` resolves on a CUDA 13 host, so the `[vllm]` install is a no-op for torch and
 `pip check` stays clean. (On AMD this same pin is what *would* overwrite a ROCm torch with a
 CUDA one — the pin is identical; only the starting torch differs.)
 
@@ -132,12 +140,12 @@ fixes, either works:
     pip install flash-attn==2.8.3 --no-build-isolation --no-cache-dir
   ```
   Needs `nvcc` on `PATH` (system CUDA 13.0 at `/usr/local/cuda`, matches torch's cu130). The
-  `nvcc` compile took **~15 min** here on the H100 (MAX_JOBS=32); a sibling agent measured
-  ~24 min for the same version. After it lands, `import flash_attn_2_cuda` succeeds, a real
+  `nvcc` compile takes **~15–25 min** on an H100 (MAX_JOBS=32).
+  After it lands, `import flash_attn_2_cuda` succeeds, a real
   `flash_attn_func` kernel runs on-GPU, both OpenRLHF trainers import with no shim, and SFT
   was re-run with the launcher's true defaults (`--ds.packing_samples` +
   `--ds.attn_implementation flash_attention_2`) — loss 2.39 → 3.2e-4, exit 0, 12.2 GB on
-  GPU 6. (On AMD, `--ds.packing_samples` had to be dropped because it silently forces
+  GPU 6. (On AMD, `--ds.packing_samples` must be dropped because it silently forces
   `flash_attention_2`, which was unbuildable there in-budget; on H100 that default is fine.)
 - **Or, to get SFT/DPO going immediately without the build, shim the eager import.**
   `flash_attn.bert_padding` and `flash_attn.utils.distributed` are pure torch/einops (no
@@ -171,7 +179,7 @@ learning result** — the model memorizes 10 distinct rows seen repeatedly). The
 also trains and checkpoints, at fewer steps.
 
 ```bash
-export HF_HOME=/mnt/gsma/gsma/gsma/models HF_HUB_OFFLINE=1
+export HF_HUB_OFFLINE=1
 export PATH=<venv>/bin:/usr/local/cuda/bin:$PATH        # ninja (from the venv) + nvcc on PATH
 export CUDA_HOME=/usr/local/cuda                        # DeepSpeed JITs FusedAdam at first run
 unset CUDA_VISIBLE_DEVICES
@@ -187,32 +195,32 @@ deepspeed --include localhost:6 --master_port 29646 --module openrlhf.cli.train_
 ```
 
 `LiquidAI/LFM2.5-350M` (arch `Lfm2ForCausalLM`, a hybrid conv+attention model) was used
-because it is fully cached on this box and the default `Qwen/Qwen2.5-7B-Instruct` is not.
+because it was fully cached on the test node and the default `Qwen/Qwen2.5-7B-Instruct` was not.
 Its chat template renders correctly (`<|im_start|>...`); OpenRLHF's `sft_dataset.py` calls
 `apply_chat_template(tokenize=False)` (string render, then a separate tokenize), so it does
 **not** hit the transformers-5.x `BatchEncoding` mask trap.
 
-##### SFT evidence (real log lines, physical GPU 6, exit 0)
+##### SFT — what a healthy run looks like (physical GPU 6, exit 0)
 
 ```
 Train step of epoch 0:   0%|          | 0/17 [00:02<?, gpt_loss=2.04, lr=0, grad_norm=0]
 Train step of epoch 0:   5%|▌         | 1/17 [00:04<.., gpt_loss=0.793, lr=1.25e-6, grad_norm=38.9]
 ...
 Train step of epoch 11: 100%|██████████| 17/17 [00:02<00:00, gpt_loss=3.61e-6, lr=5.01e-7, grad_norm=0.000894]
-[launch.py:367:main] Process 1561087 exits successfully.        <- SFT EXIT_CODE=0
+[launch.py:367:main] Process <pid> exits successfully.        <- SFT exit code 0
 ```
 
 `gpt_loss` falls 2.04 → 3.6e-6 and `grad_norm` 38.9 → 0.0009 over 148 optimizer steps
-(12 epochs). `--ckpt.save_steps -1` still wrote an HF checkpoint at fit-end:
+(12 epochs). `--ckpt.save_steps -1` still writes an HF checkpoint at fit-end:
 `sft-ckpt/model.safetensors` = **843 MB** + `config.json`, `tokenizer.json`,
-`chat_template.jinja` (deleted after evidence capture).
+`chat_template.jinja`.
 
-`nvidia-smi` sampled *in-band* against physical GPU 6's UUID (the training PID, 1561087,
+`nvidia-smi` sampled *in-band* against physical GPU 6's UUID (the training PID
 holds VRAM on the assigned card — not on GPUs 0-3):
 
 ```
-04:03:45 GPU6 compute-apps: PID 1561087, 518 MiB      <- model loading
-04:03:46 GPU6 compute-apps: PID 1561087, 1174 MiB     <- optimizer + activations
+GPU6 compute-apps: PID <pid>, 518 MiB      <- model loading
+GPU6 compute-apps: PID <pid>, 1174 MiB     <- optimizer + activations
 GPU6 memory.used peak during run: 11493 MiB (~11.5 GB)
 ```
 
@@ -234,8 +242,8 @@ wants `vllm.num_engines × vllm.tensor_parallel_size == actor GPUs`, so on one G
 ##### GRPO actually ran end-to-end on 1x H100 (physical GPU 6) — plain venv, no container
 
 This is the concrete proof of the upgrade. Ray head pinned to GPU 6 (`CUDA_VISIBLE_DEVICES=6`
-so Ray reports `1.0 GPU`; the sibling-agent note that `RAY_EXPERIMENTAL_NOSET_*` is **not**
-needed on CUDA held — only `CUDA_VISIBLE_DEVICES=6` was set, no HIP/NOSET vars), then
+so Ray reports `1.0 GPU`; `RAY_EXPERIMENTAL_NOSET_*` is **not**
+needed on CUDA — only `CUDA_VISIBLE_DEVICES=6` was set, no HIP/NOSET vars), then
 `train_ppo_ray` run directly against the cluster:
 
 ```bash
@@ -267,7 +275,7 @@ one 80 GB card, and tiny rollout/batch (`--max_samples 8`, `--rollout.batch_size
 else 0.0` stub matching the documented signature. vLLM natively supports `Lfm2ForCausalLM`
 (confirmed in its arch registry), so the cached LFM2.5-350M drives the rollout side too.
 
-**Real evidence (exit 0):**
+**Expected output (exit 0):**
 
 ```
 (EngineCore) [core.py:355] init engine (profile, create kv cache, warmup model) took 81.75 s
@@ -289,31 +297,31 @@ else 0.0` stub matching the documented signature. vLLM natively supports `Lfm2Fo
 - **GPU-6 residency:** peak **33972 MiB (~34 GB)** on physical GPU 6 during rollout
   (vLLM KV cache + actor + ref colocated), sampled in-band against the GPU UUID. GPUs 0-3
   (the co-tenant production job) stayed at their own ~67 GB / 100 % util, untouched.
-- **HF checkpoint:** `grpo-ckpt/model.safetensors` = 843 MB (deleted after evidence).
+- **HF checkpoint:** `grpo-ckpt/model.safetensors` = 843 MB.
 - **`--ds.packing_samples` was dropped** for this GRPO smoke to keep it on the `sdpa`
   code path during the window when flash-attn was still compiling; with the source-built
   flash-attn present, the launcher's default `flash_attention_2` + packing is available for
   RL too (verified working for SFT).
 
-**Verdict — RL tiers on H100:** GRPO ran to completion in a plain venv with native vLLM
+**RL tiers on H100:** GRPO ran to completion in a plain venv with native vLLM
 generation, actor→engine NCCL weight sync, and colocate_all sleep/wake — **no `rocm/verl`
 container, no `--no-deps` install surgery, no ROCm-vLLM source build.** The single dependency
 that forced the container on MI355X (a CUDA-only vLLM wheel) is the *native* wheel here. PPO
 is the same `train_ppo_ray` entrypoint plus a critic (`--critic.num_gpus_per_node 1`,
-`--critic.adam.lr`); it was not separately re-run in this time-box but has no
+`--critic.adam.lr`); it was not separately re-run but has no
 NVIDIA-specific blocker. RLOO / REINFORCE++ / Dr. GRPO are the same path with a different
 `--algo.advantage.estimator`.
 
-##### Multi-GPU (deferred)
+##### Multi-GPU (not run here)
 
-This wave was single-GPU only (one free GPU on a shared node). A 2- or 8-GPU pass needs the
-production job to free GPUs 0-3 and would set `--include localhost:0,1,...` (SFT/DPO) or
+The H100 validation was single-GPU only (one free GPU on a shared node). A 2- or 8-GPU pass
+needs the other GPUs free and would set `--include localhost:0,1,...` (SFT/DPO) or
 `--actor.num_gpus_per_node N` with `--vllm.num_engines × --vllm.tensor_parallel_size`
 matching the actor GPU count (PPO/GRPO). Not launched here.
 
 ### AMD / ROCm
 
-**No first-party AMD/ROCm support was found upstream** (checked August 2026). The
+**No first-party AMD/ROCm support was found upstream.** The
 [OpenRLHF README](https://github.com/OpenRLHF/OpenRLHF) documents only the NVIDIA path:
 its quick start is `docker run --runtime=nvidia ... nvcr.io/nvidia/pytorch:26.03-py3`, the
 repo's `dockerfile/` directory contains a single NVIDIA-based Dockerfile, weight sync uses
@@ -328,27 +336,27 @@ self-contained).
 #### AMD MI355X (ROCm 7.2) — attempted, partial success
 
 **This was actually run** on 1x AMD Instinct MI355X (gfx950, 288GB), ROCm 7.2.4,
-Ubuntu, Python 3.12.3, August 2026. Verdict differs per tier, so read the table:
+Ubuntu, Python 3.12.3. The outcome differs per tier, so read the table:
 
 | Tier | Launcher route | Status on MI355X | Root cause |
 |---|---|---|---|
 | **SFT** | `deepspeed --module openrlhf.cli.train_sft` | **WORKS** (trained, loss decreasing, checkpoint written) | needs only torch + DeepSpeed, both ROCm-capable |
 | **DPO** | `deepspeed --module openrlhf.cli.train_dpo` | **WORKS** (trained, `acc=1`, reward margin opening) | same |
-| **PPO** | `train_ppo_ray` (Ray) | **BLOCKED in this venv** / **WORKS in the `rocm/verl` container** | the venv has no ROCm `vllm`; the container ships one — see [RL tiers unblocked](#rl-tiers-unblocked-on-mi355x-via-the-rocmverl-container--tested-2026-08-19) |
+| **PPO** | `train_ppo_ray` (Ray) | **BLOCKED in this venv** / **WORKS in the `rocm/verl` container** | the venv has no ROCm `vllm`; the container ships one — see [RL tiers unblocked](#rl-tiers-unblocked-on-mi355x-via-the-rocmverl-container) |
 | **GRPO** (and RLOO / REINFORCE++ / Dr. GRPO) | `train_ppo_ray` (Ray) | **BLOCKED in this venv** / **WORKS in the `rocm/verl` container** | same — all RL modes share `train_ppo_ray` |
 | `--ds.packing_samples` | any tier | **BLOCKED in this venv** / **WORKS in the container** | forces `flash_attention_2`, which the container already ships (ROCm flash-attn 2.8.4) |
 | `--ds.ring_attn_size > 1` | any tier | **BLOCKED** | needs real `ring_flash_attn` kernels; not retested |
 
-So the honest summary is: **the pip/venv route on this box covers SFT and DPO only. The
+So the honest summary is: **the pip/venv route on AMD covers SFT and DPO only. The
 RL-with-rollouts tiers — the entire reason to pick this folder — do run on AMD, but only
 inside a container that already carries a ROCm build of vLLM.** GRPO and PPO were both
 trained end-to-end on 4x MI355X this way; see
-[RL tiers unblocked](#rl-tiers-unblocked-on-mi355x-via-the-rocmverl-container--tested-2026-08-19).
+[RL tiers unblocked](#rl-tiers-unblocked-on-mi355x-via-the-rocmverl-container).
 
-> **Scaled to 8 GPUs since.** SFT and DPO were later re-run on all 8x MI355X and both pass
+> **Scaled to 8 GPUs.** SFT and DPO were also run on all 8x MI355X and both pass
 > (ZeRO-2, world size 8) — one batch-geometry change is required. PPO/GRPO remain blocked
 > for the same vLLM reason. See
-> [8-GPU run (8x MI355X, ROCm 7.2.4)](#8-gpu-run-8x-mi355x-rocm-724--tested-august-2026).
+> [8-GPU run (8x MI355X, ROCm 7.2.4)](#8-gpu-run-8x-mi355x-rocm-724).
 
 ##### Blocker 1 — `flash-attn` is an unconditional dependency
 
@@ -379,11 +387,11 @@ That first error is only the documented build-isolation one. Two further facts m
 
 ##### Blocker 2 — the vLLM **PyPI wheel** is CUDA-only, and would delete your ROCm torch
 
-> **Scope correction (2026-08-19).** This blocker is about *PyPI wheels only*, not about
-> AMD hardware. A ROCm build of vLLM exists and runs fine on this box — it just does not
+> **Scope correction.** This blocker is about *PyPI wheels only*, not about
+> AMD hardware. A ROCm build of vLLM exists and runs fine on MI355X — it just does not
 > come from `pip install vllm`. Ship OpenRLHF into a container that already has one and
 > the RL tiers train; see
-> [RL tiers unblocked](#rl-tiers-unblocked-on-mi355x-via-the-rocmverl-container--tested-2026-08-19).
+> [RL tiers unblocked](#rl-tiers-unblocked-on-mi355x-via-the-rocmverl-container).
 > The claim below stands as written *for the pip route*.
 
 `vllm==0.27.1` (the version OpenRLHF's `[vllm]` extra pins) declares:
@@ -395,7 +403,7 @@ nvidia-cudnn-frontend>=1.19.1
 nvidia-cutlass-dsl[cu13]==4.6.0
 ```
 
-`pip install 'vllm==0.27.1'` on this box resolves to `Collecting torch==2.13.0` plus
+`pip install 'vllm==0.27.1'` on a ROCm host resolves to `Collecting torch==2.13.0` plus
 `cuda-python`, `nccl4py`, `nvidia-cuda-nvcc`, `nvidia-cuda-runtime` — i.e. it **silently
 replaces the working ROCm torch with a CUDA one**, leaving an environment that imports but
 cannot see the GPUs. ROCm vLLM ships only via source builds (`PYTORCH_ROCM_ARCH=gfx950`)
@@ -429,9 +437,9 @@ route this blocker disappears** — the image ships ROCm flash-attn 2.8.4, so bo
 can stay on (the GRPO/PPO runs below ran with `--ds.packing_samples
 --ds.attn_implementation flash_attention_2` untouched).
 
-#### RL tiers unblocked on MI355X via the `rocm/verl` container — TESTED 2026-08-19
+#### RL tiers unblocked on MI355X via the `rocm/verl` container
 
-**Verdict: GRPO and PPO both train on AMD.** Not in the venv — in a container that already
+**GRPO and PPO both train on AMD.** Not in the venv — in a container that already
 carries a ROCm build of vLLM. Ray placed the actor, reference, critic and four vLLM rollout
 engines across **4x MI355X (physical GPUs 0-3)**, generation ran on the GPUs, RCCL synced
 the updated actor weights into the engines every step, and the optimizer took finite steps
@@ -455,8 +463,8 @@ docker run -d --name orlhf_mi355x \
   --shm-size=64g --network=host \
   -e HF_HOME=/hf_cache \
   -v "$PWD":/workspace/train_llm_openrlhf \
-  -v /mnt/data_1.5t/hf_cache:/hf_cache \
-  -v /mnt/data_1.5t/outputs/train_llm_openrlhf:/outputs \
+  -v "$HF_HOME":/hf_cache \
+  -v "$OUTPUT_DIR/train_llm_openrlhf":/outputs \
   -w /workspace/train_llm_openrlhf \
   rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2 sleep infinity
 
@@ -515,14 +523,14 @@ This is exactly what `train_llm_openrlhf.py --mode grpo ... --dry_run` prints, m
 has 10 rows), `--max_new_tokens 128`, `--max_len 3072` (prompts reach ~2.2k tokens),
 `--vllm_gpu_memory_utilization 0.35`.
 
-##### Evidence
+##### What a healthy run looks like
 
 ```
-INFO 08-19 20:42:52 [gpu_worker.py:462] Available KV cache memory: 99.0 GiB [repeated 3x across cluster]
-INFO 08-19 20:42:52 [kv_cache_utils.py:1710] GPU KV cache size: 926,896 tokens [repeated 3x across cluster]
+INFO [gpu_worker.py:462] Available KV cache memory: 99.0 GiB [repeated 3x across cluster]
+INFO [kv_cache_utils.py:1710] GPU KV cache size: 926,896 tokens [repeated 3x across cluster]
         <- 4 vLLM engines, one per MI355X, KV cache allocated on device
 
-(RolloutRayActor pid=48695) update weight: model.layers.25.self_attn.q_proj.weight, dtype:
+(RolloutRayActor pid=<pid>) update weight: model.layers.25.self_attn.q_proj.weight, dtype:
   torch.bfloat16, shape: [2048, 1024] [repeated 1100x across cluster]
         <- actor -> engine weight sync over RCCL (--vllm.sync_backend nccl), every step
 
@@ -536,12 +544,12 @@ INFO 08-19 20:42:52 [kv_cache_utils.py:1710] GPU KV cache size: 926,896 tokens [
         <- 3 GRPO steps, all metrics finite, group_reward_std > 0 so the groups differ
 ```
 
-`rocm-smi` sampled mid-run (physical GPUs 0-3 only; 4-7 belonged to another agent):
+`rocm-smi` sampled mid-run (physical GPUs 0-3 only; 4-7 were in use elsewhere):
 
 ```
-20:43:46 use=[14, 3, 9,12]  vram%=[31,31,31,31]   <- weights loading into the 4 engines
-20:43:56 use=[ 3,11,62,71]  vram%=[38,38,38,38]   <- rollout generation
-20:44:06 use=[48,74,19,53]  vram%=[ 6, 6, 8, 8]   <- engines asleep (--vllm.enable_sleep), actor training
+use=[14, 3, 9,12]  vram%=[31,31,31,31]   <- weights loading into the 4 engines
+use=[ 3,11,62,71]  vram%=[38,38,38,38]   <- rollout generation
+use=[48,74,19,53]  vram%=[ 6, 6, 8, 8]   <- engines asleep (--vllm.enable_sleep), actor training
 ```
 
 Exit code 0, and `--ckpt.save_hf` wrote a real checkpoint:
@@ -586,7 +594,7 @@ entry point with a different `--algo.advantage.estimator`. Only PPO and GRPO wer
    investigated further — it is a Ray job-server issue, not an OpenRLHF or ROCm one.
 3. **Never point `--working_dir` at this folder.** The launcher defaults to
    `{"working_dir": "."}`, and Ray then tries to upload the whole tree — including
-   `.env_train_llm_openrlhf/`, i.e. `libmagma.so` (1.29 GB), `libMIOpen.so` (1.02 GB),
+   `.env_openrlhf/`, i.e. `libmagma.so` (1.29 GB), `libMIOpen.so` (1.02 GB),
    `librocrand.so` (766 MB)... Point it at a small dir holding just `data/`
    (`--working_dir /outputs/rt`), or add an `excludes` list.
 4. **`--reward_func` must live on a path every Ray worker can open.** It is loaded inside
@@ -604,8 +612,6 @@ entry point with a different `--algo.advantage.estimator`. Only PPO and GRPO wer
 cd training/llm/openrlhf
 python3 -m venv .env_openrlhf          # git-ignored via .env_*/
 source .env_openrlhf/bin/activate
-# NOTE: campaign venvs were removed during the 2026-08 repo reorg — rebuild from
-# requirements_openrlhf.txt (or the pinned steps below).
 export HIP_VISIBLE_DEVICES=7 CUDA_VISIBLE_DEVICES=7   # never leave these empty on ROCm
 
 # 1. ROCm torch FIRST, so nothing else drags in a CUDA build.
@@ -671,7 +677,7 @@ Train step of epoch 1: 100%|██████████| 10/10 [00:01<00:00, 
 
 Ray itself is fine on this hardware — in this venv it is only the missing ROCm vLLM that
 blocks the RL tiers (supply one via a container and they run, see
-[RL tiers unblocked](#rl-tiers-unblocked-on-mi355x-via-the-rocmverl-container--tested-2026-08-19)):
+[RL tiers unblocked](#rl-tiers-unblocked-on-mi355x-via-the-rocmverl-container)):
 
 ```python
 >>> ray.cluster_resources()
@@ -700,13 +706,13 @@ and needs no `--no-deps` surgery. For **SFT/DPO on AMD**, prefer
 `../deepspeed/` or `../fsdp/`: they reach the same result without
 `--no-deps`, without a flash-attn shim, and without upstream pins that assume CUDA.
 
-### 8-GPU run (8x MI355X, ROCm 7.2.4) — tested August 2026
+### 8-GPU run (8x MI355X, ROCm 7.2.4)
 
-The section above was a **1-GPU** result. Both working tiers were then re-run on **all 8**
-MI355X cards in a single locked session (2026-08-19, 18:55:11 → 18:57:48 UTC), same
-`Qwen/Qwen3-0.6B`, same venv, same `--no-deps` install. Verdicts:
+The section above was a **1-GPU** result. Both working tiers were also run on **all 8**
+MI355X cards in a single locked session (~2.5 minutes wall clock), same
+`Qwen/Qwen3-0.6B`, same venv, same `--no-deps` install. Results:
 
-| Tier | 1-GPU verdict | 8-GPU verdict | Note |
+| Tier | 1-GPU result | 8-GPU result | Note |
 |---|---|---|---|
 | **SFT** | WORKS | **WORKS WITH CHANGES** | only change is batch geometry (see below); exit 0 |
 | **DPO** | WORKS | **WORKS WITH CHANGES** | same batch-geometry change; exit 0, `acc=1` |
@@ -717,7 +723,7 @@ MI355X cards in a single locked session (2026-08-19, 18:55:11 → 18:57:48 UTC),
 `pip show vllm` → `WARNING: Package(s) not found: vllm`, `pip show flash-attn` → likewise.
 The RL blocker is a dependency problem, not a scale problem, so 8 GPUs does not move it —
 and supplying the dependency from a ROCm image *does* move it, at 4 GPUs. See
-[RL tiers unblocked](#rl-tiers-unblocked-on-mi355x-via-the-rocmverl-container--tested-2026-08-19).
+[RL tiers unblocked](#rl-tiers-unblocked-on-mi355x-via-the-rocmverl-container).
 
 ##### The 8-GPU gotcha: batch geometry tightens with world size
 
@@ -749,8 +755,8 @@ Geometry actually used at 8 ranks: **global 64 = micro 2 × grad-accum 4 × worl
 
 Run with `HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7` and `CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7`
 exported *after* sourcing the venv, and assert `torch.cuda.device_count() == 8` first.
-(This folder's `.env_train_llm_openrlhf/bin/activate` was checked and carries **no** stale
-`VISIBLE_DEVICES` pin — but grep the whole file before trusting that on any other folder.)
+(Check `.env_openrlhf/bin/activate` for a stale `VISIBLE_DEVICES` pin — grep the whole file
+before trusting it.)
 
 ```bash
 deepspeed --num_gpus 8 --master_port 29730 --module openrlhf.cli.train_sft \
@@ -810,7 +816,7 @@ identical. Parallelism is therefore **pure data parallel × 8 with ZeRO-2 optimi
 sharding** — no tensor, pipeline, or sequence parallelism (`ring_attn_size=1`,
 `ds_tensor_parallel_size=1`; both remain unavailable, see the ring-attention blocker above).
 
-##### Real log lines
+##### What a healthy run looks like
 
 SFT (progress bar counts **micro-steps per rank**: 640 samples ÷ 8 ranks ÷ micro 2 = 40):
 
@@ -818,7 +824,7 @@ SFT (progress bar counts **micro-steps per rank**: 640 samples ÷ 8 ranks ÷ mic
 Train step of epoch 0:   0%|    | 0/40 [00:07<?, ?it/s, gpt_loss=1.37, lr=0, grad_norm=0]
 Train step of epoch 0:  50%|██▌ | 20/40 [00:14<00:04, 4.74it/s, gpt_loss=1.5, lr=4.53e-6, grad_norm=12.6]
 Train step of epoch 1: 100%|████| 40/40 [00:09<00:00, 4.13it/s, gpt_loss=0.658, lr=5e-7, grad_norm=7.3]
-=== SFT@8 EXIT_CODE=0 ===
+=== SFT@8 exit code 0 ===
 ```
 
 DPO — accuracy climbs off chance and the reward margin opens from ~0 to ~16:
@@ -827,7 +833,7 @@ DPO — accuracy climbs off chance and the reward margin opens from ~0 to ~16:
 Train step of epoch 0:   0%|    | 0/40 [00:07<?, ?it/s, loss=0.692, acc=0.125, chosen_reward=0.000241, reject_reward=-0.00159]
 Train step of epoch 0:  25%|█▌  | 10/40 [00:09<00:08, 3.63it/s, loss=0.373, acc=1, chosen_reward=0.543, reject_reward=-0.287]
 Train step of epoch 1: 100%|████| 40/40 [00:08<00:00, 4.72it/s, loss=1.93e-6, acc=1, chosen_reward=4.88, reject_reward=-11.4]
-=== DPO@8 EXIT_CODE=0 ===
+=== DPO@8 exit code 0 ===
 ```
 
 Both tiers exited 0 with no teardown hang. Step time at 8 ranks was **~4.1-4.7 it/s** of
@@ -835,13 +841,13 @@ micro-steps; wall clock was 80 s for SFT and 76 s for DPO including model load a
 checkpoint write. The only teardown noise is a benign
 `destroy_process_group() was not called before program exit` warning from each rank.
 
-##### 8-GPU evidence (rocm-smi sampled *in-band*, cross-checked against our own PIDs)
+##### 8-GPU evidence (rocm-smi sampled *in-band*, cross-checked against the run's own PIDs)
 
-Sampled from inside the training script while it ran, not afterwards from a separate shell
-— on a shared box an after-the-fact sample can capture a different agent's job. Mid-SFT:
+Sample from inside the training script while it runs, not afterwards from a separate shell
+— on a shared box an after-the-fact sample can capture a different job. Mid-SFT:
 
 ```
-########## TIER=sft  @2026-08-19T18:55:33+00:00 ##########
+########## TIER=sft ##########
 device,GPU use (%),VRAM Total Memory (B),VRAM Total Used Memory (B)
 card0,28,309220868096,2726113280      card4,27,309220868096,3028103168
 card1,29,309220868096,3032297472      card5,27,309220868096,2975678464
@@ -850,10 +856,10 @@ card3,27,309220868096,2994556928      card7,26,309220868096,2965192704
 ```
 
 All 8 cards busy and holding VRAM simultaneously. The PID cross-check in the same sample
-shows the VRAM holders are our own ranks — `rocm-smi --showpids` lists 8 `python3` PIDs
-(386699-386706), and `pgrep -af` in the same sample resolves those to
+shows the VRAM holders are the run's own ranks — `rocm-smi --showpids` lists 8 `python3`
+PIDs, and `pgrep -af` in the same sample resolves those to
 `openrlhf.cli.train_sft --local_rank=0` … `--local_rank=7` under one
-`deepspeed.launcher.launch` (386382). DPO repeats this with PIDs 400882-400889.
+`deepspeed.launcher.launch` parent. DPO repeats this pattern.
 
 ##### Per-GPU VRAM, 8 ranks vs 1 rank
 
@@ -867,7 +873,7 @@ shows the VRAM holders are our own ranks — `rocm-smi --showpids` lists 8 `pyth
 The clean, measurable sharding delta is the optimizer state: the **full 7.15 GB** fp32 Adam
 state sits on one card in the 1-GPU run, versus **894 MB per card** at 8 ranks — an 8x
 reduction, confirmed by the shard sizes above. A direct 1-GPU VRAM byte comparison is *not*
-offered here: the earlier session's `rocm-smi` capture recorded only `VRAM%` (which read 0
+offered here: the 1-GPU `rocm-smi` capture recorded only `VRAM%` (which read 0
 for a model this small) and no byte counts, so there is no honest baseline number to
 subtract. DPO sits ~2.5 GB/GPU above SFT because it keeps a frozen reference model resident
 alongside the policy.
@@ -881,7 +887,7 @@ alongside the policy.
    batch of 64 that is not even one optimizer step, and 8 ranks cannot each be fed. The 10
    rows were replicated ×64 into `sft_640.jsonl` (640 rows) and the earlier 10-row
    preference file ×72 into `dpo_648.jsonl`, both written **outside the repo** under
-   `/mnt/data_1.5t/outputs/train_llm_openrlhf/gpu8/`. **This is a pipeline proof, not a
+   `$OUTPUT_DIR/train_llm_openrlhf/gpu8/`. **This is a pipeline proof, not a
    learning result** — the loss curve is fitting 10 distinct rows seen 64 times over, and
    DPO's `acc=1` after ~10 steps means the model memorized a 10-row preference set, exactly
    as it did at 1 GPU.
@@ -904,14 +910,13 @@ On a shared box, serialize against other GPU users and capture evidence in-band:
 
 ```bash
 nohup flock -w 25200 /tmp/mi355x_gpu8.lock bash /tmp/run8_openrlhf.sh \
-    > /mnt/data_1.5t/outputs/train_llm_openrlhf/gpu8/run.log 2>&1 &
+    > $OUTPUT_DIR/train_llm_openrlhf/gpu8/run.log 2>&1 &
 ```
 
-Full logs and the distilled evidence file are under
-`/mnt/data_1.5t/outputs/train_llm_openrlhf/gpu8/` (`run.log`, `rocm_smi_inband.txt`,
-`evidence_8gpu.txt`). The HF weights and ZeRO checkpoints produced by these runs were
-deleted after the shard listing was captured — they are ~19 GB and carry no value beyond
-the proof.
+Logs and the distilled evidence file land under
+`$OUTPUT_DIR/train_llm_openrlhf/gpu8/` (`run.log`, `rocm_smi_inband.txt`,
+`evidence_8gpu.txt`). The HF weights and ZeRO checkpoints these runs produce are ~19 GB and
+carry no value beyond the proof — delete them once the shard listing is captured.
 
 ## Environment & secrets
 
@@ -1156,12 +1161,12 @@ SFT/DPO you get ordinary DeepSpeed loss lines instead.
 | Hardware | Status | Evidence |
 |---|---|---|
 | NVIDIA (A100/H100 class) | Primary and only documented target | Upstream README quick start uses `--runtime=nvidia` with `nvcr.io/nvidia/pytorch:26.03-py3`; NCCL weight sync; CUDA flash-attn — <https://github.com/OpenRLHF/OpenRLHF> |
-| AMD / ROCm | **Not supported upstream** | No ROCm docs, Dockerfile, or install path anywhere in the repository (checked August 2026); `dockerfile/` contains a single NVIDIA image definition |
+| AMD / ROCm | **Not supported upstream** | No ROCm docs, Dockerfile, or install path anywhere in the repository; `dockerfile/` contains a single NVIDIA image definition |
 | AMD MI355X (gfx950, ROCm 7.2) — SFT / DPO | **tested here — works**, off the supported path | 1x MI355X, torch 2.11.0+rocm7.2 + deepspeed 0.19.5; needs `openrlhf --no-deps`, a pure-python `flash_attn` shim, `--ds.attn_implementation sdpa`, and no `--ds.packing_samples`. See "AMD MI355X (ROCm 7.2) — attempted" |
-| AMD MI355X (gfx950, ROCm 7.2) — PPO / GRPO | **tested here — blocked in a plain venv; works in the `rocm/verl` container** | Plain venv: `openrlhf.cli.train_ppo_ray` needs `vllm`; `vllm==0.27.1` pins `torch==2.13.0` (CUDA) and would overwrite the ROCm torch. Inside `rocm/verl:...vllm0.20.2`, PPO and GRPO trained on 4x MI355X (2026-08-19) — see "RL tiers unblocked on MI355X via the `rocm/verl` container" |
+| AMD MI355X (gfx950, ROCm 7.2) — PPO / GRPO | **tested here — blocked in a plain venv; works in the `rocm/verl` container** | Plain venv: `openrlhf.cli.train_ppo_ray` needs `vllm`; `vllm==0.27.1` pins `torch==2.13.0` (CUDA) and would overwrite the ROCm torch. Inside `rocm/verl:...vllm0.20.2`, PPO and GRPO trained on 4x MI355X — see "RL tiers unblocked on MI355X via the `rocm/verl` container" |
 
 The upstream rows record OpenRLHF's documented support. The MI355X rows are **local
-verification** from an actual run (August 2026) — the install route, error text and
+verification** from an actual run — the install route, error text and
 per-tier evidence are in the "AMD MI355X (ROCm 7.2) — attempted" section under Install.
 For AMD **RL**, use `../verl/`; for AMD **SFT/DPO**, `../deepspeed/` or
 `../fsdp/` are far less work than making this folder go.

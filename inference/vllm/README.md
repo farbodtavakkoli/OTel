@@ -4,25 +4,28 @@ One vLLM install serves all three workloads. The shared setup lives here; each l
 documents only its workload: [`llm/`](llm/) · [`embedding/`](embedding/) ·
 [`reranker/`](reranker/).
 
-| Leaf | Model | Verdict on MI355X (gfx950, ROCm 7.2.4) |
+| Leaf | Model | Status on MI355X (gfx950, ROCm 7.2.4) |
 |---|---|---|
 | [`llm/`](llm/) | `Qwen/Qwen3.8-27B-FP8` | **works** — TP=1 and TP=2 (+36%), FP8 native; **requires `VLLM_ROCM_USE_AITER=0`** |
 | [`embedding/`](embedding/) | `google/embeddinggemma-300m` | **works, unmodified** (`--runner pooling`); TP=2 architecturally impossible for this model — replicate instead |
 | [`reranker/`](reranker/) | `Qwen/Qwen3-Reranker-0.6B` | **works, unmodified** with the `--hf_overrides` JSON + `qwen3_reranker.jinja` |
 
-## Install (AMD / ROCm — the route that worked)
+## Install (AMD / ROCm — the route that works)
 
-The verified route is the **ROCm container** (a pip vLLM-ROCm venv was not needed). The
-campaign used the `rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2`
-image already present on the box (vLLM `0.20.2rc1`); `vllm/vllm-openai-rocm:nightly`
+The verified route is the **ROCm container** (a pip vLLM-ROCm venv is not needed). The
+validated runs used `rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2`
+(vLLM `0.20.2rc1`); `vllm/vllm-openai-rocm:nightly`
 (~11.5 GB compressed) is the upstream image if starting fresh. Canonical AMD flags:
 
 ```bash
+# Set these to suit your machine
+export HF_HOME=/path/to/hf_cache        # Hugging Face model cache
+
 docker run -d --name vllm_serve \
   --device /dev/kfd --device /dev/dri --group-add video --ipc=host \
   --cap-add=SYS_PTRACE --security-opt seccomp=unconfined --shm-size 64G \
   -p 8000:8000 -p 8001:8001 -p 8002:8002 \
-  -v /mnt/data_1.5t/hf_cache:/root/.cache/huggingface \
+  -v "$HF_HOME":/root/.cache/huggingface \
   <IMAGE> sleep infinity
 ```
 
@@ -51,24 +54,25 @@ python3 -m venv .env_vllm && source .env_vllm/bin/activate
 pip install -r requirements.txt
 ```
 
-Campaign venvs were removed in the 2026-08 reorg; rebuild from this requirements file.
+One shared venv at the stack root (`inference/vllm/.env_vllm`) serves the `llm/`,
+`embedding/` and `reranker/` leaves — build it once here, activate it from any leaf.
 
 ## Hardware support
 
 - **AMD MI355X (gfx950, ROCm 7.2.4): verified** — all three workloads, evidence in the leaves.
-- **NVIDIA H100 (80GB HBM3, CUDA 13.0): verified 2026-08-22** — all three workloads, via
+- **NVIDIA H100 (80GB HBM3, CUDA 13.0): verified** — all three workloads, via
   the **pip** route (native CUDA wheel, no container). Evidence in the leaves and below.
 - **Other hardware (upstream claims — not verified here):** Intel XPU, Google TPU,
   AWS Neuron, and CPU via vLLM's hardware-plugin backends, per upstream installation docs.
 
-## H100 (NVIDIA) — verified 2026-08-22
+## H100 (NVIDIA)
 
 All three workloads serve on a single H100 80GB. On NVIDIA the **pip route works natively**
-(unlike ROCm, which is container-only here), so no `vllm/vllm-openai` container was needed.
+(unlike ROCm, which is container-only here), so no `vllm/vllm-openai` container is needed.
 
-### Install (pip route that worked — one venv for engine + clients)
+### Install (pip route — one venv for engine + clients)
 
-`pip install vllm` gives a native CUDA-13 wheel. In a tmpfs venv, with the proxy unset
+`pip install vllm` gives a native CUDA-13 wheel, with the proxy unset
 (pypi.nvidia.com / download.pytorch.org are proxy-blocked; pypi.org is allowlisted):
 
 ```bash
@@ -89,16 +93,16 @@ python -c "import torch,vllm; print(torch.__version__, torch.version.cuda, vllm.
 | transformers | `5.15.1` | bundled; **knows `qwen3_5`** (see llm finding) |
 | driver / CUDA | 580.173.02 / 13.0 | H100 80GB HBM3, cc(9,0), native FP8 |
 
-Ports on H100 were consolidated to **8500** (one workload served at a time on the single
-free GPU); the ROCm campaign used 8000/8001/8002 for concurrent serving.
+Ports on H100 were consolidated to **8500** (one workload served at a time on a single
+free GPU); the ROCm runs used 8000/8001/8002 for concurrent serving.
 
-### Results (one H100 80GB, physical GPU 5)
+### Results (one H100 80GB)
 
-| Leaf | Model | Verdict | Key evidence |
+| Leaf | Model | Status | Key evidence |
 |---|---|---|---|
-| [`llm/`](llm/) | `Qwen/Qwen3.8-27B-FP8` | **WORKS-WITH-CHANGES** | `Resolved architecture: Qwen3_5ForConditionalGeneration`; "capital of France → **Paris**", 68–73 tok/s; needs `--max-num-seqs 256` (Mamba cache); 73 GB on GPU 5 |
-| [`embedding/`](embedding/) | `google/embeddinggemma-300m` | **WORKS, unmodified** | 768-dim; cos **+0.7106** (ROCm doc) vs **+0.2008** (postgres); 0.61 GiB weights |
-| [`reranker/`](reranker/) | `Qwen/Qwen3-Reranker-0.6B` | **WORKS, unmodified** | ranking correct, 4-orders separation (0.9994 vs 0.00013); `--hf_overrides`+jinja mandatory; query-conditioned |
+| [`llm/`](llm/) | `Qwen/Qwen3.8-27B-FP8` | **works with changes** | `Resolved architecture: Qwen3_5ForConditionalGeneration`; "capital of France → **Paris**", 68–73 tok/s; needs `--max-num-seqs 256` (Mamba cache); 73 GB resident |
+| [`embedding/`](embedding/) | `google/embeddinggemma-300m` | **works, unmodified** | 768-dim; cos **+0.7106** (ROCm doc) vs **+0.2008** (postgres); 0.61 GiB weights |
+| [`reranker/`](reranker/) | `Qwen/Qwen3-Reranker-0.6B` | **works, unmodified** | ranking correct, 4-orders separation (0.9994 vs 0.00013); `--hf_overrides`+jinja mandatory; query-conditioned |
 
 ### ⚠️ The 27B-FP8 architecture-support finding (the headline)
 
@@ -126,9 +130,8 @@ Mamba/GDN hybrid, each decode sequence needs a Mamba cache block, and the defaul
 - No `--device /dev/kfd`, no `--group-add video/render`, no ROCm container — the pip venv
   serves directly.
 
-### Multi-GPU (deferred)
+### Multi-GPU (not covered)
 
-Single-GPU smoke only this wave (GPUs 0–3 were a co-tenant production job; only physical
-GPU 5 was used). A TP pass would add `--tensor-parallel-size N`; note embeddinggemma cannot
-TP (3 heads, indivisible — replicate instead), and the 27B `qwen3_5` head/GDN divisibility
-must be checked before a TP launch. Not run here.
+The H100 notes above are a single-GPU smoke test. A TP pass would add
+`--tensor-parallel-size N`; note embeddinggemma cannot TP (3 heads, indivisible — replicate
+instead), and the 27B `qwen3_5` head/GDN divisibility must be checked before a TP launch.

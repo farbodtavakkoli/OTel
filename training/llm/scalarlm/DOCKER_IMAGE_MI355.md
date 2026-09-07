@@ -64,7 +64,7 @@ docker run -d --name scalarlm --init \
 Health check:
 ```bash
 curl -s localhost:8000/v1/health
-# {"api":"up","vllm":"up","megatron":"up","all":"up"}   (~110 s from cold on this box)
+# {"api":"up","vllm":"up","megatron":"up","all":"up"}   (~110 s from cold on 8×MI355X)
 ```
 
 Passing a script still overrides the default, so every existing invocation keeps working:
@@ -312,8 +312,7 @@ mounts (the client used the image's own baked `ml/`):
 | GPUs engaged | 8/8 both runs (+12 GB FSDP, +13 GB DDP per device) |
 
 Both losses matched the fingerprints for that tree exactly, which is what certifies the published
-artifact runs the code this folder documented at release. Records:
-`scalarlm_mi355_release_2026-08-31/`.
+artifact runs the code this folder documented at release.
 
 #### `mi355-v1.1` — published 2026-08-31
 

@@ -46,8 +46,8 @@ Python 3.12, in its own venv.
 Install torch from the ROCm wheel index **before** the rest of the requirements:
 
 ```bash
-python3 -m venv .env_inference_reranker_transformers
-source .env_inference_reranker_transformers/bin/activate
+python3 -m venv .env_transformers
+source .env_transformers/bin/activate
 pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
 pip install -r requirements_inference_reranker_transformers.txt
 ```
@@ -81,11 +81,14 @@ pip install flash-attn==2.8.3     # optional; then pass --attn_impl flash_attent
 HF_TOKEN=hf_xxxxxxxxxxxxxxxx
 ```
 
-Loaded via `load_dotenv("dev.env")`. Point the model cache at the big volume and pin the
-two GPUs you own:
+Loaded via `load_dotenv("dev.env")`. Point the model cache at a large volume, choose an
+output directory, and pin the two GPUs you own:
 
 ```bash
-export HF_HOME=/mnt/data_1.5t/hf_cache
+# Set these to suit your machine
+export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+export OUTPUT_DIR=/path/to/outputs     # inference artifacts
+
 export HIP_VISIBLE_DEVICES=4,5 CUDA_VISIBLE_DEVICES=4,5
 ```
 
@@ -97,18 +100,18 @@ Never set `CUDA_VISIBLE_DEVICES=""` on ROCm — use explicit indices. `--devices
 Single GPU, built-in query/document set, writing the reference artifact:
 
 ```bash
-source .env_inference_reranker_transformers/bin/activate
-export HIP_VISIBLE_DEVICES=4,5 CUDA_VISIBLE_DEVICES=4,5 HF_HOME=/mnt/data_1.5t/hf_cache
+source .env_transformers/bin/activate
+export HIP_VISIBLE_DEVICES=4,5 CUDA_VISIBLE_DEVICES=4,5
 
 python rerank_transformers.py --dtype float32 --devices cuda:0 \
-  --output /mnt/data_1.5t/outputs/inference_reranker_transformers/reference_rerank_fp32_1gpu.json
+  --output $OUTPUT_DIR/inference_reranker_transformers/reference_rerank_fp32_1gpu.json
 ```
 
 Multi-GPU (multi-process scoring across both cards):
 
 ```bash
 python rerank_transformers.py --dtype float32 --devices cuda:0,cuda:1 \
-  --output /mnt/data_1.5t/outputs/inference_reranker_transformers/reference_rerank_fp32_2gpu.json
+  --output $OUTPUT_DIR/inference_reranker_transformers/reference_rerank_fp32_2gpu.json
 ```
 
 Your own query and candidate set:
@@ -122,7 +125,7 @@ The script exits non-zero if the relevance sanity check fails, so it works as a 
 
 ## Single-GPU results
 
-`--dtype float32 --devices cuda:0` (1× MI355X, physical card 4), verified 2026-08-20:
+`--dtype float32 --devices cuda:0` (1× MI355X, physical card 4) — expected output:
 
 ```
 model=Qwen/Qwen3-Reranker-0.6B dtype=float32 attn=sdpa devices=['cuda:0']
@@ -153,7 +156,7 @@ away when a faster engine disagrees.
 | Score time (4 pairs) | 1.78 s | 3.60 s |
 | Top score | `+7.980374` | `+8.187500` |
 
-## H100 results (NVIDIA, CUDA 13 — verified 2026-08-22)
+## H100 results (NVIDIA, CUDA 13 — verified)
 
 Same model (`Qwen/Qwen3-Reranker-0.6B`, cached). Shared stack venv: `torch 2.13.0+cu130`,
 `transformers 5.5.0`, `sentence-transformers 5.7.0`, `kernels 0.12.3`, driver 580.173.02,
@@ -169,12 +172,12 @@ pair (... content does not reach the rendered prompt). ... set a chat template t
 both roles ...
 ```
 
-**Root cause (not a GPU issue):** this node's offline cache holds a *bare* Qwen3-Reranker
+**Root cause (not a GPU issue):** the node's offline cache held a *bare* Qwen3-Reranker
 checkpoint — it carries only the generic Qwen3 **generation** chat template (system/user/
 assistant), with no packaged `chat_template.jinja`. sentence-transformers **5.7.0** added
 `_verify_pair_roles_supported`, which maps a pair to one message per named role
 (`query`/`document`) and refuses a template that renders neither. The MI355X run (same ST
-version, 2026-08-20) did not hit this, so its cache carried the model's shipped pair
+version) did not hit this, because its cache carried the model's shipped pair
 template; a bare cache would fail there identically. The `1_LogitScore` head IS present
 (`modules: ['Transformer', 'LogitScore']`, `num_labels=2`), so scoring itself is fine — only
 the prompt rendering was broken.
@@ -185,16 +188,16 @@ roles, installs a Query/Document yes-no instruct template via `model.processor.c
 Opt out with `--no_fix_pair_template` (reproduces the failure). A checkpoint that already
 ships a pair template is left untouched.
 
-Exact smoke command (physical GPU 5), fp32:
+Smoke command (physical GPU 5), fp32:
 
 ```bash
-export HF_HOME=/mnt/gsma/gsma/gsma/models HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES=5
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES=5
 python rerank_transformers.py --model Qwen/Qwen3-Reranker-0.6B --dtype float32 --devices cuda:0 \
   --attn_impl sdpa \
-  --output /dev/shm/h100/out/transformers/reranker/reference_reranker_qwen3-reranker-0.6b_fp32_1gpu.json
+  --output $OUTPUT_DIR/transformers/reranker/reference_reranker_qwen3-reranker-0.6b_fp32_1gpu.json
 ```
 
-Real output (2026-08-22):
+**Expected output:**
 
 ```
 reranker fix: installed Query/Document pair chat template (bare checkpoint)
@@ -215,8 +218,8 @@ SANITY: PASS
 GPU-5 residency, sampled by PID from inside the run:
 
 ```
-[smi] GPU5 pid=1448960  2378 MiB
-[smi] GPU5 pid=1448960  3106 MiB
+[smi] GPU5 pid=<pid>  2378 MiB
+[smi] GPU5 pid=<pid>  3106 MiB
 ```
 
 ### Scores are on a DIFFERENT scale than the MI355X reference — ranking is identical
@@ -231,11 +234,11 @@ compare score *gaps*, never absolute values — as the "Output" section already 
 The H100 artifact is the correctness reference for this cache; the MI355X logit artifact
 remains valid for its own prompt template.
 
-**Verdict (H100): WORKS-WITH-CHANGES.** Runs correctly after the `--fix_pair_template` fix
+**On H100 this path works with the fix above.** It runs correctly after `--fix_pair_template`
 (default on). Ranking perfect, both sanity checks PASS. The single change is a
 sentence-transformers-5.7.0 + bare-cache requirement, not a Hopper/CUDA issue. Multi-GPU
-data-parallel (`--devices cuda:0,cuda:1`) deferred — production job on GPUs 0–3; a 0.6B
-model has nothing to shard.
+data-parallel (`--devices cuda:0,cuda:1`) was not exercised on H100; a 0.6B model has
+nothing to shard.
 
 ## Multi-GPU results
 
@@ -246,7 +249,7 @@ multi-GPU pattern here is *data* parallelism: `CrossEncoder.predict` accepts a d
 list and spawns one worker process per device, each with a full model replica, splitting
 the candidate pairs between them. That is what `--devices cuda:0,cuda:1` does.
 
-Verified 2026-08-20, `--dtype float32 --devices cuda:0,cuda:1`:
+`--dtype float32 --devices cuda:0,cuda:1` — expected output:
 
 ```
 model=Qwen/Qwen3-Reranker-0.6B dtype=float32 attn=sdpa devices=['cuda:0', 'cuda:1']
@@ -317,7 +320,7 @@ top-k membership. Exit code is 0 on PASS, 1 on FAIL.
 `--output` writes the **reference artifact** other stacks are diffed against:
 
 ```
-/mnt/data_1.5t/outputs/inference_reranker_transformers/
+$OUTPUT_DIR/inference_reranker_transformers/
   reference_rerank_fp32_1gpu.json    <- canonical
   reference_rerank_fp32_2gpu.json    <- agrees to 3.3e-5
   reference_rerank_bf16_1gpu.json    <- bf16 variant
@@ -337,11 +340,11 @@ compare *gaps* rather than absolute values).
   Single-GPU and 2-GPU multi-process scoring both verified, with `rocm-smi` confirming the
   model resident on both physical cards. No code changes were needed beyond the automatic
   `flash-attn → sdpa` switch and the Qwen pad-token fix.
-- **NVIDIA H100: tested 2026-08-22** — 1× H100 80GB (Hopper cc9.0), CUDA 13.0, driver
+- **NVIDIA H100: tested** — 1× H100 80GB (Hopper cc9.0), CUDA 13.0, driver
   580.173.02, Python 3.12.3, `torch==2.13.0+cu130`, `transformers==5.5.0`,
   `sentence-transformers==5.7.0`, attn `sdpa`. Single-GPU verified, `nvidia-smi` confirming
   the model resident (~2.3–3.1 GiB, GPU 5). **Required one hardware-neutral code fix**
-  (`--fix_pair_template`, default on) because this node's *bare* cache lacks the packaged
+  (`--fix_pair_template`, default on) because that node's *bare* cache lacks the packaged
   pair chat template that ST 5.7.0 now demands — see "H100 results" above. Ranking identical
   to AMD; scores land on a different scale (probabilities vs logits) because of the template.
 - **TEI cannot serve this reranker** — its `/rerank` targets sequence-classification
@@ -364,15 +367,15 @@ compare *gaps* rather than absolute values).
   applied to every pair. That is correct behaviour for this model; overriding it changes
   scores.
 - **The multi-process pool leaks semaphores at shutdown.** Harmless teardown warning.
-- **Shared HF cache permission warnings.** If `/mnt/data_1.5t/hf_cache` was populated by
+- **Shared HF cache permission warnings.** If `$HF_HOME` was populated by
   another user you may see `Ignoring corrupted tree cache file ... Permission denied`.
   Cache-metadata only; results unaffected.
 - `--devices` indexes *within* `HIP_VISIBLE_DEVICES`, so `cuda:0,cuda:1` means physical
   cards 4 and 5 given the exports above.
 
-## Verdict
+## Platform notes
 
-**WORKS, no code changes.** `Qwen/Qwen3-Reranker-0.6B` runs correctly on MI355X / gfx950 /
+**This path works as documented on AMD, with no code changes.** `Qwen/Qwen3-Reranker-0.6B` runs correctly on MI355X / gfx950 /
 ROCm 7.2.4 through the stock Transformers + sentence-transformers `CrossEncoder` path, on
 one GPU and across two. Relevant documents are ranked above irrelevant ones with a
 14.4-logit margin, and the ranking is identical across every dtype and device
