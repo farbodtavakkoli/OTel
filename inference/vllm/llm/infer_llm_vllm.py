@@ -1,4 +1,4 @@
-"""LLM chat/classification client for a vLLM OpenAI-compatible server — see readme_llm_vllm.md."""
+"""LLM chat/classification client for a vLLM OpenAI-compatible server — see README.md."""
 
 import argparse
 import json

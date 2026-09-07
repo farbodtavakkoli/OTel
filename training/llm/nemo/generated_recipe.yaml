@@ -41,7 +41,7 @@ lr_scheduler:
 checkpoint:
   enabled: true
   model_save_format: safetensors
-  checkpoint_dir: /mnt/data_1.5t/outputs/train_llm_nemo/checkpoints_sft
+  checkpoint_dir: ./checkpoints_sft
   save_consolidated: true
 dataset:
   _target_: nemo_automodel.components.datasets.llm.chat_dataset.ChatDataset

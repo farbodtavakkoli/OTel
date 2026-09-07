@@ -845,7 +845,7 @@ accelerate launch --num_processes=2 --mixed_precision=bf16 --use_deepspeed \
   --use_lora --zero_stage 2 \
   --eval_samples 2 --num_train_epochs 4 --batch_size 1 --grad_acc_steps 1 \
   --logging_steps 1 --save_total_limit 1 --num_proc 4 \
-  --output_dir /dev/shm/h100/out/deepspeed/sft2
+  --output_dir /dev/shm/out/deepspeed/sft2
 ```
 
 **Batch geometry / step count:** global batch = per_device(1) × world(2) × grad_accum(1)

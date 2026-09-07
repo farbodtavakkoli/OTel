@@ -1,4 +1,4 @@
-"""Reranker client for a vLLM OpenAI-compatible server — see readme_reranker_vllm.md."""
+"""Reranker client for a vLLM OpenAI-compatible server — see README.md."""
 
 import argparse
 import json

@@ -1,4 +1,4 @@
-"""OpenAI-compatible client for an SGLang embedding server — see readme_sglang_embedding.md."""
+"""OpenAI-compatible client for an SGLang embedding server — see README.md."""
 import argparse
 import json
 import math

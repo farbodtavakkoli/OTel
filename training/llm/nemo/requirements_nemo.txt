@@ -11,8 +11,8 @@
 #   docker pull nvcr.io/nvidia/nemo-automodel:26.06.00
 #
 # Tag verified from the NeMo AutoModel v0.5.0 release notes (26.06 container);
-# the v0.5.0 <-> 26.06 pairing was re-checked against the upstream README in
-# August 2026. Check for a newer tag before pinning:
+# the v0.5.0 <-> 26.06 pairing was re-checked against the upstream README.
+# Check for a newer tag before pinning:
 #   https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo-automodel/tags
 #
 # For the RLHF/GRPO side (NeMo RL, a separate repo -- see readme section 5):
@@ -44,7 +44,7 @@
 nemo-automodel==0.5.0
 
 # --- Training stack (pulled in by nemo-automodel; pinned here for visibility) ---
-torch>=2.6.0                       # H100 bare-host pip route (verified 2026-08-22):
+torch>=2.6.0                       # H100 bare-host pip route (verified):
                                    # `pip install torch numpy` -> torch 2.13.0+cu130
                                    # (CUDA 13.0, cuda.is_available()=True). NOT clobbered
                                    # by the nemo-automodel install. No --index-url needed.
@@ -78,7 +78,7 @@ tensorboard
 # CUDA-ONLY. Do not attempt on ROCm -- use the default --attn_implementation sdpa.
 
 # ============================================================================
-# NVIDIA H100 -- verified 2026-08-22 (single-GPU smoke; both routes work)
+# NVIDIA H100 -- verified (single-GPU smoke; both routes work)
 # ============================================================================
 # 1x NVIDIA H100 80GB HBM3, driver 580.173.02, Python 3.12.3. Full narrative +
 # logs: readme_nemo.md section 2, "NVIDIA H100 80GB (CUDA 13) - verified".
@@ -115,7 +115,7 @@ tensorboard
 # ============================================================================
 # AMD / ROCm -- which pins above are CUDA-only, with observed errors
 # ============================================================================
-# Verified 2026-08-19 on 1x AMD Instinct MI355X (gfx950, 288 GB), ROCm 7.2,
+# Verified on 1x AMD Instinct MI355X (gfx950, 288 GB), ROCm 7.2,
 # Ubuntu, Python 3.12.3. Full narrative + logs: readme_nemo.md section 2,
 # "AMD MI355X (ROCm 7.2) - attempted".
 #
@@ -123,7 +123,7 @@ tensorboard
 # paths of train_llm_nemo.py were executed to completion on the MI355X.
 # Install order that worked:
 #
-#   python3 -m venv .env_train_llm_nemo && source .env_train_llm_nemo/bin/activate
+#   python3 -m venv .env_nemo && source .env_nemo/bin/activate
 #   pip install --index-url https://download.pytorch.org/whl/rocm7.2 torch
 #       -> torch-2.13.0+rocm7.2, triton-rocm-3.7.1
 #   pip install -r requirements_nemo.txt

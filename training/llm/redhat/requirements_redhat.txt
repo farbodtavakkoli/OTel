@@ -12,7 +12,7 @@
 # [cuda] extra (it builds CUDA flash-attn — CUDA-only; NEVER pip-install flash-attn
 # on ROCm). Reference env: MI355X, ROCm 7, torch 2.11.0.
 #
-# VERIFIED on MI355X + ROCm 7.2.4 (2026-08-19) — exact sequence that worked:
+# VERIFIED on MI355X + ROCm 7.2.4 — exact sequence that worked:
 #
 #   pip install torch==2.11.0 torchvision --index-url https://download.pytorch.org/whl/rocm7.2
 #   pip install "training-hub[grpo,lora]"     # leaves ROCm torch in place
@@ -29,7 +29,7 @@
 # Source: https://github.com/Red-Hat-AI-Innovation-Team/training_hub
 #
 # ----------------------------------------------------------------------------
-# VERIFIED on NVIDIA H100 80GB + CUDA 13.0, driver 580.173.02 (2026-08-22) —
+# VERIFIED on NVIDIA H100 80GB + CUDA 13.0, driver 580.173.02 —
 # exact sequence that worked (single-GPU OSFT smoke, flash-attn built & engaged):
 #
 #   pip install torch numpy                     # -> torch 2.13.0+cu130 (native CUDA 13)

@@ -941,7 +941,7 @@ sample, as expected).
 | `HIP_VISIBLE_DEVICES=0,...,7` exported **after** `source bin/activate` | If `bin/activate` still carries a `=7` pin from a 1-GPU session, the run is silently single-GPU without the override |
 | `global_train_batch_size: 32` (was 2) | Must be divisible by the 8 ranks; Foundry aborts in config validation otherwise. 32 = 8 ranks x 4, with `device_train_microbatch_size: 1` giving grad accum 4 |
 | `init_device: mixed` **restored** (1-GPU needed `cpu`) | `mixed` requires FSDP; at 8 ranks FSDP is real, so the §8a workaround is no longer needed — and `mixed` is what stops 8 CPU copies of the weights at startup |
-| Data: 1280-row replicated slice **outside the repo** | The shipped 10-row sample cannot feed 8 ranks at global batch 32 with `drop_last: true` — zero batches. Write it to `$OUTPUT_DIR/llmfoundry/gpu8/data/OTel_LLM_sample_1280.jsonl` (10 rows x 128); the repo sample stays unchanged |
+| Data: 1280-row replicated slice **generated, not committed** | The shipped 10-row sample cannot feed 8 ranks at global batch 32 with `drop_last: true` — zero batches. Write it to `./outputs/llmfoundry_gpu8/data/OTel_LLM_sample_1280.jsonl` (10 rows x 128) — exactly what `variables.data_local` in `yamls/finetune_chat_sft_8gpu.yaml` points at; the repo sample stays unchanged |
 | `save_folder` and the `hf_checkpointer` callback omitted entirely | Nothing large should land for a smoke run. Verified: 0 bytes of weights on disk afterwards |
 | `max_seq_len: 2048`, `attn_implementation: sdpa` | Carried forward unchanged from §8a |
 

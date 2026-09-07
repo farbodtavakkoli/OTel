@@ -298,7 +298,7 @@ python -c "import torch;print(torch.__version__, torch.version.cuda)"   # re-ver
 export CUDA_VISIBLE_DEVICES=5                              # the free H100 on a shared node
 # HF_HOME points at a pre-populated model cache (may be read-only) — see the Install block
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
-export HF_DATASETS_CACHE=/dev/shm/h100/out/deepspeed_standalone/ds_cache   # see quirk below
+export HF_DATASETS_CACHE=/dev/shm/deepspeed_standalone/ds_cache   # see quirk below
 export CUDA_HOME=/usr/local/cuda-13.0
 export PATH=$CUDA_HOME/bin:$PATH LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
 ```

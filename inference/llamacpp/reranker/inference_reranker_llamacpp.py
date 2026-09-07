@@ -1,4 +1,4 @@
-"""Client for a llama.cpp llama-server reranking endpoint — see readme_reranker_llamacpp.md."""
+"""Client for a llama.cpp llama-server reranking endpoint — see README.md."""
 import argparse
 import json
 import os

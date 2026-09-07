@@ -1,7 +1,7 @@
 # H100 (CUDA 13.0) smoke variant of config_sft_lora.yaml — single GPU LoRA SFT.
 # Mirrors config_sft_lora_smoke_mi355x.yaml but REVERSES the ROCm workarounds for H100:
-#   base_model     Qwen3-8B -> LiquidAI/LFM2.5-350M  (small, fully cached offline on this box;
-#                                                     ships a chat template so tokenizer_default works)
+#   base_model     Qwen3-8B -> LiquidAI/LFM2.5-350M  (small, cheap to cache locally; ships a
+#                                                     chat template so tokenizer_default works)
 #   attn_implementation flash_attention_2 (VERIFIED: flash-attn 2.8.3 source-built via nvcc on
 #                                          H100 and trains here, attn_uses_flash_lib=true;
 #                                          use the *_sdpa companion for a zero-build run)
@@ -32,9 +32,9 @@ datasets:
 
 chat_template: tokenizer_default
 
-dataset_prepared_path: /dev/shm/h100/out/axolotl/last_run_prepared_smoke
+dataset_prepared_path: ./last_run_prepared_smoke_h100
 val_set_size: 0
-output_dir: /dev/shm/h100/out/axolotl/sft-lora-smoke
+output_dir: ./outputs/sft-lora-smoke-h100
 
 ### sequence handling
 sequence_len: 2048

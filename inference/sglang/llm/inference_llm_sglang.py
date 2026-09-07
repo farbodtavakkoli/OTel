@@ -1,4 +1,4 @@
-"""OpenAI-compatible client for an SGLang LLM server — see readme_sglang_llm.md."""
+"""OpenAI-compatible client for an SGLang LLM server — see README.md."""
 import argparse
 import json
 import os

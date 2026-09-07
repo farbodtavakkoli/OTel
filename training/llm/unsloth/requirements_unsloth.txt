@@ -3,7 +3,8 @@
 # ============================== AMD / ROCm ===================================
 # torch/torchvision/triton/xformers below are CUDA-13 wheels — do NOT install this
 # file verbatim on ROCm. The following sequence was VERIFIED on MI355X (gfx950,
-# ROCm 7.2.4, Python 3.12) — see readme_unsloth.md "AMD MI355X" section:
+# ROCm 7.2.4, Python 3.12) — see readme_unsloth.md, "Platform notes — AMD MI355X
+# (ROCm 7.2)":
 #
 #   # 1) ROCm torch FIRST (brings triton-rocm 3.6.0):
 #   pip install torch==2.11.0 torchvision --index-url https://download.pytorch.org/whl/rocm7.2
@@ -27,8 +28,8 @@
 #
 # ============================ NVIDIA / CUDA 13 ===============================
 # VERIFIED on 1× H100 80GB (Hopper cc 9.0, driver 580.173.02, CUDA 13.0, Python 3.12)
-# — see readme_unsloth.md "Tested on NVIDIA H100" (2026-08-22). On CUDA this file
-# installs VERBATIM — the ROCm 3-step dance above is NOT needed:
+# — see readme_unsloth.md, "Platform notes — NVIDIA H100 80GB (CUDA 13.0)". On CUDA
+# this file installs VERBATIM — the ROCm 3-step dance above is NOT needed:
 #
 #   python3 -m venv .env_unsloth && source .env_unsloth/bin/activate
 #   pip install torch numpy                  # baseline sanity: torch 2.13.0+cu130

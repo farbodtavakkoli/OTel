@@ -1,5 +1,5 @@
 # Environment for train_llm_llamafactory.py (LLaMA-Factory post-training front-end).
-# Written against upstream docs as of August 2026. Versions are NOT a tested set; the
+# Written against upstream docs. Versions are NOT a tested set; the
 # ranges below mirror upstream's own requirement table, which lags the code.
 #
 # IMPORTANT: LLaMA-Factory itself is installed from a SOURCE CHECKOUT, not from this file.
@@ -36,7 +36,7 @@ bitsandbytes>=0.43.1     # required by config_sft_qlora.yaml (quantization_metho
 # vllm>=0.8.2            # only for `llamafactory-cli api ... infer_backend=vllm` inference
 # tensorboard            # only if you set report_to: tensorboard
 
-# NVIDIA / CUDA variant — TESTED 2026-08-22 on 1x H100 80GB (Hopper cc 9.0), CUDA 13.0,
+# NVIDIA / CUDA variant — TESTED on 1x H100 80GB (Hopper cc 9.0), CUDA 13.0,
 # driver 580.173.02, Python 3.12. Single-GPU LoRA SFT: finite decreasing loss + saved adapter.
 # Unlike ROCm, torch does NOT need to precede `pip install -e .` on CUDA — the default PyPI
 # torch is already cu130 and the editable install keeps it (adds matching tv/ta cu130 wheels).
@@ -54,7 +54,7 @@ bitsandbytes>=0.43.1     # required by config_sft_qlora.yaml (quantization_metho
 # (older libc10 ABI). Use `flash_attn: sdpa` in the YAML (trains fine), or build flash-attn
 # from source against 2.13/cu130 for `flash_attn: fa2`. `kernels` was NOT pulled (no 0.12 trap).
 #
-# AMD / ROCm variant — TESTED 2026-08-19 on MI355X (gfx950), ROCm 7.2.4, Python 3.12.
+# AMD / ROCm variant — TESTED on MI355X (gfx950), ROCm 7.2.4, Python 3.12.
 # (Upstream README documents ROCm via docker/docker-rocm and links AMD's own guide at
 # rocm.docs.amd.com; there is no ROCm pip extra. The docker route was NOT tried here.)
 # Exact pip/venv sequence that worked — ROCm torch/torchvision/torchaudio MUST go in

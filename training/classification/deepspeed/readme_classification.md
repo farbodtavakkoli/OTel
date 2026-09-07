@@ -412,7 +412,7 @@ Exact smoke command (single GPU, port 29659, GPU 5 only):
 ```bash
 export CUDA_VISIBLE_DEVICES=5                 # plain CUDA — no HIP_VISIBLE_DEVICES on NVIDIA
 export HF_HOME=/path/to/hf_cache              # HF model cache (see "Install" above)
-export HF_DATASETS_CACHE=/dev/shm/h100/dscache_classification
+export HF_DATASETS_CACHE=/dev/shm/dscache_classification
 accelerate launch --num_processes=1 --mixed_precision=bf16 --use_deepspeed \
   --main_process_port 29659 \
   train_llm_classification.py \

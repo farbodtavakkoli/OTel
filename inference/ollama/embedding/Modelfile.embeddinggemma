@@ -1,3 +1,3 @@
 # Registers the already-cached ggml-org/embeddinggemma-300M-GGUF Q8_0 with Ollama — no download.
-# The path is INSIDE the container: /mnt/data_1.5t/hf_cache/llama_cpp is bind-mounted read-only at /ggufs.
+# The path is INSIDE the container: the host GGUF cache ($LLAMA_CACHE) is bind-mounted read-only at /ggufs.
 FROM /ggufs/models--ggml-org--embeddinggemma-300M-GGUF/snapshots/0f741b5a6585bd53aeb15cd1372c56f2a0f65e12/embeddinggemma-300M-Q8_0.gguf

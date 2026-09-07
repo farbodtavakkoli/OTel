@@ -23,8 +23,11 @@ lora_dropout: 0.0
 lora_target: all
 
 ### dataset
-# 2560 rows = the shipped 10-row sample replicated x256, written OUTSIDE the repo and
-# registered as `otel_chat_sft_x256` in data/dataset_info.json (absolute file_name).
+# 2560 rows = the shipped 10-row sample replicated x256, generated into ./data/ and
+# registered as `otel_chat_sft_x256` in data/dataset_info.json. Generate it with:
+#   awk '{print}' data/OTel_LLM_sample_10.jsonl > /tmp/one.jsonl
+#   for i in $(seq 256); do cat /tmp/one.jsonl; done > data/otel_chat_sft_x256.jsonl
+# (awk guarantees the trailing newline the shipped sample lacks, so rows are not glued.)
 # The 10-row sample cannot feed 8 ranks x batch 4 for 20 steps; this is a pipeline
 # proof, not a learning result.
 dataset: otel_chat_sft_x256
@@ -37,7 +40,7 @@ dataloader_num_workers: 2
 packing: false
 
 ### output — NO checkpoints (disk hygiene); no load_best_model_at_end anywhere
-output_dir: /mnt/data_1.5t/outputs/train_llm_llamafactory/gpu8/sft_lora_8gpu
+output_dir: ./outputs/sft_lora_smoke_mi355x_8gpu
 logging_steps: 1
 save_strategy: "no"
 plot_loss: false

@@ -1,5 +1,5 @@
 # Environment for train_llm_axolotl.py (Axolotl post-training front-end).
-# Written against upstream docs as of August 2026 - versions are NOT pinned to a tested
+# Written against upstream docs - versions are NOT pinned to a tested
 # set, because Axolotl's install is order-sensitive and cannot be reproduced by a single
 # `pip install -r`. Follow readme_axolotl.md section 2; this file documents WHAT is needed.
 #
@@ -33,8 +33,8 @@ PyYAML>=6.0              # the launcher parses the config to validate it before 
 # deepspeed              # pulled in by axolotl[deepspeed]; do not install it separately
 # huggingface_hub        # pulled in transitively; only pin if you need a specific hub API
 
-# NVIDIA / CUDA variant - TESTED on H100 80GB (Hopper cc9.0) + CUDA 13.0, driver 580.173.02,
-# 2026-08-22 (readme sec. 2b). Single-GPU LoRA SFT smoke. Base axolotl, NO extras. Sequence:
+# NVIDIA / CUDA variant - TESTED on H100 80GB (Hopper cc9.0) + CUDA 13.0, driver 580.173.02
+# (readme sec. 2b). Single-GPU LoRA SFT smoke. Base axolotl, NO extras. Sequence:
 #   pip install torch numpy                     # -> torch 2.13.0+cu130 (native cu130 on PyPI;
 #                                               #    no --index-url / UV_TORCH_BACKEND needed)
 #   pip install packaging ninja
@@ -51,13 +51,12 @@ PyYAML>=6.0              # the launcher parses the config to validate it before 
 #   CUDA_HOME=/usr/local/cuda MAX_JOBS=16 pip install --no-build-isolation flash-attn==2.8.3
 #   # -> flash-attn 2.8.3; torch stays 2.12.1+cu130 (not clobbered). fa2 ran ~2.4x faster on the
 #   #    20-step smoke. (Axolotl also flags flash-attn-4 as available for Hopper - not tried.)
-# For an
-# LFM2 base model ONLY, also disable axolotl's LoRA-kernel autopatch (lora_mlp_kernel/
+# For an LFM2 base model ONLY, also disable axolotl's LoRA-kernel autopatch (lora_mlp_kernel/
 # lora_qkv_kernel/lora_o_kernel: false) - it asserts "Original QKV code not found" on LFM2's
 # hybrid attention; Qwen/Llama bases do not need this. Do NOT install [deepspeed]/[vllm]/
 # [flash-attn] extras for a single-GPU smoke.
 #
-# AMD / ROCm variant - TESTED on MI355X (gfx950) + ROCm 7.2.4, 2026-08-19 (readme sec. 2a).
+# AMD / ROCm variant - TESTED on MI355X (gfx950) + ROCm 7.2.4 (readme sec. 2a).
 # A plain pip install of base axolotl works on ROCm; the upstream AMD HPC guide's
 # source-build + ROCm-flash-attn recipe (rocm5.7-era) was NOT needed. Exact sequence:
 #   pip install torch --index-url https://download.pytorch.org/whl/rocm7.2

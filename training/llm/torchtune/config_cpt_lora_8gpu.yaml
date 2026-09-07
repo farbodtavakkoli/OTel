@@ -5,14 +5,14 @@
 # the distributed one reads fsdp_* / custom_sharded_layers and rejects
 # single-device-only keys (optimizer_in_bwd, low-bit optimizers).
 #
-# Launch (from inside train_llm_torchtune/):
+# Launch (from inside training/llm/torchtune/):
 #   tune run --nnodes 1 --nproc_per_node 8 lora_finetune_distributed \
 #       --config config_cpt_lora_8gpu.yaml
 #
 # Tested on 8x MI355X / ROCm 7.2.4 — see readme_torchtune.md §7a.
 # Kept separate from config_cpt_lora.yaml (the proven 1-GPU config) on purpose.
 
-output_dir: /mnt/data_1.5t/outputs/train_llm_torchtune/gpu8/run
+output_dir: ./outputs/torchtune_cpt_lora_8gpu
 
 model:
   # Same model the 1-GPU smoke used (Qwen2.5-0.5B), not the untested 7B default.
@@ -44,8 +44,8 @@ save_adapter_weights_only: True
 dataset:
   _component_: torchtune.datasets.text_completion_dataset
   source: json
-  # Overridden on the CLI to a replicated slice under /mnt/data_1.5t —
-  # the shipped 10-row sample cannot feed 8 ranks.
+  # Override on the CLI (dataset.data_files=...) with a larger corpus — e.g. a
+  # replicated copy of the sample — since the shipped 10 rows cannot feed 8 ranks.
   data_files: ./data/otel_cpt.jsonl
   column: text
   split: train

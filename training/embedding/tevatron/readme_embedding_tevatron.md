@@ -114,9 +114,9 @@ Same, minus the ROCm index. On a CUDA 13 box `pip install torch==2.11.0` resolve
 **native CUDA 13 wheel** (`2.11.0+cu130`) straight from PyPI — no `--index-url` needed:
 
 ```bash
-export PIP_CACHE_DIR=/dev/shm/h100/pipcache
-python3 -m venv /dev/shm/h100/.env_tevatron
-source /dev/shm/h100/.env_tevatron/bin/activate
+export PIP_CACHE_DIR=/dev/shm/pipcache
+python3 -m venv /dev/shm/.env_tevatron
+source /dev/shm/.env_tevatron/bin/activate
 pip install -U pip setuptools wheel
 pip install torch==2.11.0 numpy          # -> 2.11.0+cu130, nvidia-*-cu13 deps
 pip install -r requirements_embedding_tevatron.txt   # minus torch/numpy already satisfied
@@ -420,8 +420,8 @@ was co-tenanted — see below). Ran on one GPU (`CUDA_VISIBLE_DEVICES=4`) of a s
 **Install that worked** (venv on tmpfs, for a host with a tight root filesystem):
 
 ```bash
-export PIP_CACHE_DIR=/dev/shm/h100/pipcache HF_HOME=/path/to/hf_cache
-python3 -m venv /dev/shm/h100/.env_tevatron && source /dev/shm/h100/.env_tevatron/bin/activate
+export PIP_CACHE_DIR=/dev/shm/pipcache HF_HOME=/path/to/hf_cache
+python3 -m venv /dev/shm/.env_tevatron && source /dev/shm/.env_tevatron/bin/activate
 pip install -U pip setuptools wheel
 pip install torch==2.11.0 numpy          # PyPI ships a cu130 wheel for the 2.11.0 pin — no --index-url
 pip install transformers==5.5.0 datasets==4.3.0 accelerate==1.14.0 peft==0.20.0 \
@@ -447,7 +447,7 @@ is unavailable.
 
 ```bash
 export HF_HOME=/path/to/hf_cache HF_HUB_OFFLINE=1 \
-       HF_DATASETS_CACHE=/dev/shm/h100/dscache_tevatron CUDA_VISIBLE_DEVICES=4
+       HF_DATASETS_CACHE=/dev/shm/dscache_tevatron CUDA_VISIBLE_DEVICES=4
 python train_embedding_tevatron.py \
   --devices 4 --model_name_or_path BAAI/bge-small-en-v1.5 \
   --attn_implementation sdpa \

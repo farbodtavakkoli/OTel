@@ -225,7 +225,7 @@ write symlinks there; build the venv on local or tmpfs disk instead):
 ```bash
 python3 -m venv /tmp/tei_venv && /tmp/tei_venv/bin/pip install requests==2.34.2 python-dotenv==1.2.3
 /tmp/tei_venv/bin/python embed_tei.py --host 127.0.0.1 --port 8090 --api both \
-  --out /dev/shm/h100/out/tei/tei_h100_1gpu.json
+  --out /dev/shm/tei/tei_h100_1gpu.json
 ```
 
 ### Expected output (H100)

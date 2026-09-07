@@ -1,5 +1,5 @@
 # MI355X (ROCm 7.2) smoke variant of config_sft_lora.yaml — single GPU, 5 steps, tiny model.
-# Verified 2026-08-19 on 1x AMD Instinct MI355X (gfx950), torch 2.13.0+rocm7.2,
+# Verified on 1x AMD Instinct MI355X (gfx950), torch 2.13.0+rocm7.2,
 # LLaMA-Factory 0.9.6.dev0, transformers 5.8.0. See readme_llamafactory.md section 2.
 # Launch: HIP_VISIBLE_DEVICES=7 CUDA_VISIBLE_DEVICES=7 \
 #   python3 train_llm_llamafactory.py --config config_sft_lora_smoke_mi355x.yaml --num-gpus 1
@@ -29,7 +29,7 @@ dataloader_num_workers: 0
 packing: false
 
 ### output
-output_dir: /mnt/data_1.5t/outputs/train_llm_llamafactory/sft_lora_smoke
+output_dir: ./outputs/sft_lora_smoke_mi355x
 logging_steps: 1
 save_steps: 5
 save_total_limit: 1

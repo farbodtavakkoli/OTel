@@ -107,7 +107,7 @@ Hopper cc 9.0), `FlagEmbedding 1.4.0`, `transformers 4.57.1`, `accelerate 1.14.0
 **Install that worked (venv on tmpfs, CUDA):**
 
 ```bash
-python3 -m venv /dev/shm/h100/.env_flagembedding && source /dev/shm/h100/.env_flagembedding/bin/activate
+python3 -m venv /dev/shm/.env_flagembedding && source /dev/shm/.env_flagembedding/bin/activate
 pip install torch numpy            # -> torch 2.13.0+cu130, CUDA 13.0 (verify BEFORE the next step)
 # The requirements pins torch==2.11.0, which has NO cu130 wheel. Install requirements WITHOUT
 # the torch line so it does not downgrade you off the CUDA-13 build:

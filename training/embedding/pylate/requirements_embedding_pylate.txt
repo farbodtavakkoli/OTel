@@ -1,12 +1,13 @@
 # Environment for train_embedding_pylate.py (PyLate ColBERT late-interaction fine-tuning).
 # These are NOT preinstalled in the base training venv; install into a dedicated venv.
 #
-# NOTE: this venv lives OUTSIDE the repo because / is disk-constrained on the MI355X host:
-#   python3 -m venv /mnt/data_450g/envs/.env_train_embedding_pylate
-#   source /mnt/data_450g/envs/.env_train_embedding_pylate/bin/activate
+# NOTE: if the root filesystem is tight, put the venv outside the repo on a larger volume
+# ($DATA_DIR below is that volume):
+#   python3 -m venv $DATA_DIR/envs/.env_pylate
+#   source $DATA_DIR/envs/.env_pylate/bin/activate
 #
 # AMD/ROCm: install the ROCm torch wheel FIRST, then this file:
-#   export PIP_CACHE_DIR=/mnt/data_1.5t/pip_cache
+#   export PIP_CACHE_DIR=$DATA_DIR/pip_cache
 #   pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
 #   pip install -r requirements_embedding_pylate.txt
 #   python -c "import torch; print(torch.__version__, torch.version.hip, torch.version.cuda)"
@@ -22,8 +23,8 @@
 # Optional CUDA-only extras: flash-attn (--attn_implementation flash_attention_2) and the
 # fused MaxSim kernels, pylate[flash-maxsim] / pylate[lik] (--scores_backend flash|lik).
 #
-# VERIFIED on NVIDIA H100 80GB / CUDA 13.0 / driver 580.173.02 (2026-08-22):
-#   export PIP_CACHE_DIR=/dev/shm/h100/pipcache
+# VERIFIED on NVIDIA H100 80GB / CUDA 13.0 / driver 580.173.02:
+#   export PIP_CACHE_DIR=$DATA_DIR/pip_cache
 #   pip install "torch==2.11.0" numpy          # the torch==2.11.0 pin below IS honorable on CUDA:
 #                                              #   a torch==2.11.0+cu130 wheel exists on default PyPI
 #                                              #   (NO --index-url). A bare `pip install torch` would
@@ -34,9 +35,9 @@
 # As on MI355X, installing pylate did NOT pull/clobber torch (no dep pins it) — re-verify anyway;
 # recover if it ever does with:
 #   pip install --force-reinstall --no-deps "torch==2.11.0"   # default PyPI cu130 wheel
-# Single-GPU ColBERT smoke passed (48 steps, loss 0.84->0.57->0.40 per epoch, MaxSim rank-1 correct,
+# Single-GPU ColBERT training verified end to end (loss decreasing, MaxSim rank-1 correct,
 # PLAID retrieval OK, ~1.7 GiB VRAM). flash-attn NOT installed (BERT backbone; sdpa suffices).
-# See readme_embedding_pylate.md, "Tested on NVIDIA H100 80GB".
+# See readme_embedding_pylate.md, "Platform notes — NVIDIA H100 80GB (CUDA 13.0)".
 
 # Core late-interaction stack
 pylate==1.6.0

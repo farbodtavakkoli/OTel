@@ -13,7 +13,7 @@ model2vec==0.8.2             # only needed for the static "potion-*" (model2vec)
 # the ==2.11.0 pin below; all other pins install unmodified).
 # Do NOT install flash-attn on ROCm (CUDA-only build) — load_model() auto-selects "sdpa".
 #
-# NVIDIA/CUDA 13.0 (verified on H100 80GB, driver 580.173.02, 2026-08-22):
+# NVIDIA/CUDA 13.0 (verified on H100 80GB, driver 580.173.02):
 #   pip install torch==2.11.0 numpy==2.5.1   # resolves to torch 2.11.0+cu130 from default PyPI
 # The ==2.11.0 pin has a native cu130 wheel — NO --index-url needed. Re-check
 # torch.version.cuda == '13.0' after installing the rest (some deps clobber torch).

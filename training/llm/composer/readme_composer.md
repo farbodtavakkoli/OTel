@@ -413,7 +413,7 @@ Exact smoke command (offline env, GPU 7, master port 29648):
 
 ```bash
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1            # HF_HOME points at the model cache (set above)
-export HF_DATASETS_CACHE=/dev/shm/h100/dscache_composer   # datasets .arrow writes can fail on a network model-cache mount
+export HF_DATASETS_CACHE=/dev/shm/dscache_composer   # datasets .arrow writes can fail on a network model-cache mount
 export CUDA_VISIBLE_DEVICES=7                             # plain CUDA_VISIBLE_DEVICES; no HIP_* on NVIDIA
 
 composer -n 1 --master_port 29648 train_llm_composer.py \
@@ -423,7 +423,7 @@ composer -n 1 --master_port 29648 train_llm_composer.py \
   --learning_rate 5e-5 --no_fsdp \
   --attn_implementation sdpa \
   --run_name composer-h100-smoke \
-  --save_folder /dev/shm/h100/out/composer/composer_run --save_interval 1000ba
+  --save_folder /dev/shm/composer/composer_run --save_interval 1000ba
 ```
 
 Step count: 9 usable rows (1 of 10 dropped for exceeding `--max_seq_len 2048`),

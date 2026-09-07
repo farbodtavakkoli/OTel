@@ -11,18 +11,25 @@
 #   - device_train_microbatch_size: 1 -> grad accum 4
 #   - max_duration: 20ba, eval disabled (smoke run)
 #   - no save_folder / no hf_checkpointer (nothing large lands on disk)
-#   - data_local points at a replicated 1280-row copy of the shipped 10-row sample,
-#     written OUTSIDE the repo. Pipeline proof, NOT a learning result.
+#   - data_local points at a replicated 1280-row copy of the shipped 10-row sample
+#     (the 10-row sample cannot feed 8 ranks at global batch 32 with drop_last).
+#     Pipeline proof, NOT a learning result.
+#
+# Data prep (once, from this folder) -- replicate the shipped sample 128x into the
+# directory data_local points at, or set --data-local to your own dataset dir:
+#   mkdir -p outputs/llmfoundry_gpu8/data
+#   for i in $(seq 128); do cat data/OTel_LLM_sample_10.jsonl; done \
+#     > outputs/llmfoundry_gpu8/data/OTel_LLM_sample_1280.jsonl
 #
 # Run: composer -n 8 --master_port 29750 \
-#        .env_train_llm_llmfoundry/llm-foundry/scripts/train/train.py \
+#        .env_llmfoundry/llm-foundry/scripts/train/train.py \
 #        yamls/finetune_chat_sft_8gpu.yaml
 
 variables:
   global_seed: 17
   max_seq_len: 2048
   model_name: Qwen/Qwen3-0.6B
-  data_local: /mnt/data_1.5t/outputs/train_llm_llmfoundry/gpu8/data
+  data_local: ./outputs/llmfoundry_gpu8/data   # generated slice; see the prep note above
   train_file: OTel_LLM_sample_1280.jsonl
 
 max_seq_len: ${variables.max_seq_len}

@@ -670,7 +670,7 @@ var **unset** — it is genuinely unnecessary on CUDA.
 ```bash
 export CUDA_VISIBLE_DEVICES=6
 # HF_HOME points at the model cache (set above); the 350M model must be fully cached there
-export HF_DATASETS_CACHE=/dev/shm/h100/dscache_ray
+export HF_DATASETS_CACHE=/dev/shm/dscache_ray
 export TRANSFORMERS_OFFLINE=1 HF_HUB_OFFLINE=1      # cache-first
 export MASTER_PORT=29646                            # assigned port; not the default 29500
 
@@ -681,7 +681,7 @@ python3 train_llm_ray.py \
   --num_train_epochs 10 \
   --max_seq_length 512 \
   --logging_steps 1 --save_steps 1000000 --num_to_keep 1 --max_failures 0 \
-  --storage_path /dev/shm/h100/out/ray/results --run_name h100_smoke
+  --storage_path /dev/shm/ray/results --run_name h100_smoke
 ```
 
 Step geometry: 10 rows / (batch 1 × world 1 × grad_acc 1) = **10 optimizer steps/epoch × 10

@@ -1,10 +1,10 @@
 # Shared environment for inference/transformers (all three leaves) -- the correctness
-# baseline stack. Verified on MI355X (ROCm 7.2.4), 2026-08.
+# baseline stack. Verified on MI355X (ROCm 7.2.4).
 #   python3 -m venv .env_transformers && source .env_transformers/bin/activate
 #   AMD: pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/rocm7.2
 #   then: pip install -r requirements.txt
 #
-# NVIDIA H100 (CUDA 13.0) -- VERIFIED 2026-08-22, driver 580.173.02, Python 3.12.3:
+# NVIDIA H100 (CUDA 13.0) -- VERIFIED on driver 580.173.02, Python 3.12.3:
 #   pip install torch numpy            # -> torch 2.13.0+cu130 (native CUDA 13; no --index-url)
 #   pip install -r requirements.txt    # torch/torchvision ROCm pins below are skipped/unused on CUDA
 #   Re-check: python -c "import torch;print(torch.__version__, torch.version.cuda)"  # 2.13.0+cu130 13.0

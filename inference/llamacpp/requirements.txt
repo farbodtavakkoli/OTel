@@ -7,11 +7,11 @@
 # (llm/, embedding/, reranker/).
 #
 # ---------------------------------------------------------------------------
-# (a) BUILD TOOLCHAIN — verified 2026-08-20 on 8x AMD Instinct MI355X (gfx950)
+# (a) BUILD TOOLCHAIN — verified on 8x AMD Instinct MI355X (gfx950)
 # ---------------------------------------------------------------------------
-# One llama.cpp build serves all three leaves. The campaign's build tree was
-# removed with the venvs in the 2026-08 reorg; rebuild with the commands below
-# (documented cold build: 40.6 s wall with -j 32). See ../README.md "Build".
+# One llama.cpp build serves all three leaves. The build tree is not part of this
+# repo; build it with the commands below (cold build: 40.6 s wall with -j 32).
+# See ../README.md "Build".
 #
 # System packages (apt):
 #   cmake        3.28.3
@@ -52,18 +52,18 @@
 #   recipe is NOT sufficient if you want the `-hf` convenience downloader.
 #
 # ---------------------------------------------------------------------------
-# (a2) BUILD TOOLCHAIN — verified 2026-08-22 on 1x NVIDIA H100 80GB HBM3 (Hopper cc 9.0)
+# (a2) BUILD TOOLCHAIN — verified on 1x NVIDIA H100 80GB HBM3 (Hopper cc 9.0)
 # ---------------------------------------------------------------------------
 # Only the backend flag changes vs the MI355X recipe above; every llama-server/client
 # command in the three leaves is byte-for-byte identical. See ../README.md
 # "NVIDIA (H100 / CUDA) — verified".
 #
-# System / toolchain (this box):
+# System / toolchain:
 #   CUDA        13.0.88   (nvcc at /usr/local/cuda/bin/nvcc; export it as CUDACXX)
 #   driver      580.173.02
 #   gcc/g++     13.3.0    (host compiler; CUDA 13 accepts it)
 #   libssl-dev  3.0.13    <-- STILL REQUIRED (NOTE 2 is vendor-neutral)
-#   cmake       4.4.2  }  NOT preinstalled on this box (only make/g++). Installed via pip
+#   cmake       4.4.2  }  may be absent on a host (only make/g++). Installed via pip
 #   ninja       1.13.0 }  into a throwaway venv, then put <venv>/bin on PATH:
 #                          python3 -m venv <venv> && <venv>/bin/python -m pip install cmake ninja
 #
@@ -84,8 +84,8 @@
 #   picks up the native Hopper arch (90-real). Set -DCMAKE_CUDA_ARCHITECTURES=90 to pin it.
 # NOTE 2c (OpenSSL): -DLLAMA_OPENSSL=ON is vendor-neutral and MANDATORY for `-hf` on both
 #   backends. Configure log must print "OpenSSL found: 3.0.13".
-# NOTE 3c (filesystem): the /mnt/gsma share rejects pip/rename ops (Errno 1) — build tree
-#   and LLAMA_CACHE were placed on tmpfs (/dev/shm); HF_HOME still points at the share.
+# NOTE 3c (filesystem): a network/NFS model share may reject pip/rename ops (Errno 1) —
+#   put the build tree and LLAMA_CACHE on tmpfs (/dev/shm); HF_HOME still points at the share.
 # NOTE 4c (fallback): if no toolchain is available, a prebuilt CUDA llama.cpp release
 #   binary works too; the 100 s source build here made it unnecessary.
 #

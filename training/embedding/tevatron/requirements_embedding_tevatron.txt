@@ -1,12 +1,13 @@
 # Environment for train_embedding_tevatron.py (Tevatron dense-retriever training).
 # These are NOT preinstalled in the base training venv; install into a dedicated venv.
-# On this host the venv lives OUTSIDE the repo (/ is at 94%):
-#   /mnt/data_450g/envs/.env_train_embedding_tevatron
+# If the root filesystem is tight, put the venv outside the repo on a larger volume
+# ($DATA_DIR below is that volume):
+#   python3 -m venv $DATA_DIR/envs/.env_tevatron
 #
 # AMD/ROCm: install the ROCm torch wheel FIRST, then this file, then the two git
 # packages below (verified on MI355X gfx950 / ROCm 7.2.4 — installs as
 # torch 2.11.0+rocm7.2, which satisfies the ==2.11.0 pin):
-#   export PIP_CACHE_DIR=/mnt/data_1.5t/pip_cache
+#   export PIP_CACHE_DIR=$DATA_DIR/pip_cache
 #   pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
 #   pip install -r requirements_embedding_tevatron.txt
 #   pip install git+https://github.com/luyug/GradCache.git
@@ -18,7 +19,7 @@
 #
 # NVIDIA (CUDA): same order without the ROCm index — `pip install torch==2.11.0`
 # from PyPI, then this file, then the two git packages.
-# VERIFIED on H100 80GB (Hopper cc9.0), CUDA 13.0, driver 580.173.02, Python 3.12.3 (2026-08-22):
+# VERIFIED on H100 80GB (Hopper cc9.0), CUDA 13.0, driver 580.173.02, Python 3.12.3:
 # the PyPI 2.11.0 wheel is already a native CUDA-13 build (installs as torch 2.11.0+cu130 with
 # nvidia-*-cu13 deps) — NO --index-url needed. Re-verify after the git installs (they leave it intact):
 #   pip install torch==2.11.0 numpy
@@ -27,7 +28,7 @@
 #   git clone https://github.com/texttron/tevatron.git && pip install --no-deps ./tevatron   # @ dd06310
 #   python -c "import torch; assert torch.version.cuda and torch.version.hip is None; print(torch.__version__)"
 #   # -> 2.11.0+cu130
-# The single-GPU smoke uses --attn_implementation sdpa: BAAI/bge-small-en-v1.5 is a BERT encoder
+# The single-GPU recipe uses --attn_implementation sdpa: BAAI/bge-small-en-v1.5 is a BERT encoder
 # and gains nothing from flash-attn. flash-attn is only worth installing for the Qwen eos/LoRA recipe:
 #   pip install flash-attn==2.8.3     # CUDA only; never install this on ROCm
 
@@ -55,5 +56,5 @@ tensorboard==2.21.0           # only needed for --report_to tensorboard
 # Tevatron is installed with --no-deps: its setup.py asks for transformers>=4.10.0
 # and datasets>=1.1.3, which would resolve away from the pins above.
 
-# Optional: DeepSpeed ZeRO for billion-scale retrievers (proven on this host at 0.19.4)
+# Optional: DeepSpeed ZeRO for billion-scale retrievers (verified at 0.19.4)
 # deepspeed==0.19.4

@@ -1,4 +1,4 @@
-# Environment for train_llm_openrlhf.py -- UNTESTED, written against upstream docs (August 2026).
+# Environment for train_llm_openrlhf.py -- UNTESTED, written against upstream docs.
 #
 # STRONG RECOMMENDATION: upstream considers Docker the supported install path, because the
 # Ray + vLLM + DeepSpeed + flash-attn combination is version-sensitive. See the Install
@@ -6,13 +6,13 @@
 # environment.
 #
 # NVIDIA/CUDA only: OpenRLHF has no first-party AMD/ROCm support (no ROCm docs, image, or
-# install path upstream as of August 2026). For AMD hardware use ../verl instead.
+# install path was found upstream). For AMD hardware use ../verl instead.
 # The pins below are the NVIDIA ones and are left exactly as upstream intends them.
 # For what actually resolves on AMD/ROCm, see the ROCm block at the bottom of this file.
 #
 # prepare_data_openrlhf.py is stdlib-only and needs nothing from this file.
 
-# --- NVIDIA H100 (CUDA 13.0) -- VERIFIED 2026-08-22, 1x H100 80GB, driver 580.173.02, py3.12 ---
+# --- NVIDIA H100 (CUDA 13.0) -- VERIFIED on 1x H100 80GB, driver 580.173.02, py3.12 ---
 # Unlike AMD, the plain-venv route WORKS for ALL tiers here (SFT/DPO AND PPO/GRPO), because the
 # CUDA-only vLLM wheel that forced a container on ROCm is the native wheel on NVIDIA. Steps:
 #
@@ -93,7 +93,7 @@ python-dotenv==1.2.2
 wandb>=0.18.0
 tensorboard>=2.18.0
 
-# --- AMD / ROCm reality (tested 1x MI355X gfx950, ROCm 7.2.4, py3.12, August 2026) ----
+# --- AMD / ROCm reality (tested on 1x MI355X gfx950, ROCm 7.2.4, py3.12) ------------
 #
 # `pip install -r` of THIS file fails on ROCm. Do not try. Root cause, in order:
 #
@@ -109,7 +109,7 @@ tensorboard>=2.18.0
 #      nvidia-cutlass-dsl[cu13]. Installing it OVERWRITES a working ROCm torch. This blocks
 #      PPO/GRPO *on the pip route only* -- ROCm builds of vLLM exist in AMD's first-party
 #      images, and OpenRLHF drives one of them fine. See "ROCm CONTAINER ROUTE" at the
-#      bottom of this file: PPO and GRPO both trained on 4x MI355X that way (2026-08-19).
+#      bottom of this file: PPO and GRPO both trained on 4x MI355X that way.
 #
 # WHICH PINS RESOLVE ON ROCm
 #   resolve fine : ray[default]==2.55.0 (detects MI355X, accelerator_type:AMD-Instinct-MI355X-OAM)
@@ -156,7 +156,7 @@ tensorboard>=2.18.0
 # ray 2.55.0, openrlhf 0.11.0 (--no-deps). SFT and DPO both step and checkpoint.
 
 # --- ROCm CONTAINER ROUTE for the RL tiers (PPO / GRPO / RLOO / REINFORCE++) ----------
-# TESTED 2026-08-19 on 4x MI355X (gfx950), ROCm 7.2.4 host. GRPO: 3 steps, exit 0, HF
+# TESTED on 4x MI355X (gfx950), ROCm 7.2.4 host. GRPO: 3 steps, exit 0, HF
 # checkpoint written. PPO (with critic): 3 steps, exit 0, critic_loss 0.213 -> 0.088.
 # Full walkthrough + evidence: readme_openrlhf.md, "RL tiers unblocked on MI355X".
 #
@@ -175,7 +175,7 @@ tensorboard>=2.18.0
 #     --group-add 44 --group-add 993 --ipc=host --cap-add=SYS_PTRACE \
 #     --security-opt seccomp=unconfined --shm-size=64g --network=host \
 #     -e HF_HOME=/hf_cache -v "$PWD":/workspace/train_llm_openrlhf \
-#     -v /mnt/data_1.5t/hf_cache:/hf_cache -v /mnt/data_1.5t/outputs/train_llm_openrlhf:/outputs \
+#     -v "$HF_HOME":/hf_cache -v "$OUTPUT_DIR/train_llm_openrlhf":/outputs \
 #     -w /workspace/train_llm_openrlhf <IMAGE> sleep infinity
 #
 #   # THE ONLY pip line needed inside. --no-deps everywhere is load-bearing: a plain

@@ -1,15 +1,20 @@
 # 8x MI355X (ROCm 7.2.4) smoke variant — derived from config_sft_lora_smoke_mi355x.yaml.
 # Deltas vs the 1-GPU smoke config (everything else identical):
-#   datasets.path  ./data/OTel_LLM_sample_10.jsonl -> replicated 640-row copy OUTSIDE the
-#                  repo. The shipped 10-row sample cannot feed 8 ranks (global batch 16
-#                  would exhaust it in <1 step); the copy is the same 10 rows x64, so this
-#                  is a PIPELINE proof, not a learning result.
+#   datasets.path  ./data/OTel_LLM_sample_10.jsonl -> generated 640-row replica under
+#                  ./outputs/. The shipped 10-row sample cannot feed 8 ranks (global batch
+#                  16 would exhaust it in <1 step); the replica is the same 10 rows x64, so
+#                  this is a PIPELINE proof, not a learning result. Generate it once from
+#                  this folder (awk, not cat: the shipped sample has no trailing newline):
+#                    mkdir -p outputs/data && for i in $(seq 64); do \
+#                      awk '{print}' data/OTel_LLM_sample_10.jsonl; \
+#                    done > outputs/data/otel_sample_x64.jsonl
 #   micro_batch_size 1 -> 2, grad_accum 1  => global batch 2 x 1 x 8 = 16
 #   max_steps        5 -> 20
 #   save_strategy: "no" + saves_per_epoch: null   (disk hygiene; no checkpoints)
-#   dataset_prepared_path / output_dir -> gpu8 dir
-#   NO deepspeed:/fsdp: block -> plain torch DDP across 8 ranks (see readme sec. 2b).
-# Launch (inside the machine-wide flock; see readme_axolotl.md "8-GPU run"):
+#   dataset_prepared_path / output_dir -> separate 8-GPU dirs (no collision with the 1-GPU run)
+#   NO deepspeed:/fsdp: block -> plain torch DDP across 8 ranks (see readme "8-GPU run").
+# Launch (hold a machine-wide lock if other jobs share the GPUs; see readme_axolotl.md
+# "8-GPU run"):
 #   python3 train_llm_axolotl.py --config config_sft_lora_smoke_mi355x_8gpu.yaml \
 #       --num-processes 8 --main-process-port 29700
 
@@ -19,7 +24,7 @@ trust_remote_code: false
 
 ### data
 datasets:
-  - path: /mnt/data_1.5t/outputs/train_llm_axolotl/gpu8/otel_sample_x64.jsonl
+  - path: ./outputs/data/otel_sample_x64.jsonl   # generated; see the header comment
     ds_type: json
     split: train
     type: chat_template
@@ -32,9 +37,9 @@ datasets:
 
 chat_template: tokenizer_default
 
-dataset_prepared_path: /mnt/data_1.5t/outputs/train_llm_axolotl/gpu8/last_run_prepared_8gpu
+dataset_prepared_path: ./last_run_prepared_smoke_mi355x_8gpu
 val_set_size: 0
-output_dir: /mnt/data_1.5t/outputs/train_llm_axolotl/gpu8/sft-lora-smoke-8gpu
+output_dir: ./outputs/sft-lora-smoke-mi355x-8gpu
 
 ### sequence handling
 sequence_len: 512

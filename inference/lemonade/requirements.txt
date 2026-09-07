@@ -13,7 +13,7 @@
 #   -> pulls prebuilt CUDA llama.cpp `llama-b10397-ubuntu-cuda-sm_90-x64.tar.xz` (build
 #   b10397, bundles its own CUDA 12.9 runtime: libcublas/libcudart .so.12). ~41 s, no
 #   compiler. Lemonade auto-detects "NVIDIA H100 80GB HBM3 (compute 9.0, sm_90)" and
-#   honours CUDA_VISIBLE_DEVICES. VERIFIED 2026-08-22, GPU 6, single-GPU smoke.
+#   honours CUDA_VISIBLE_DEVICES. VERIFIED with a single-GPU smoke test.
 #   NOTE: `vllm` has NO cuda backend in Lemonade 11.7.0 (rocm-only); on NVIDIA the only
 #   GPU path is llama.cpp/GGUF via llamacpp:cuda. See README.md.
 # The client requirements below are hardware-neutral (identical on both).

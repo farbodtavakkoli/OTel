@@ -1,7 +1,7 @@
 # Pinned environment for train_llm_deepspeed.py — tested set (Python 3.12, CUDA 13.0, H100).
 # Multi-GPU HF Transformers + DeepSpeed (ZeRO) trainer: SFT / DPO / GRPO.
 #
-# NVIDIA CUDA variant (TESTED 2026-08-22, SFT+LoRA+ZeRO-2 single-GPU on 1×H100 80GB,
+# NVIDIA CUDA variant (TESTED: SFT+LoRA+ZeRO-2 single-GPU on 1×H100 80GB,
 # Hopper cc9.0, driver 580.173.02, CUDA 13.0 — see readme_deepspeed.md
 # "H100 (CUDA 13.0) — tested"): install torch/torchvision from plain PyPI FIRST, then the
 # rest of this file. NO --index-url is needed on CUDA 13 — the pins below ARE the cu130
@@ -14,14 +14,14 @@
 # from PyPI as a pure-python wheel and JIT-compiled NOTHING for ZeRO-2 + adamw_torch on
 # H100 (no nvcc build at install). Do NOT pip-install flash-attn: the script hard-blocks
 # flash_attention_2 for gemma-4 (head_dim > 256) — use --flash_attention sdpa. Multi-GPU
-# (2/8×H100) is deferred, expected to scale with no package/pin change (as it did on ROCm).
+# on H100 needs no package or pin change (2×H100 measured, as on ROCm).
 #
 # Core training stack
 torch==2.11.0
 torchvision==0.26.0
 deepspeed==0.19.4
 
-# AMD ROCm variant (TESTED 2026-08-19 on 2×MI355X AND on all 8×MI355X / gfx950,
+# AMD ROCm variant (TESTED on 2×MI355X AND on all 8×MI355X / gfx950,
 # ROCm 7.2.4 — see readme_deepspeed.md "MI355X (ROCm 7.2) — tested" and its
 # "8-GPU run" subsection; scaling to 8 ranks needed NO new package and NO pin
 # change): install torch/torchvision

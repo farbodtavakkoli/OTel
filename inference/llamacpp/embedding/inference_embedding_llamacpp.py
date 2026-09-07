@@ -1,4 +1,4 @@
-"""OpenAI-compatible client for a llama.cpp llama-server embedding endpoint — see readme_embedding_llamacpp.md."""
+"""OpenAI-compatible client for a llama.cpp llama-server embedding endpoint — see README.md."""
 import argparse
 import json
 import math

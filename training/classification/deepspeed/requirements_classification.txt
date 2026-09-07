@@ -1,7 +1,7 @@
 # Pinned environment for train_llm_classification.py (Python 3.12, CUDA 13.0, H100).
 # Sequence-classification full fine-tuning on HF Transformers + DeepSpeed (ZeRO-2).
 # Core training stack
-# AMD/ROCm (verified on MI355X/gfx950, ROCm 7.2.4, 2026-08-19):
+# AMD/ROCm (verified on MI355X/gfx950, ROCm 7.2.4):
 # install the ROCm torch wheel FIRST, then the rest of this file WITHOUT flash-attn:
 #   pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
 #   grep -vE '^(flash-attn|torch)==' requirements_classification.txt | grep -v '^#' | xargs pip install
@@ -10,7 +10,7 @@
 # needed. flash-attn as pinned here is CUDA-only — never install it on AMD;
 # train_llm_classification.py auto-falls back to attn_implementation="sdpa".
 #
-# NVIDIA/CUDA (verified on H100 80GB, driver 580.173.02, CUDA 13.0, Python 3.12, 2026-08-22):
+# NVIDIA/CUDA (verified on H100 80GB, driver 580.173.02, CUDA 13.0, Python 3.12):
 # the DEFAULT PyPI wheel is CUDA-13 native — NO --index-url needed. Install torch FIRST,
 # then the rest of this file WITHOUT the torch/flash-attn pins, then re-verify torch:
 #   pip install torch numpy                      # -> torch 2.13.0+cu130 (CUDA 13.0)
@@ -19,7 +19,7 @@
 # torch==2.11.0 has NO cu130 wheel on PyPI; the H100 verification used torch==2.13.0+cu130
 # (documented deviation from the pin). deepspeed 0.19.4 installs pure-Python on CUDA too
 # (no nvcc build; ZeRO-2 bf16 needs no built ops). flash-attn==2.8.3 is a source build on
-# CUDA and was SKIPPED in the H100 smoke — the script auto-falls back to sdpa; add it
+# CUDA and was not installed for the H100 verification — the script auto-falls back to sdpa; add it
 # (prebuilt cu13 wheel or source build) only if you want FA2 (train script picks it up).
 # Use --zero_stage 2 on a single GPU: --zero_stage 3 trains fine but SILENTLY SAVES NO
 # WEIGHTS (build_deepspeed_config never sets stage3_gather_16bit_weights_on_model_save).

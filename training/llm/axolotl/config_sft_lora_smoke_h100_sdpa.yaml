@@ -22,9 +22,9 @@ datasets:
 
 chat_template: tokenizer_default
 
-dataset_prepared_path: /dev/shm/h100/out/axolotl/last_run_prepared_smoke_sdpa
+dataset_prepared_path: ./last_run_prepared_smoke_h100_sdpa
 val_set_size: 0
-output_dir: /dev/shm/h100/out/axolotl/sft-lora-smoke-sdpa
+output_dir: ./outputs/sft-lora-smoke-h100-sdpa
 
 ### sequence handling
 sequence_len: 2048

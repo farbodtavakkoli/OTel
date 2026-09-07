@@ -1,4 +1,4 @@
-"""Client for an Ollama server serving EmbeddingGemma-300M GGUF — see readme_embedding_ollama.md."""
+"""Client for an Ollama server serving EmbeddingGemma-300M GGUF — see README.md."""
 import argparse
 import json
 import math

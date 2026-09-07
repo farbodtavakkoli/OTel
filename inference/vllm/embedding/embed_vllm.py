@@ -1,4 +1,4 @@
-"""Embedding client for a vLLM OpenAI-compatible server — see readme_embedding_vllm.md."""
+"""Embedding client for a vLLM OpenAI-compatible server — see README.md."""
 
 import argparse
 import json

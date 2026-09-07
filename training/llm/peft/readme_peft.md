@@ -541,18 +541,18 @@ export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1   # HF_HOME as exported above
 CUDA_VISIBLE_DEVICES=5 python train_llm_peft.py --model_name LiquidAI/LFM2.5-350M \
   --batch_size 1 --grad_acc_steps 1 --num_train_epochs 4 --logging_steps 1 \
   --lora_r 16 --lora_alpha 32 --max_seq_len 2048 --attn_implementation sdpa \
-  --output_dir /dev/shm/h100/out/peft/lora_smoke
+  --output_dir /dev/shm/peft/lora_smoke
 
 # QLoRA (4-bit nf4 + paged_adamw_8bit + gradient checkpointing) — PASS
 CUDA_VISIBLE_DEVICES=5 python train_llm_peft.py --model_name LiquidAI/LFM2.5-350M \
   --load_in_4bit --optim paged_adamw_8bit --gradient_checkpointing \
   --batch_size 1 --grad_acc_steps 1 --num_train_epochs 4 --logging_steps 1 \
-  --lora_r 16 --lora_alpha 32 --max_seq_len 2048 --output_dir /dev/shm/h100/out/peft/qlora_smoke
+  --lora_r 16 --lora_alpha 32 --max_seq_len 2048 --output_dir /dev/shm/peft/qlora_smoke
 
 # merge — PASS
 CUDA_VISIBLE_DEVICES=5 python merge_adapter.py \
-  --adapter /dev/shm/h100/out/peft/lora_smoke/final_adapter \
-  --output_dir /dev/shm/h100/out/peft/merged --device_map cpu
+  --adapter /dev/shm/peft/lora_smoke/final_adapter \
+  --output_dir /dev/shm/peft/merged --device_map cpu
 ```
 
 **Expected output** (bf16 LoRA, LFM2.5-350M = 360.5M params, 1.66% trainable, 36

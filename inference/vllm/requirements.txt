@@ -5,8 +5,11 @@
 #   python3 -m venv .env_vllm && source .env_vllm/bin/activate
 #   pip install -r requirements.txt
 #
-# Verified on AMD MI355X (ROCm 7.2.4), 2026-08. NVIDIA H100 (CUDA 13.0): the same clients
-# work, and the ENGINE also installs natively via pip (verified 2026-08-22) -- see below.
+# One shared venv at the stack root (inference/vllm/.env_vllm) serves the llm/, embedding/
+# and reranker/ leaves -- build it once here, activate it from any leaf.
+#
+# Verified on AMD MI355X (ROCm 7.2.4). NVIDIA H100 (CUDA 13.0): the same clients work, and
+# the ENGINE also installs natively via pip (verified) -- see below.
 
 python-dotenv==1.2.2
 
@@ -15,7 +18,7 @@ python-dotenv==1.2.2
 # those here.
 
 # -----------------------------------------------------------------------------
-# NVIDIA H100 ENGINE (verified 2026-08-22, CUDA 13.0, driver 580.173.02) --------
+# NVIDIA H100 ENGINE (verified: CUDA 13.0, driver 580.173.02) ------------------
 # On NVIDIA the vLLM engine installs natively via pip (no container needed, unlike ROCm).
 # In a fresh venv, with the proxy UNSET (pypi.nvidia.com is proxy-blocked; pypi.org is not):
 #     pip install torch numpy   # -> torch 2.13.0+cu130 (native CUDA 13, no --index-url)

@@ -9,14 +9,14 @@
 # Do not install this file into a CUDA venv and expect training to work.
 
 # ==============================================================================
-# PATH A (recommended): container  -- VERIFIED on MI355X, ROCm 7.2.4, Aug 2026
+# PATH A (recommended): container  -- VERIFIED on MI355X, ROCm 7.2.4
 # ==============================================================================
-# This is the route that was actually run and proven on this hardware. See
-# readme_primus.md section 8.1 for the full evidence (600/600 SFT iterations,
-# lm loss 9.75 -> <1, zero NaN, both assigned GPUs at 98-99%).
+# This is the verified route on this hardware. See readme_primus.md section 8.1
+# for the full evidence (600/600 SFT iterations, lm loss 9.75 -> <1, zero NaN,
+# both assigned GPUs at 98-99%).
 #
 #   docker pull rocm/primus:v26.5
-#   # digest verified 2026-08:
+#   # verified digest:
 #   #   sha256:3040bf42974d791dd42de2e36b3c919a00869a5754cfc57a06b96d004c55eed1
 #   #   14.1 GB compressed / 54.8 GB on disk
 #
@@ -24,7 +24,7 @@
 #       --group-add video --group-add render --ipc=host \
 #       --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
 #       --shm-size 64G \
-#       -v /mnt/data_1.5t/hf_cache:/root/.cache/huggingface \
+#       -v /path/to/hf_cache:/root/.cache/huggingface \
 #       -v $PWD:/workspace/folder \
 #       rocm/primus:v26.5 sleep infinity
 #
@@ -48,8 +48,8 @@
 #   git submodule update --init --recursive
 #
 # Check current tags: https://hub.docker.com/r/rocm/primus/tags
-# (v26.5 re-verified live on Docker Hub in August 2026 — pushed 2026-07-23,
-#  alias v26.5-pytorch2.12-te2.15 points at the same digest.)
+# (v26.5 verified live on Docker Hub; the alias v26.5-pytorch2.12-te2.15 points
+#  at the same digest.)
 
 # ==============================================================================
 # PATH B: pip wheel (CLI only; still launches training inside the container)

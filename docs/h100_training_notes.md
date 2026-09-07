@@ -32,7 +32,7 @@ hardware-neutral and applies here too. Folder names use the current layout
 - **venvs must live on tmpfs (`/dev/shm`), not on a CIFS/NFS mount.** Such mounts are
   pathologically slow for venv creation/imports *and* can reject CUDA-lib symlink ops during
   pip install (`OSError: Operation not permitted` on `libcusparseLt.so.0`). Standard pattern:
-  `python3 -m venv /dev/shm/h100/venv_<leaf> && ln -sf /dev/shm/h100/venv_<leaf> .env_<leaf>`.
+  `python3 -m venv /dev/shm/venv_<leaf> && ln -sf /dev/shm/venv_<leaf> .env_<leaf>`.
 
 ## torch on CUDA 13 — what actually resolves
 
@@ -88,7 +88,7 @@ hardware-neutral and applies here too. Folder names use the current layout
 - **Disabling checkpoints is hard.** `save_strategy:"no"` doesn't stop HF Trainer's fit-end
   write, `load_best_model_at_end=True` forces a save, and Composer/Foundry write a fit-end
   checkpoint regardless. Write outputs to a scratch location such as
-  `/dev/shm/h100/out/<leaf>/` and delete large checkpoints once the evidence is captured.
+  `/dev/shm/<leaf>/` and delete large checkpoints once the evidence is captured.
 - **Demand GPU-residency proof by PID, sampled from inside the job.** An H100 idles at ~0 MiB
   / 0 %, and a fast smoke (e.g. deepspeed's 87 s SFT) can finish before an externally-sampled
   `nvidia-smi` lands — an external residency sample can therefore catch the card *idle*, and
@@ -101,7 +101,7 @@ hardware-neutral and applies here too. Folder names use the current layout
   transformers 5.5.0 imports** (`LayerRepository … revision/version` ValueError). Pin
   `kernels>=0.12,<0.13`.
 - **`datasets` `.arrow` cache writes can fail on a CIFS/NFS mount** (`OSError Errno 1
-  Operation not permitted`). Set `HF_DATASETS_CACHE=/dev/shm/h100/dscache_<leaf>`.
+  Operation not permitted`). Set `HF_DATASETS_CACHE=/dev/shm/dscache_<leaf>`.
 - **torch-2.13 + FSDP2 rejects tied embeddings.** `gemma-4`'s `tie_word_embeddings:True`
   collides with `fully_shard` (`Parameter embed_tokens.weight is shared`); torch 2.11
   tolerated it. Untie at load (`from_pretrained(..., tie_word_embeddings=False)`). Seen in

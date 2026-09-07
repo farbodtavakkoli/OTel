@@ -1,4 +1,4 @@
-"""LLM reference generation / prompted classification (Transformers + PyTorch) — see readme_inference/transformers/llm.md."""
+"""LLM reference generation / prompted classification (Transformers + PyTorch) — see README.md."""
 import argparse
 import json, os, time
 

@@ -9,11 +9,11 @@
 #   pip install -r requirements_composer.txt
 #
 # ---------------------------------------------------------------------------
-# NVIDIA H100 — TESTED AND WORKING (CUDA 13.0, driver 580.173.02, 2026-08-22).
+# NVIDIA H100 — TESTED AND WORKING (CUDA 13.0, driver 580.173.02).
 # ---------------------------------------------------------------------------
 # On H100 you do NOT need the cu128 --index-url line or any override: just let
 # mosaicml resolve torch from the default index. Its `torch<2.7.1` pin lands on
-# torch 2.7.0+cu126, a cu12.6 build that RUNS on this CUDA-13/driver-580 host
+# torch 2.7.0+cu126, a cu12.6 build that RUNS on a CUDA-13/driver-580 host
 # (driver backward-compat) -- bf16 matmul executes on-GPU and
 # `composer.utils.get_device(None)` returns DeviceGPU. Because the pin is
 # SATISFIED (not violated as on ROCm), `pip check` is clean and NO
@@ -30,7 +30,7 @@
 #   blind-uninstall it)  mosaicml==0.32.1  transformers==5.15.1  tokenizers==0.22.2
 #   torchmetrics==1.7.4  numpy==2.2.6  huggingface_hub (>=0.26)
 #
-# `pip install torch` ALONE gives torch 2.13.0+cu130 on this box; mosaicml then
+# `pip install torch` ALONE gives torch 2.13.0+cu130 on a CUDA-13 host; mosaicml then
 # downgrades it to 2.7.0+cu126 to satisfy its pin. If you specifically WANT
 # 2.13.0+cu130, reinstall it AFTER mosaicml with:
 #   pip install --force-reinstall --no-deps torch==2.13.0
@@ -38,7 +38,7 @@
 # still runs. NOT needed on H100 -- 2.7.0+cu126 works out of the box.
 #
 # `--attn_implementation sdpa` (default) needs no build step. flash-attn on H100
-# is possible but was not required for this smoke (LFM2 hybrid arch; sdpa fine).
+# is possible but is not required here (LFM2 hybrid arch; sdpa fine).
 # Use plain CUDA_VISIBLE_DEVICES; no HIP_VISIBLE_DEVICES on NVIDIA.
 # ---------------------------------------------------------------------------
 
@@ -76,7 +76,7 @@ huggingface_hub>=0.26.0       # gated-checkpoint downloads
 # These carry torch + CUDA + flash-attn already; you still `pip install mosaicml`.
 
 # ---------------------------------------------------------------------------
-# AMD / ROCm — TESTED AND WORKING on MI355X (gfx950), ROCm 7.2.4, 2026-08-19.
+# AMD / ROCm — TESTED AND WORKING on MI355X (gfx950), ROCm 7.2.4.
 # ---------------------------------------------------------------------------
 # Upstream's README still says AMD support is "coming soon", but Composer 0.32.1
 # runs fine on a ROCm torch build: `composer.utils.get_device(None)` returns

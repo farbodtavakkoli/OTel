@@ -215,13 +215,13 @@ Smoke run (single GPU 7, port 29663, Qwen3-0.6B stand-in — same `qwen3_nothink
 the shipped Qwen3-8B recipe). A dedicated `config_sft_lora_smoke_h100.yaml` is provided
 (the 1-GPU MI355X config is left untouched); it bumps to `num_train_epochs: 3.0` over the
 ~10-row sample = **30 optimizer steps** (vs the MI355X copy's `max_steps: 5`) so the loss
-trend is visible, and writes to `output_dir: /dev/shm/h100/out/llamafactory/sft_lora_smoke`:
+trend is visible, and writes to `output_dir: ./outputs/sft_lora_smoke_h100`:
 
 ```bash
 export CUDA_VISIBLE_DEVICES=7        # plain CUDA_VISIBLE_DEVICES — no HIP_VISIBLE_DEVICES on NVIDIA
 export MASTER_PORT=29663
 # HF_HOME as exported in the "Set these to suit your machine" block above
-export HF_DATASETS_CACHE=/dev/shm/h100/dscache_llamafactory
+export HF_DATASETS_CACHE=/dev/shm/dscache_llamafactory
 python3 train_llm_llamafactory.py --config config_sft_lora_smoke_h100.yaml --num-gpus 1
 ```
 
@@ -387,12 +387,21 @@ is what shows sustained 8-way load.
    key — DDP is sufficient for a 0.6B LoRA and avoids the ZeRO config surface entirely.
 2. **A bigger data slice, because 10 rows cannot feed 8 ranks.** 8 ranks x batch 4 x accum 2
    = 64 samples per optimizer step; the shipped `OTel_LLM_sample_10.jsonl` would be exhausted
-   before rank 7 sees a batch. Replicate the 10 rows x256 -> 2,560 rows written
-   **outside the repo**, e.g. at
-   `$OUTPUT_DIR/train_llm_llamafactory/gpu8/data/otel_chat_sft_x256.jsonl`, and
-   register it as `otel_chat_sft_x256` in `data/dataset_info.json` with an **absolute**
-   `file_name` (upstream `data/loader.py` does `os.path.join(dataset_dir, file_name)`, so an
-   absolute path wins and `dataset_dir: ./data` still resolves the registry). This is a
+   before rank 7 sees a batch. Replicate the 10 rows x256 -> 2,560 rows into `data/`:
+
+   ```bash
+   # awk normalises the trailing newline the shipped sample lacks — a plain
+   # `cat` loop would glue the last row of each copy onto the first of the next
+   # and emit invalid JSON.
+   awk '{print}' data/OTel_LLM_sample_10.jsonl > /tmp/one.jsonl
+   for i in $(seq 256); do cat /tmp/one.jsonl; done > data/otel_chat_sft_x256.jsonl
+   wc -l data/otel_chat_sft_x256.jsonl        # -> 2560
+   ```
+
+   It is already registered as `otel_chat_sft_x256` in `data/dataset_info.json` with a
+   relative `file_name` (upstream `data/loader.py` does
+   `os.path.join(dataset_dir, file_name)`, and the config sets `dataset_dir: ./data`).
+   The generated file is a build artifact — do not commit it. This is a
    **pipeline proof, not a learning result** — the loss curve above is a 0.6B model memorising
    10 repeated conversations, which is exactly why it reaches 0.028.
 3. **The venv GPU pin must be overridden** (see the launch block). This is the single

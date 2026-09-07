@@ -11,7 +11,7 @@ sentence-transformers==5.7.0
 # ==2.11.0 pin below so this file does not reinstall a CPU/CUDA torch on top).
 # Skip flash-attn (CUDA-only build); the script falls back to "sdpa" automatically.
 #
-# NVIDIA/H100 (CUDA 13.0, driver 580.173.02) — verified 2026-08-22:
+# NVIDIA/H100 — verified on CUDA 13.0, driver 580.173.02:
 #   pip install torch numpy      # -> torch==2.13.0+cu130 (native CUDA 13, NO --index-url)
 #   then install this file WITHOUT the torch line below (no +cu130 wheel exists for
 #   2.11.0), e.g.  grep -v '^torch==' requirements_reranker.txt | pip install -r /dev/stdin

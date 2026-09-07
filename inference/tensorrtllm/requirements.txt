@@ -1,16 +1,16 @@
 # Requirements for inference/tensorrtllm -- NVIDIA TensorRT-LLM.
 #
-# STATUS 2026-08-22 (NVIDIA H100): WORKS. Re-run on 8x NVIDIA H100 80GB HBM3
+# STATUS (NVIDIA H100): WORKS. Verified on 8x NVIDIA H100 80GB HBM3
 #   (driver 580.173.02, CUDA 13.0). `import tensorrt_llm` succeeds (v1.2.1) and
 #   llm/probe_tensorrtllm.py exits 0. VERIFIED install recipe below. The AMD/MI355X
 #   "NOT SUPPORTED" record that follows is RETAINED but SUPERSEDED on NVIDIA hardware.
-#   Full details + real logs: llm/README.md, "H100 result (2026-08-22)".
+#   Full details + real logs: llm/README.md, "H100 result".
 #
 # ==============================================================================
-# VERIFIED H100 install (NVIDIA, 2026-08-22) -- this is a WORKING list
+# VERIFIED H100 install (NVIDIA) -- this is a WORKING list
 # ==============================================================================
-#   # 1. UNSET the proxy first: the box proxy (proxy.conexus.svc.local:3128) 403-blocks
-#   #    pypi.nvidia.com, so the NVIDIA extra index fails until it is unset. Harmless otherwise.
+#   # 1. UNSET the proxy first: a host proxy typically 403-blocks pypi.nvidia.com,
+#   #    so the NVIDIA extra index fails until it is unset. Harmless otherwise.
 #   unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 #   # 2. venv + NVIDIA extra index (pulls the whole CUDA closure)
 #   python3 -m venv .env_tensorrtllm && source .env_tensorrtllm/bin/activate
@@ -21,32 +21,31 @@
 #   # RESULTING VERSIONS (verified importable + probe exit 0):
 #   #   tensorrt-llm==1.2.1
 #   #   torch==2.9.1+cu128        # DOWNGRADED from 2.13.0+cu130 by the install -- EXPECTED.
-#   #                             # cu128 runs fine on the cu130/driver-580 box. Do NOT force
+#   #                             # cu128 runs fine on a cu130/driver-580 host. Do NOT force
 #   #                             # torch back to cu130: it breaks tensorrt-llm 1.2.1's pins.
 #   #   nvidia-modelopt==0.37.0
 #   #   flashinfer-python==0.6.4
 #   #   python-dotenv (below)     # for probe_tensorrtllm.py's load_dotenv("dev.env")
 #
 # ------------------------------------------------------------------------------
-# HISTORICAL: NOT SUPPORTED on the original AMD host (verified 2026-08-20)
+# NOT SUPPORTED on AMD / ROCm hosts (verified on MI355X)
 # ------------------------------------------------------------------------------
-# On the AMD box there was NO installable, runnable configuration of TensorRT-LLM, and there
+# On the AMD host there was NO installable, runnable configuration of TensorRT-LLM, and there
 # is still no ROCm/AMD build of it anywhere upstream (a vendor-scope boundary). The notes
 # below are the AMD-host evidence record -- retained, but superseded on NVIDIA H100 above.
 #
-# THAT HOST (verified 2026-08-20): 8x AMD Instinct MI355X (gfx950), ROCm 7.2.4, Ubuntu,
+# AMD HOST TESTED: 8x AMD Instinct MI355X (gfx950), ROCm 7.2.4, Ubuntu,
 # Python 3.12.3, Docker 29.7.2. No NVIDIA GPU, no CUDA driver, no nvidia-smi.
 #
 # VENV CONVENTION: python3 -m venv .env_tensorrtllm  (at inference/tensorrtllm/).
-# Per-campaign venvs (.env_inference_llm_tensorrtllm etc.) were removed in the 2026-08 reorg.
 #
 # ==============================================================================
 # WHY NOT SUPPORTED: three separate facts -- do not let the first hide the third
 # ==============================================================================
-#  (a) HARDWARE: this box has no NVIDIA GPU at all. Decisive here.
+#  (a) HARDWARE: that host has no NVIDIA GPU at all. Decisive here.
 #        which nvidia-smi / ls /dev/nvidia* / lsmod | grep nvidia / lspci -> all empty
 #        torch.version.cuda -> None; torch.version.hip -> 7.2.26015 (torch 2.11.0+rocm7.2)
-#      NOTE: torch.cuda.is_available() returns True here -- ROCm aliases torch.cuda onto
+#      NOTE: torch.cuda.is_available() returns True on ROCm -- it aliases torch.cuda onto
 #      HIP. That is NOT evidence of CUDA. Check torch.version.cuda / torch.version.hip.
 #  (b) DESIGN: TensorRT-LLM is NVIDIA-only. docs/source/supported-hardware.md lists only
 #      Blackwell, Hopper, Ada Lovelace, and Ampere. A search of that file for
@@ -57,14 +56,14 @@
 #      requantize with NVIDIA Model Optimizer before trusting any benchmark number.
 #
 # ==============================================================================
-# WHAT PIP ACTUALLY DID ON THIS HOST (the interesting negative result)
+# WHAT PIP ACTUALLY DID ON THE AMD HOST (the interesting negative result)
 # ==============================================================================
-#   pip install tensorrt-llm    # COMPLETED, exit 0, ~16 GB -- on a box with zero NVIDIA
+#   pip install tensorrt-llm    # COMPLETED, exit 0, ~16 GB -- on a host with zero NVIDIA
 #                               # hardware. No platform guard: generic manylinux wheel.
 # The ~200-package closure is CUDA-only top to bottom (tensorrt_cu13_libs, cuda-toolkit,
 # nvidia-*-cu12/cu13, nvidia-modelopt, and a stock CUDA torch-2.9.1).
 #
-# !! DANGER: that CUDA torch-2.9.1 would UNINSTALL this host's torch 2.11.0+rocm7.2 in any
+# !! DANGER: that CUDA torch-2.9.1 would UNINSTALL an AMD host's torch 2.11.0+rocm7.2 in any
 # !! shared environment and break every working ROCm stack. Upstream recommends a
 # !! constraints file (echo "torch==$CUR" > /tmp/c.txt; pip install tensorrt_llm -c /tmp/c.txt).
 # !! Always confine this to a dedicated venv. Never install it globally.
@@ -73,7 +72,7 @@
 #   $ python -c "import tensorrt_llm"
 #   ImportError: libcuda.so.1: cannot open shared object file: No such file or directory
 # libcuda.so.1 is supplied by the NVIDIA kernel driver, never by a pip wheel.
-# (The 16 GB install was reverted after capturing this evidence; root fs was at 95%.)
+# (The install lands ~16 GB on disk -- remove the venv afterwards if space is tight.)
 #
 # ==============================================================================
 # NVIDIA path -- COMMENTED OUT, not runnable here. For future NVIDIA hardware.
@@ -85,8 +84,8 @@
 #     -p 8400:8400 -v ~/.cache:/root/.cache:rw \
 #     --name tensorrt_llm nvcr.io/nvidia/tensorrt-llm/release:<CURRENT_TAG> /bin/bash
 #   python3 -c "import tensorrt_llm; print(tensorrt_llm.__version__)"
-# NOT pulled here: needs NGC auth + --gpus all + an NVIDIA runtime that cannot exist on
-# this box, and the image is tens of GB against ~93 GB free on /.
+# Not exercised on the AMD host: it needs NGC auth, --gpus all, and an NVIDIA runtime that
+# cannot exist there, and the image is tens of GB -- check free disk space before pulling.
 #
 # Alternative: pip on a real NVIDIA Linux host. Host prerequisites first --
 #   # CUDA Toolkit 13.2 installed and CUDA_HOME set; NVIDIA driver present.
@@ -104,7 +103,7 @@
 # AMD / ROCm variant
 # ==============================================================================
 # None exists. No ROCm build, no HIP backend, no AMD entry in the support matrix --
-# a vendor-scope boundary, not a broken build. On this host use instead:
+# a vendor-scope boundary, not a broken build. On an AMD host use instead:
 #   inference/vllm/llm      (recommended for serving)
 #   inference/sglang/llm
 #
@@ -115,5 +114,5 @@
 # pip install -r requirements.txt
 # python llm/probe_tensorrtllm.py --no_check_import
 # Exits 0 ONLY if a real NVIDIA device + CUDA torch + importable tensorrt_llm are all
-# present. On this host it exits 1, so it doubles as a regression check on NVIDIA hardware.
+# present. On an AMD host it exits 1, so it doubles as a regression check on NVIDIA hardware.
 python-dotenv==1.2.3

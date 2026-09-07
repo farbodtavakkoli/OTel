@@ -1,10 +1,11 @@
 # Environment for train_reranker_flagembedding.py (BGE / LLM reranker fine-tuning via FlagEmbedding).
-# (This venv originally also served a FlagEmbedding embedding folder, removed in the 2026-08 reorg.)
+# Install into a dedicated venv.
 #
 # AMD/ROCm (verified on MI355X / ROCm 7.2.4): install the ROCm torch wheel FIRST,
-# then this file. Do NOT put the venv under /, which is full on this host:
-#   python3 -m venv /mnt/data_450g/envs/.env_train_flagembedding
-#   source /mnt/data_450g/envs/.env_train_flagembedding/bin/activate
+# then this file. If the root filesystem is tight, put the venv outside the repo on a
+# larger volume ($DATA_DIR below is that volume):
+#   python3 -m venv $DATA_DIR/envs/.env_flagembedding
+#   source $DATA_DIR/envs/.env_flagembedding/bin/activate
 #   pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
 #   pip install -r requirements_reranker_flagembedding.txt
 # torch installs as 2.11.0+rocm7.2 and satisfies the ==2.11.0 pin below.
@@ -15,7 +16,7 @@
 #   # optional, needs the CUDA toolkit:
 #   # pip install flash-attn==2.8.3
 #
-# NVIDIA H100 / CUDA 13.0 (verified 2026-08-22, driver 580.173.02, Python 3.12.3):
+# NVIDIA H100 / CUDA 13.0 (verified on driver 580.173.02, Python 3.12.3):
 # the torch==2.11.0 pin below has NO cu130 wheel, so install torch FIRST and then
 # this file WITHOUT the torch line (the plain PyPI wheel is the native CUDA-13 build):
 #   pip install torch numpy                       # -> torch 2.13.0+cu130 (CUDA 13.0)
@@ -32,7 +33,7 @@ FlagEmbedding==1.4.0
 # Training stack.
 # transformers is pinned <5 ON PURPOSE: FlagEmbedding 1.4.0's reranker data pipeline
 # calls tokenizer.prepare_for_model(), which transformers 5.x removed, so the reranker
-# path dies on the first batch under 5.x. 4.57.1 is verified here on gfx950.
+# path dies on the first batch under 5.x. 4.57.1 is verified on gfx950.
 torch==2.11.0            # ROCm 7.2 pin. On CUDA 13/H100 use torch 2.13.0+cu130 instead (see header) — no cu130 wheel exists for 2.11.0.
 transformers==4.57.1     # <5 required on BOTH ROCm and CUDA (FlagEmbedding needs tokenizer.prepare_for_model, removed in 5.x); verified on H100 too.
 huggingface-hub==0.36.2

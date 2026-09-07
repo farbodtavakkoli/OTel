@@ -1,4 +1,4 @@
-"""EmbeddingGemma reference embedding inference (sentence-transformers) — see readme_embedding_transformers.md."""
+"""EmbeddingGemma reference embedding inference (sentence-transformers) — see README.md."""
 import argparse
 import json, os, time
 

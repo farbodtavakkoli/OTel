@@ -6,9 +6,9 @@
 #
 # ---------------------------------------------------------------------------------------
 # NVIDIA / CUDA (TESTED: 1x H100 80GB, CUDA 13.0, driver 580.173.02, Python 3.12.3,
-#                August 2026, single-GPU smoke -- see readme_ray.md 8.2)
+#                single-GPU smoke -- see readme_ray.md 8.2)
 # ---------------------------------------------------------------------------------------
-# The `torch==2.11.0` pin below has NO cu130 wheel. On a CUDA-13 box install current stable
+# The `torch==2.11.0` pin below has NO cu130 wheel. On a CUDA-13 host install current stable
 # torch instead, then the rest of the stack WITHOUT re-resolving torch (so it isn't clobbered):
 #
 #   python3.12 -m venv .env_ray && source .env_ray/bin/activate
@@ -30,7 +30,7 @@
 # flash-attn: the script hard-codes attn_implementation="sdpa" (no flag), so FA2 is not used.
 #
 # ---------------------------------------------------------------------------------------
-# AMD / ROCm (TESTED: 2x + 8x MI355X, ROCm 7.2.4, Python 3.12.3, August 2026 -- see readme 8.1)
+# AMD / ROCm (TESTED: 2x + 8x MI355X, ROCm 7.2.4, Python 3.12.3 -- see readme_ray.md 8.1)
 # ---------------------------------------------------------------------------------------
 # The `torch==2.11.0` pin below is the CUDA build. On ROCm, do NOT `pip install -r` this
 # file directly -- install the ROCm torch wheel FIRST so pip never resolves the CUDA one:

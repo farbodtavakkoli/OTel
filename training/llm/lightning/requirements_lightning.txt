@@ -5,21 +5,21 @@
 #
 # Install torch FIRST, matched to your accelerator, then the rest. The PyPI
 # default wheel is the CUDA build; index URLs verified against
-# download.pytorch.org 2026-08 (torch 2.11.0 ROCm wheels are on rocm7.2; the
+# download.pytorch.org (torch 2.11.0 ROCm wheels are on rocm7.2; the
 # older rocm6.4 index stops at 2.9.1):
 #   NVIDIA (CUDA)      pip install torch==2.11.0
 #   AMD (ROCm)         pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
 #   pip install -r requirements_lightning.txt
 #
-# VERIFIED on AMD Instinct MI355X (gfx950), ROCm 7.2.4, Python 3.12.3, 2026-08-19:
+# VERIFIED on AMD Instinct MI355X (gfx950), ROCm 7.2.4, Python 3.12.3:
 # the two lines above installed clean (torch 2.11.0+rocm7.2 stayed put through the
 # requirements pass) and resolved to: lightning 2.6.5, transformers 5.15.0,
 # tokenizers 0.22.2, accelerate 1.14.0, tensorboard 2.21.0. Smoke SFT run passed
-# (see readme_lightning.md "Tested on AMD MI355X"). On ROCm do NOT install
+# (see readme_lightning.md "Platform notes — AMD MI355X"). On ROCm do NOT install
 # flash-attn (CUDA-only wheel); the sdpa default needs nothing extra.
 #
 # VERIFIED on NVIDIA H100 80GB HBM3 (Hopper cc9.0), driver 580.173.02, CUDA 13.0,
-# Python 3.12.3, 2026-08-22 (see readme_lightning.md "Tested on NVIDIA H100"):
+# Python 3.12.3 (see readme_lightning.md "Platform notes — NVIDIA H100"):
 #   pip install torch numpy        # -> torch 2.13.0+cu130 (native CUDA 13; the
 #                                  #    torch==2.11.0 pin below has NO cu130 wheel,
 #                                  #    so the default stable was used instead)

@@ -219,7 +219,8 @@ python3 train_llm_torchtune.py --skip-prepare --flat-file /data/domain.jsonl
 
 ## 6. Output
 
-`output_dir` (`./outputs/torchtune_cpt_lora` by default) holds:
+`output_dir` (`./outputs/torchtune_cpt_lora` by default, and
+`./outputs/torchtune_cpt_lora_8gpu` for `config_cpt_lora_8gpu.yaml`) holds:
 
 - adapter (or full) weights in HF-compatible shards
 - `logs/` from `DiskLogger`
@@ -356,8 +357,12 @@ tune run --nnodes 1 --nproc_per_node 8 --master_port 29690 \
   dataset.data_files=$OUTPUT_DIR/train_llm_torchtune/gpu8/otel_cpt_x256.jsonl \
   tokenizer.max_seq_len=2048 batch_size=2 gradient_accumulation_steps=1 \
   epochs=1 max_steps_per_epoch=80 save_adapter_weights_only=True \
-  output_dir=$OUTPUT_DIR/train_llm_torchtune/gpu8/run_long
+  output_dir=./outputs/torchtune_cpt_lora_8gpu
 ```
+
+`output_dir` above is the value `config_cpt_lora_8gpu.yaml` already ships (it is spelled out
+here only to make the destination explicit); `${output_dir}` feeds `checkpointer.output_dir`,
+`metric_logger.log_dir` and the profiler, so overriding it moves every artifact at once.
 
 **Parallelism / geometry.** FSDP2 (`fully_shard`) data parallel, world size 8, 1 node.
 `fsdp_reshard_after_forward: True` (full shard), `fsdp_cpu_offload: False`, activation
@@ -445,7 +450,9 @@ because at 0.5B the activations (which do *not* shard) dominate, and per-GPU thr
    timeout, no orphaned rank processes (VRAM back to 0 in the sample after the run).
 
 Reproducing: run everything through a machine-wide lock (`flock /tmp/mi355x_gpu8.lock`) if
-the machine is shared, and keep outputs off the repo disk (under `$OUTPUT_DIR`).
+the machine is shared. The run writes to `./outputs/torchtune_cpt_lora_8gpu` (the config's
+`output_dir`); point that override at `$OUTPUT_DIR/...` if the repo disk is small, and delete
+the run artifacts afterwards — nothing generated here should be committed.
 
 **Weights on disk:** `assets/Qwen2.5-0.5B/` is **954 MB and deliberately left untracked** —
 do not commit it. Re-download it with the `tune download` line in §1, or point
@@ -512,8 +519,11 @@ python train_llm_torchtune.py \
   checkpointer.checkpoint_files=[model-00001-of-00002.safetensors,model-00002-of-00002.safetensors] \
   gradient_accumulation_steps=1 epochs=3 \
   save_adapter_weights_only=True \
-  output_dir=/dev/shm/h100/out/torchtune/smoke
+  output_dir=/dev/shm/torchtune_out/smoke
 ```
+
+(The config's own `output_dir` is `./outputs/torchtune_cpt_lora`; it is overridden here only
+because this node's repo disk is a network mount — see quirk 5.)
 
 **Step count:** 10 rows packed at `max_seq_len=1024` → **9 packed sequences/epoch**; with
 `batch_size=1`, `gradient_accumulation_steps=1`, world=1 that is **9 optimizer steps/epoch ×
@@ -571,8 +581,8 @@ not idleness — the 6–8.9 GB VRAM held by your exact PID is the residency sig
 5. **Env-driven, not torchtune:** on the offline node outbound HF is proxy-blocked (`403`),
    and the shared network mount rejects the symlink/replace ops PyTorch's CUDA libs perform
    during install (`OSError: [Errno 1] Operation not permitted` on `libcusparseLt.so.0`). The
-   fix is to build the venv on tmpfs (`/dev/shm/h100/venvs/torchtune`, symlinked back as
-   `.env_torchtune`) and keep weights+outputs under `/dev/shm/h100/out/torchtune`. On a normal
+   fix is to build the venv on tmpfs (`/dev/shm/torchtune_venv`, symlinked back as
+   `.env_torchtune`) and keep weights+outputs under `/dev/shm/torchtune_out`. On a normal
    CUDA host the plain §1 install into an in-folder `.venv` works.
 
 **Multi-GPU (2, then 8) — not covered here.** Only the single-device path was exercised. An

@@ -1,5 +1,5 @@
 # H100 (CUDA 13.0) smoke variant of config_sft_lora.yaml — single GPU, tiny model.
-# Verified 2026-08-22 on 1x NVIDIA H100 80GB HBM3 (cc 9.0), torch 2.13.0+cu130,
+# Verified on 1x NVIDIA H100 80GB HBM3 (cc 9.0), torch 2.13.0+cu130,
 # LLaMA-Factory 0.9.6.dev0, transformers 5.8.0. See readme_llamafactory.md section 2.
 # Launch: CUDA_VISIBLE_DEVICES=7 MASTER_PORT=29663 \
 #   python3 train_llm_llamafactory.py --config config_sft_lora_smoke_h100.yaml --num-gpus 1
@@ -30,7 +30,7 @@ dataloader_num_workers: 0
 packing: false
 
 ### output
-output_dir: /dev/shm/h100/out/llamafactory/sft_lora_smoke
+output_dir: ./outputs/sft_lora_smoke_h100
 logging_steps: 1
 save_steps: 100
 save_total_limit: 1

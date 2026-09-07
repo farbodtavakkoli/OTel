@@ -7,10 +7,9 @@
 # GGUFs, and (c) the small python client dependencies shared by both leaf clients.
 #
 # VENV CONVENTION: python3 -m venv .env_ollama  (at inference/ollama/).
-# Per-campaign venvs (.env_inference_llm_ollama etc.) were removed in the 2026-08 reorg.
 #
 # ---------------------------------------------------------------------------
-# (a) CONTAINER IMAGE — verified 2026-08-20 on 8x AMD Instinct MI355X (gfx950)
+# (a) CONTAINER IMAGE — verified on 8x AMD Instinct MI355X (gfx950)
 # ---------------------------------------------------------------------------
 # Image:     ollama/ollama:rocm
 # Digest:    sha256:b5d0813b23540019b2a40d70af6531b1d76e5ebcbf17899e5922445c627b6063
@@ -27,12 +26,13 @@
 #
 #   docker pull ollama/ollama:rocm
 #
-# EXACT run command that worked (single GPU — physical GPU 2 only):
+# EXACT run command that worked (single GPU — physical GPU 2 only). $DATA_DIR is the
+# Ollama model store, $LLAMA_CACHE the existing GGUF cache (both set in README.md):
 #   docker run -d \
 #     --device /dev/kfd \
 #     --device /dev/dri/renderD144 \
-#     -v /mnt/data_450g/ollama:/root/.ollama \
-#     -v /mnt/data_1.5t/hf_cache/llama_cpp:/ggufs:ro \
+#     -v $DATA_DIR/ollama:/root/.ollama \
+#     -v $LLAMA_CACHE:/ggufs:ro \
 #     -p 11434:11434 \
 #     --name ollama_llm \
 #     ollama/ollama:rocm
@@ -47,12 +47,12 @@
 #                                       ls -l /dev/dri/by-path/       # PCI addr -> renderDNNN
 #                                     Here: GPU2=0000:a5:00.0=renderD144
 #                                           GPU3=0000:dc:00.0=renderD152
-#   -v /mnt/data_450g/ollama:/root/.ollama
+#   -v $DATA_DIR/ollama:/root/.ollama
 #                                     model store. Do NOT use the `-v ollama:...`
-#                                     named volume: that lands on / which has only ~99 GB
-#                                     free, and `ollama create` COPIES blobs in.
+#                                     named volume: that lands under /var/lib/docker on the
+#                                     root filesystem, and `ollama create` COPIES blobs in.
 #                                     The store measured 55 GB after both models.
-#   -v /mnt/data_1.5t/hf_cache/llama_cpp:/ggufs:ro
+#   -v $LLAMA_CACHE:/ggufs:ro
 #                                     read-only view of the already-downloaded GGUFs so
 #                                     Modelfiles register them without a new pull. HF
 #                                     snapshot symlinks (../../blobs/<sha>) resolve
@@ -66,7 +66,7 @@
 #   -e OLLAMA_KEEP_ALIVE=30m          keep models resident longer than the 5m default
 #   -e OLLAMA_MAX_LOADED_MODELS=2     allow the LLM and the embedder to coexist
 #
-# NVIDIA variant — VERIFIED 2026-08-22 on 8x NVIDIA H100 80GB HBM3 (single GPU: physical
+# NVIDIA variant — VERIFIED on 8x NVIDIA H100 80GB HBM3 (single GPU: physical
 # GPU 4 only; shared node). Per repo convention only the image tag + device flags change;
 # every Modelfile/API command is identical, and that held exactly. See README.md "H100" §.
 #   Image:    ollama/ollama  (Docker Hub :latest)
@@ -78,7 +78,7 @@
 #             no build, no patch, no HSA_OVERRIDE analogue needed)
 #   Host:     driver 580.173.02, CUDA 13.0, Docker, Python 3.12.3
 #
-#   Docker Hub is proxy-blocked on this box — pull with the proxy unset:
+#   If Docker Hub is proxy-blocked, pull with the proxy unset:
 #     unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 #     sudo docker pull ollama/ollama
 #
@@ -96,15 +96,14 @@
 #     OLLAMA_HOST/-p 11440  non-default port to avoid collisions with co-tenant agents.
 #     -v $STORE:/root/.ollama   put the store on /dev/shm tmpfs (ollama create COPIES blobs;
 #                           keep off /). tmpfs also dodged an "Operation not permitted"
-#                           atomic-rename failure the /mnt/gsma network FS throws at pip/venv.
+#                           atomic-rename failure some network filesystems throw at pip/venv.
 #   GPU-residency PROVEN: `ollama ps` -> PROCESSOR "100% GPU" for BOTH models at once; runner
 #   offload log "offloaded N/N layers to GPU" (all CUDA0 buffers); nvidia-smi -i 4 shows the
 #   /usr/lib/ollama/llama-server PIDs holding VRAM (LLM 5942 MiB + embedder 1030 MiB) on GPU 4.
 #
-#   GGUFs — NOT cached on this box. The (b) FROM paths below point at an MI355X-era path
-#   (/mnt/data_1.5t/hf_cache/llama_cpp/...) that DOES NOT EXIST on H100, and no *-GGUF repos
-#   are in HF_HOME. So download first (proxy unset), then point the Modelfile FROM at the
-#   local path. This wave used SMALL GGUFs for a fast smoke (the 29 GB 27B also fits 80 GB):
+#   GGUFs — if the GGUF cache is empty (no *-GGUF repos in HF_HOME), the (b) FROM paths
+#   below resolve to nothing. Download first (proxy unset), then point the Modelfile FROM
+#   at the local path. SMALL GGUFs give a fast smoke (the 29 GB 27B also fits 80 GB):
 #     hf download unsloth/Qwen3-0.6B-GGUF Qwen3-0.6B-Q8_0.gguf --local-dir <dir>         # 639 MB
 #     hf download ggml-org/embeddinggemma-300M-GGUF embeddinggemma-300M-Q8_0.gguf --local-dir <dir>  # 334 MB, same repo as (b)
 #   H100 Modelfile variants (leave the MI355X Modelfiles untouched):

@@ -291,7 +291,7 @@ H100 recipe is the current stable, which ships native CUDA 13:
 
 ```bash
 # venv on a LOCAL fs, NOT the repo dir — see change (1) below
-python3 -m venv /dev/shm/h100/venvs/fsdp && source /dev/shm/h100/venvs/fsdp/bin/activate
+python3 -m venv /dev/shm/venvs/fsdp && source /dev/shm/venvs/fsdp/bin/activate
 pip install torch numpy                 # -> torch 2.13.0+cu130 (NO --index-url needed)
 python -c "import torch;print(torch.__version__, torch.version.cuda)"   # 2.13.0+cu130 / 13.0
 # install the HF stack WITHOUT the torch/numpy lines (torch already satisfied):
@@ -319,7 +319,7 @@ export CUDA_VISIBLE_DEVICES=6 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1   # HF_HOM
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 source ./dev.env
 # load from the explicit snapshot DIR, not the repo id (change 3); a LOCAL tmpfs copy (change 3b)
-MODEL=/dev/shm/h100/models/gemma-4-E4B-it
+MODEL=/dev/shm/models/gemma-4-E4B-it
 python -c "import torch;assert torch.cuda.device_count()==1"
 
 # fsdp2_offload.yaml = fsdp2_config.yaml with reshard_after_forward:false + offload_params:true
@@ -328,7 +328,7 @@ accelerate launch --config_file fsdp2_offload.yaml --num_processes 1 \
   --main_process_port 29643 --fsdp_cpu_ram_efficient_loading false \
   untie_launch.py \
   --model_name "$MODEL" \
-  --output_dir /dev/shm/h100/out/fsdp/offload_run \
+  --output_dir /dev/shm/fsdp/offload_run \
   --num_train_epochs 5 --logging_steps 1 \
   --batch_size 1 --grad_acc_steps 1 --max_seq_len 1024 \
   --attn_implementation sdpa --gradient_checkpointing --no_save
@@ -358,7 +358,7 @@ by PID from inside the run with `nvidia-smi -i 6`:
 ```
 $ nvidia-smi -i 6 --query-compute-apps=pid,process_name,used_memory --format=csv
 pid, process_name, used_gpu_memory [MiB]
-1342078, /dev/shm/h100/venvs/fsdp/bin/python3, 45898 MiB     # our worker on GPU 6
+1342078, /dev/shm/venvs/fsdp/bin/python3, 45898 MiB     # our worker on GPU 6
 $ nvidia-smi -i 6 --query-gpu=name,utilization.gpu,memory.used,memory.total --format=csv,noheader
 NVIDIA H100 80GB HBM3, 0 %, 46089 MiB, 81559 MiB
 ```
@@ -368,7 +368,7 @@ NVIDIA H100 80GB HBM3, 0 %, 46089 MiB, 81559 MiB
 1. **venv cannot live in the repo folder — it is an SMB2 mount.** `python3 -m venv
    .env_fsdp` inside `training/llm/fsdp/` fails with `Operation not permitted:
    '.../bin/Activate.ps1'` (the share rejects creating the activate scripts;
-   `stat -f` reports `smb2`). Build the venv on a local fs (`/dev/shm/h100/venvs/fsdp`)
+   `stat -f` reports `smb2`). Build the venv on a local fs (`/dev/shm/venvs/fsdp`)
    and activate that. Functionally identical; only the venv location moves.
 2. **LoRA (`--use_lora`) is BLOCKED on gemma-4-E4B-it under FSDP2 + torch 2.13.** The
    first forward raises `ValueError: Parameter
@@ -396,7 +396,7 @@ NVIDIA H100 80GB HBM3, 0 %, 46089 MiB, 81559 MiB
    snapshot dir (`.../snapshots/<hash>`) loads cleanly (GemmaTokenizer + chat template).
    (b) The HF cache lives on the **slow SMB share**; loading 15 GB of weights by mmap
    made the first forward block for minutes in `folio_wait_bit_common` (page-fault wait
-   on SMB). Copying the snapshot to tmpfs (`cp -rL <snap> /dev/shm/h100/models/...`,
+   on SMB). Copying the snapshot to tmpfs (`cp -rL <snap> /dev/shm/models/...`,
    ~15 GB) removes the bottleneck. Network to huggingface.co is 403-blocked on this box,
    so `HF_HUB_OFFLINE=1`/`TRANSFORMERS_OFFLINE=1` + a fully-cached model are mandatory.
 4. **`fsdp_reshard_after_forward: true` (the shipped default) breaks gemma-4's forward
@@ -473,7 +473,7 @@ Batch geometry: `batch_size 1 × world 2 × grad_acc 1` → **global batch 2**. 
 
 ```bash
 export CUDA_VISIBLE_DEVICES=4,5                 # HF_HOME points at the model cache (set above)
-export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_CACHE=/dev/shm/h100/dscache_fsdp2
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_CACHE=/dev/shm/dscache_fsdp2
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 source ./dev.env
 python -c "import torch;assert torch.cuda.device_count()==2"   # 2 GPUs visible
@@ -484,7 +484,7 @@ accelerate launch --config_file fsdp2_config.yaml --num_processes 2 \
   --main_process_port 29671 \
   untie_launch.py \
   --model_name LiquidAI/LFM2.5-350M \
-  --output_dir /dev/shm/h100/out/fsdp2/save_run \
+  --output_dir /dev/shm/fsdp2/save_run \
   --num_train_epochs 6 --logging_steps 1 \
   --batch_size 1 --grad_acc_steps 1 --max_seq_len 1024 \
   --attn_implementation sdpa --gradient_checkpointing

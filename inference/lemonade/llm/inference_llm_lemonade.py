@@ -1,4 +1,4 @@
-"""OpenAI-compatible chat client for a Lemonade Server LLM endpoint — see readme_llm_lemonade.md."""
+"""OpenAI-compatible chat client for a Lemonade Server LLM endpoint — see README.md."""
 import argparse
 import json
 import os

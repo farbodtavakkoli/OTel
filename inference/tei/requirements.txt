@@ -5,11 +5,10 @@
 # server itself -- this file therefore documents (a) the BUILD toolchain that produced a
 # working ROCm router, and (b) the small python client deps for embedding/embed_tei.py.
 #
-# VERIFIED on 1x MI355X (gfx950), ROCm 7.2.4, 2026-08-20. See embedding/README.md
+# VERIFIED on 1x MI355X (gfx950), ROCm 7.2.4. See embedding/README.md
 # for the full evidence (warmup_rocm, dim=768, ~20 ms/request).
 #
 # VENV CONVENTION: python3 -m venv .env_tei  (at inference/tei/).
-# Per-campaign venvs (.env_inference_embedding_tei etc.) were removed in the 2026-08 reorg.
 
 # ==============================================================================
 # PART 1 - server build toolchain (AMD / ROCm)  -- TESTED
@@ -19,9 +18,9 @@
 # from source against a ROCm PyTorch base.
 #
 #   Base image used here : lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819
-#                          (chosen only because it was already on disk and carries ROCm 7.2
-#                           torch for gfx950; upstream's guide says rocm/pytorch:latest --
-#                           any ROCm PyTorch image with a matching HIP works)
+#                          (any ROCm PyTorch image with a matching HIP works; this one
+#                           carries ROCm 7.2 torch for gfx950. Upstream's guide says
+#                           rocm/pytorch:latest)
 #   TEI source           : github.com/huggingface/text-embeddings-inference @ 0d124dc  (v1.9.3)
 #   Rust                 : rustc 1.92.0 (ded5c06cf 2025-12-08)   # NOT in the base image
 #   protoc               : libprotoc 35.1                        # NOT in the base image
@@ -66,7 +65,7 @@ requests==2.34.2
 python-dotenv==1.2.3
 
 # ==============================================================================
-# PART 3 - NVIDIA H100 / Hopper variant  -- TESTED (verified 1x H100, 2026-08-22)
+# PART 3 - NVIDIA H100 / Hopper variant  -- TESTED (verified on 1x H100)
 # ==============================================================================
 # Unlike AMD, NVIDIA publishes prebuilt TEI images, so there is NO source build and NO
 # extra pip toolchain -- just pull-and-run the ARCH-SPECIFIC image. For H100 (Hopper,
@@ -83,15 +82,16 @@ python-dotenv==1.2.3
 #   unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 #   sudo docker pull ghcr.io/huggingface/text-embeddings-inference:hopper-1.9
 #
-# Run (pin ONE GPU; TEI listens on :80 in-container; HF_HOME=/data -> cache at /data/hub):
+# Run (pin ONE GPU; TEI listens on :80 in-container; HF_HOME=/data -> cache at /data/hub).
+# Set HF_HOME on the host first, e.g. export HF_HOME=/path/to/hf_cache :
 #   sudo docker run -d --name tei_h100 --gpus '"device=7"' -p 8090:80 \
-#     -v /mnt/gsma/gsma/gsma/models:/data -e HF_HOME=/data -e HF_TOKEN=<from dev.env> \
+#     -v $HF_HOME:/data -e HF_HOME=/data -e HF_TOKEN=<from dev.env> \
 #     ghcr.io/huggingface/text-embeddings-inference:hopper-1.9 \
 #     --model-id google/embeddinggemma-300m --dtype float32 --port 80
 #
 # The PART 2 client deps above (requests / python-dotenv) are UNCHANGED and were re-verified
-# on H100; only --port differs (8090 here). NOTE: the `.env_tei` venv fails on the /mnt share
-# (pip bootstrap can't write symlinks) -- build the client venv on local/tmpfs disk.
+# on H100; only --port differs (8090 here). NOTE: the `.env_tei` venv fails on a CIFS/NFS
+# share (pip bootstrap can't write symlinks) -- build the client venv on local/tmpfs disk.
 #
 # Generic (non-Hopper) NVIDIA sketch, NOT tested here:
 #   docker run --rm --gpus all -p 8080:80 -v "$PWD/data":/data \

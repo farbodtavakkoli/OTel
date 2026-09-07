@@ -1,4 +1,4 @@
-"""OpenAI-compatible client for a llama.cpp llama-server LLM endpoint — see readme_llm_llamacpp.md."""
+"""OpenAI-compatible client for a llama.cpp llama-server LLM endpoint — see README.md."""
 import argparse
 import json
 import os

@@ -1,4 +1,4 @@
-"""Client for a Hugging Face TEI text-embeddings-router endpoint — see readme_embedding_tei.md."""
+"""Client for a Hugging Face TEI text-embeddings-router endpoint — see README.md."""
 import argparse
 import json
 import math

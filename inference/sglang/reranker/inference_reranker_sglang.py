@@ -1,4 +1,4 @@
-"""Client for an SGLang Qwen3 reranker server — see readme_sglang_reranker.md."""
+"""Client for an SGLang Qwen3 reranker server — see README.md."""
 import argparse
 import json
 import time

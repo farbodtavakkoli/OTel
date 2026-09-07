@@ -1,4 +1,4 @@
-# Environment for train_llm_rapidfire.py -- originally written against upstream docs (August 2026);
+# Environment for train_llm_rapidfire.py -- originally written against upstream docs;
 # since VERIFIED on AMD MI355X (SFT grid sweeps, 1 and 8 GPUs) AND on NVIDIA H100 (1-GPU SFT
 # sweep) -- see readme_rapidfire.md.
 # RapidFire AI pins Python 3.12.x specifically; 3.13 is not supported upstream.
@@ -6,8 +6,8 @@
 # NVIDIA/CUDA per upstream: requires an NVIDIA GPU (compute capability 7.x/8.x) and CUDA
 # Toolkit 11.8+; there is no documented ROCm path.
 #
-# NVIDIA/CUDA UPDATE (verified 2026-08-22 on 1x H100 80GB / Hopper cc9.0 / CUDA 13.0 / driver
-# 580.173.02 / Python 3.12.3). Verdict: WORKS WITH CHANGES. The verified CUDA 13 stack:
+# NVIDIA/CUDA UPDATE (verified on 1x H100 80GB / Hopper cc9.0 / CUDA 13.0 / driver
+# 580.173.02 / Python 3.12.3). Works, with the two changes noted below. The verified CUDA 13 stack:
 #   torch==2.13.0+cu130 (plain `pip install torch`; NO --index-url needed on CUDA 13)
 #   transformers==5.5.0  trl==1.10.0  peft==0.20.0  accelerate==1.14.0  datasets==5.0.1
 #   rapidfireai==0.16.1  python-dotenv==1.2.2  bitsandbytes==0.50.1  numpy==2.0.2
@@ -21,14 +21,14 @@
 #       move through its shared-memory worker transfer -> `Can't pickle local object`. With
 #       `kernels` absent (is_kernels_available()==False) the model pickles and training runs.
 # On CUDA the `rapidfireai init --train` torch-clobber (torch==2.8.0 from a cu129 index) FAILS
-# on this offline node (the pytorch download endpoint is unreachable), so torch 2.13.0+cu130
+# on an offline node (the pytorch download endpoint is unreachable), so torch 2.13.0+cu130
 # SURVIVES untouched. On a NET-CONNECTED CUDA box, init WOULD replace torch with 2.8.0+cu129 --
 # reinstall `pip install torch` afterwards, exactly as the ROCm repair does for its ROCm wheel.
 # See the "NVIDIA H100 (CUDA 13) -- attempted" section of readme_rapidfire.md for full evidence.
 #
-# AMD/ROCm UPDATE (verified 2026-08-19 on 1x MI355X / gfx950 / ROCm 7.2.4 / Python 3.12.3):
+# AMD/ROCm UPDATE (verified on 1x MI355X / gfx950 / ROCm 7.2.4 / Python 3.12.3):
 # every pin below RESOLVES AND WORKS on ROCm. See the "ROCm reality" block at the bottom of
-# this file for the one blocking line and the exact repair. Verdict: works with changes.
+# this file for the one blocking line and the exact repair. Works, with the repair applied.
 
 # Core: installs the RapidFire controller, dispatcher, scheduler, CLI and dashboard.
 # IMPORTANT: after `pip install`, you must also run `rapidfireai init --train` -- that is
@@ -38,7 +38,7 @@
 rapidfireai==0.16.1
 
 # PyTorch 2.8.0+ with CUDA binaries matching your driver.
-#   CUDA 13 (H100, verified 2026-08-22): plain `pip install torch` gives torch 2.13.0+cu130 --
+#   CUDA 13 (H100, verified): plain `pip install torch` gives torch 2.13.0+cu130 --
 #     NO --index-url needed. bf16 matmul confirmed on-GPU (Hopper cc9.0). Re-verify AFTER
 #     `rapidfireai init --train`: on a net-connected box init clobbers this with 2.8.0+cu129,
 #     so `pip install torch` again if `torch.version.cuda != '13.0'`.
@@ -78,7 +78,7 @@ bitsandbytes>=0.50.0
 #    It is not required by this script (SDPA is the default attention path).
 # 3. vllm is only needed for the RAG/evals workflow (RFvLLMModelConfig), not for fit mode.
 
-# --- CUDA reality (NVIDIA H100, Hopper cc9.0, CUDA 13.0 — tested 2026-08-22) ----------
+# --- CUDA reality (NVIDIA H100, Hopper cc9.0, CUDA 13.0 — tested) ---------------------
 #
 # WHAT RESOLVES ON CUDA 13 — all of it, and unlike ROCm the init GPU probe SUCCEEDS.
 #   torch                 plain `pip install torch` -> 2.13.0+cu130 (native CUDA 13). bf16
@@ -86,7 +86,7 @@ bitsandbytes>=0.50.0
 #   rapidfireai==0.16.1   OK. `rapidfireai init --train` correctly DETECTS "CUDA 13.0" (prints
 #                         "Detected CUDA 13.0, using cu129") -- the ROCm "Using CPU" bug does
 #                         NOT occur. It then tries to force torch==2.8.0 from a cu129 index.
-#                         On this OFFLINE box that download FAILS (tunnel error), so torch
+#                         On an OFFLINE box that download FAILS (tunnel error), so torch
 #                         2.13.0+cu130 SURVIVES. On a connected box it WOULD downgrade torch
 #                         -> reinstall `pip install torch` after init. init installs the fit
 #                         set: trl 0.21.0, peft 0.18.1, transformers 4.57.6, datasets 3.6.0,
@@ -126,7 +126,7 @@ bitsandbytes>=0.50.0
 # it would spawn workers onto every GPU. Full write-up: readme_rapidfire.md,
 # "NVIDIA H100 (CUDA 13) — attempted".
 
-# --- ROCm reality (AMD MI355X, gfx950, ROCm 7.2 — tested 2026-08-19) -----------------
+# --- ROCm reality (AMD MI355X, gfx950, ROCm 7.2 — tested) ----------------------------
 #
 # WHAT RESOLVES ON ROCm — all of it. Nothing in this file is CUDA-only:
 #   rapidfireai==0.16.1   OK. Pure-Python (flask/mlflow/trackio/datasets); no CUDA extension,

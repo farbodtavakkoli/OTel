@@ -728,7 +728,7 @@ off the production GPUs 0–3 and the other agents' 4–6.
 ### Working install (exact commands)
 
 ```bash
-export PIP_CACHE_DIR=/dev/shm/h100/pipcache
+export PIP_CACHE_DIR=/dev/shm/pipcache
 python3 -m venv .env_rapidfire && source .env_rapidfire/bin/activate
 pip install -U pip setuptools wheel
 pip install torch numpy                       # -> torch 2.13.0+cu130 (NO --index-url on CUDA 13)
@@ -756,8 +756,8 @@ to the fully-cached **`LiquidAI/LFM2.5-350M`** (chat template present).
 ```bash
 export CUDA_VISIBLE_DEVICES=7                  # <-- pin ONE GPU (see visibility table above)
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1             # HF_HOME points at the model cache (set above)
-export HF_DATASETS_CACHE=/dev/shm/h100/dscache_rapidfire   # .arrow writes can fail on a network model-cache mount
-export RF_EXPERIMENT_PATH=/dev/shm/h100/out/rapidfire/experiments RF_LOG_PATH=/dev/shm/h100/out/rapidfire/logs
+export HF_DATASETS_CACHE=/dev/shm/dscache_rapidfire   # .arrow writes can fail on a network model-cache mount
+export RF_EXPERIMENT_PATH=/dev/shm/rapidfire/experiments RF_LOG_PATH=/dev/shm/rapidfire/logs
 
 python train_llm_rapidfire.py \
   --trainer_type sft --model_name LiquidAI/LFM2.5-350M \

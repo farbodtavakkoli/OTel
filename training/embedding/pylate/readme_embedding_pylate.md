@@ -456,9 +456,9 @@ survived and the documented recovery was not needed. Re-verify anyway.
 Install that worked (venv on tmpfs, deliberately outside the repo as on MI355X):
 
 ```bash
-export PIP_CACHE_DIR=/dev/shm/h100/pipcache
-python3 -m venv /dev/shm/h100/.env_pylate
-source /dev/shm/h100/.env_pylate/bin/activate
+export PIP_CACHE_DIR=/dev/shm/pipcache
+python3 -m venv /dev/shm/.env_pylate
+source /dev/shm/.env_pylate/bin/activate
 pip install --upgrade pip
 pip install "torch==2.11.0" numpy            # -> torch 2.11.0+cu130 (default PyPI, NO --index-url)
 pip install -r requirements_embedding_pylate.txt
@@ -476,10 +476,10 @@ Exact smoke command (native ColBERT checkpoint, cleanest smoke — no random pro
 ```bash
 export CUDA_VISIBLE_DEVICES=4                      # plain CUDA; NO HIP_VISIBLE_DEVICES
 export HF_HOME=/path/to/hf_cache                   # HF model cache
-export HF_DATASETS_CACHE=/dev/shm/h100/dscache_pylate
+export HF_DATASETS_CACHE=/dev/shm/dscache_pylate
 python train_embedding_pylate.py \
   --model_name answerdotai/answerai-colbert-small-v1 \
-  --output_dir /dev/shm/h100/out/pylate/smoke1gpu \
+  --output_dir /dev/shm/pylate/smoke1gpu \
   --epochs 4 --batch_size 8 \
   --attn_implementation sdpa --scores_backend torch --tf32 \
   --index_backend plaid

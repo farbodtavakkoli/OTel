@@ -89,7 +89,7 @@ and runs).
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 export CUDA_VISIBLE_DEVICES=6
 source .env_ktransformers/bin/activate
-python llm/infer_llm_ktransformers.py --mode probe --out /dev/shm/h100/out/ktransformers/llm/probe.json
+python llm/infer_llm_ktransformers.py --mode probe --out /dev/shm/ktransformers/llm/probe.json
 ```
 
 **Expected output**

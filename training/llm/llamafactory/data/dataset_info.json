@@ -15,7 +15,7 @@
   },
 
   "otel_chat_sft_x256": {
-    "file_name": "/mnt/data_1.5t/outputs/train_llm_llamafactory/gpu8/data/otel_chat_sft_x256.jsonl",
+    "file_name": "otel_chat_sft_x256.jsonl",
     "formatting": "sharegpt",
     "columns": {
       "messages": "messages"

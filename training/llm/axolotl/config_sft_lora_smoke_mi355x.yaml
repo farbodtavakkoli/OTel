@@ -27,9 +27,9 @@ datasets:
 
 chat_template: tokenizer_default
 
-dataset_prepared_path: /mnt/data_1.5t/outputs/train_llm_axolotl/last_run_prepared_smoke
+dataset_prepared_path: ./last_run_prepared_smoke_mi355x
 val_set_size: 0
-output_dir: /mnt/data_1.5t/outputs/train_llm_axolotl/sft-lora-smoke
+output_dir: ./outputs/sft-lora-smoke-mi355x
 
 ### sequence handling
 sequence_len: 512

@@ -1,4 +1,4 @@
-"""Client for an Ollama server serving a Qwen3.8-27B GGUF — see readme_llm_ollama.md."""
+"""Client for an Ollama server serving a Qwen3.8-27B GGUF — see README.md."""
 import argparse
 import json
 import os

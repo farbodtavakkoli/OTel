@@ -4,7 +4,7 @@
 torch==2.11.0          # ROCm build pins this exactly; on CUDA 13 use 2.13.0+cu130 — see NVIDIA note below
 deepspeed==0.19.4
 
-# NVIDIA CUDA variant — TESTED 2026-08-22 on 1x H100 80GB HBM3 (Hopper cc9.0), driver
+# NVIDIA CUDA variant — TESTED on 1x H100 80GB HBM3 (Hopper cc9.0), driver
 # 580.173.02, CUDA 13.0, Python 3.12.3 (single-GPU full FT of LiquidAI/LFM2.5-350M under
 # ZeRO-3; see readme_standalone.md "NVIDIA H100 80GB (CUDA 13.0) — tested"). There is NO
 # cu130 wheel for torch==2.11.0, so install the native CUDA-13 stable FIRST, then this
@@ -14,11 +14,11 @@ deepspeed==0.19.4
 #   pip install -r <(grep -v '^torch==' requirements_standalone.txt)
 #   python -c "import torch;print(torch.__version__, torch.version.cuda)"   # 2.13.0 13.0
 # No --index-url needed (native CUDA 13 wheel on PyPI). deepspeed==0.19.4 installs from
-# PyPI unchanged (JIT ops build on demand — none were needed for the tested smoke; CUDA
+# PyPI unchanged (JIT ops build on demand — none were needed for the tested run; CUDA
 # toolkit at /usr/local/cuda-13.0, nvcc 13.0.88). bitsandbytes==0.50.0 CUDA wheel imports
 # cleanly and the default adamw_bnb_8bit optimizer works (adamw_torch remains the fallback).
 
-# AMD ROCm variant — TESTED 2026-08-19 on 2x MI355X (gfx950), ROCm 7.2.4, Python 3.12
+# AMD ROCm variant — TESTED on 2x MI355X (gfx950), ROCm 7.2.4, Python 3.12
 # (see readme_standalone.md "AMD MI355X (ROCm 7.2) — tested"). Install torch from the
 # ROCm wheel index FIRST, then this file (the torch==2.11.0 pin is satisfied by the
 # +rocm7.2 build and left alone):

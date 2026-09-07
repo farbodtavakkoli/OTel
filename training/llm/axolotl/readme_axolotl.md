@@ -103,9 +103,10 @@ extras) trains LoRA SFT on ROCm once the torch wheel is corrected and two config
 are overridden. The upstream AMD HPC guide's source-build path was NOT needed.
 
 ```bash
-# Set these to suit your machine
-export OUTPUT_DIR=/path/to/outputs     # training artifacts
+# Set this to suit your machine
 export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+# Training artifacts need no env var: every config writes to its own relative
+# output_dir (./outputs/<recipe>) under training/llm/axolotl.
 ```
 
 ```bash
@@ -149,7 +150,7 @@ python3 train_llm_axolotl.py --config config_sft_lora_smoke_mi355x.yaml --num-pr
 [axolotl.monkeypatch.lora_kernels] Patched attention class with LoRA optims: Qwen3Attention
 {'loss': '1.692', 'grad_norm': '7.348', 'learning_rate': '0.0002', 'ppl': '5.432', ...}
 {'loss': '0.08245', 'grad_norm': '1.043', 'learning_rate': '1.91e-05', 'ppl': '1.086', ...}
-[axolotl.train] Model successfully saved to .../outputs/train_llm_axolotl/sft-lora-smoke
+[axolotl.train] Model successfully saved to ./outputs/sft-lora-smoke-mi355x
 ```
 
 `rocm-smi -d 6` mid-run shows VRAM climbing to ~6 GB on the MI355X; the adapter
@@ -231,7 +232,7 @@ up from the 0.3 GB idle baseline.)
 {'loss': '0.0004104', 'grad_norm': '0.009908', 'ppl': '1', 'epoch': '5'}
 {'train_runtime': '35.87', 'train_samples_per_second': '8.921', 'train_steps_per_second': '0.558',
  'train_loss': '0.1716', 'memory/max_allocated (GiB)': '3.17'}
-[axolotl.train] Model successfully saved to .../gpu8/sft-lora-smoke-8gpu
+[axolotl.train] Model successfully saved to ./outputs/sft-lora-smoke-mi355x-8gpu
 ```
 
 ~1.0-2.2 s/step steady-state, ~3100 train tokens/s/GPU, 3.17 GiB peak allocated per rank
@@ -244,7 +245,9 @@ should exit with code 0.
 1. **New config `config_sft_lora_smoke_mi355x_8gpu.yaml`** (the working 1-GPU
    `config_sft_lora_smoke_mi355x.yaml` is left untouched). Deltas: dataset path,
    `micro_batch_size` 1 -> 2, `max_steps` 5 -> 20, `num_epochs` 3 -> 1,
-   `save_strategy: "no"` + `saves_per_epoch: null`, gpu8 output/prepared dirs. Same
+   `save_strategy: "no"` + `saves_per_epoch: null`, separate 8-GPU `output_dir` /
+   `dataset_prepared_path` (`./outputs/sft-lora-smoke-mi355x-8gpu`,
+   `./last_run_prepared_smoke_mi355x_8gpu`) so nothing collides with the 1-GPU run. Same
    `Qwen/Qwen3-0.6B`, same `sdpa`, same `tf32: false`. **No `deepspeed:` / `fsdp:` block** —
    DDP is the right choice for a 0.6B LoRA and sidesteps the ROCm DeepSpeed problem.
 2. **Stale GPU pin in the venv (the trap).** If a single-GPU run left
@@ -253,9 +256,21 @@ should exit with code 0.
    on GPU 6 — a silently wrong "8-GPU pass". Always re-export both vars after `source`, and assert
    `torch.cuda.device_count()==8` before training. The configs themselves pin no devices.
 3. **The dataset has to be replicated, and axolotl still shrinks it — read this honestly.**
-   `./data/OTel_LLM_sample_10.jsonl` (10 rows) cannot feed a global batch of 16. Write a
-   640-row copy (the same 10 rows x64) *outside the repo*, e.g. to
-   `$OUTPUT_DIR/train_llm_axolotl/gpu8/otel_sample_x64.jsonl`. Axolotl then runs
+   `./data/OTel_LLM_sample_10.jsonl` (10 rows) cannot feed a global batch of 16. Generate a
+   640-row copy (the same 10 rows x64) at `./outputs/data/otel_sample_x64.jsonl` — the path
+   `config_sft_lora_smoke_mi355x_8gpu.yaml` already points at — once, from this folder:
+
+   ```bash
+   mkdir -p outputs/data
+   # awk, NOT cat: the shipped sample has no trailing newline, so a `cat` loop glues the
+   # last row of one copy onto the first row of the next -> 576 lines, 63 of them invalid
+   # JSON. `awk '{print}'` terminates every record it emits.
+   for i in $(seq 64); do awk '{print}' data/OTel_LLM_sample_10.jsonl; done \
+       > outputs/data/otel_sample_x64.jsonl
+   wc -l outputs/data/otel_sample_x64.jsonl    # -> 640 (10 rows x 64), all valid JSON
+   ```
+
+   Axolotl then runs
    `Dropping Invalid Sequences (<None or >512)` over the 640 and keeps **64** — only 1 of the
    10 sample rows fits `sequence_len: 512`; the rest are long IETF mail dumps. So 20 steps at
    batch 16 = **5 epochs over 64 copies of a single conversation**, and the loss collapse to
@@ -318,7 +333,7 @@ seq 2048, batch 1, `max_steps: 20`, and the LoRA-kernel autopatch disabled — s
 ```bash
 CUDA_VISIBLE_DEVICES=5 \
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
-HF_DATASETS_CACHE=/dev/shm/h100/dscache_axolotl AXOLOTL_DO_NOT_TRACK=1 \
+HF_DATASETS_CACHE=/dev/shm/dscache_axolotl AXOLOTL_DO_NOT_TRACK=1 \
 python3 train_llm_axolotl.py --config config_sft_lora_smoke_h100_sdpa.yaml \
     --num-processes 1 --main-process-port 29645
 ```
@@ -330,7 +345,7 @@ python3 train_llm_axolotl.py --config config_sft_lora_smoke_h100_sdpa.yaml \
 {'loss': '0.5884','grad_norm': '15.02', 'learning_rate': '6.91e-05',  'ppl': '1.801', 'epoch': '1.444'}
 {'loss': '0.1121','grad_norm': '7.018', 'learning_rate': '1.231e-06', 'ppl': '1.119', 'epoch': '2.222'}
 {'train_runtime': '15.86', 'train_samples_per_second': '1.261', 'train_steps_per_second': '1.261', 'train_loss': '0.9872'}
-[axolotl.train] Model successfully saved to /dev/shm/h100/out/axolotl/sft-lora-smoke-sdpa
+[axolotl.train] Model successfully saved to ./outputs/sft-lora-smoke-h100-sdpa
 ```
 
 The run should finish with exit code 0.
@@ -401,7 +416,7 @@ Then the shipped **`config_sft_lora_smoke_h100.yaml`** (identical to the sdpa va
 {'loss': '1.338', 'grad_norm': '99.68', 'epoch': '0.1111'}   # step 1
 {'loss': '0.07975','grad_norm': '2.969', 'epoch': '2.222'}   # step 20
 {'train_runtime': '6.649', 'train_steps_per_second': '3.008', 'train_loss': '0.9844'}
-[axolotl.train] Model successfully saved to /dev/shm/h100/out/axolotl/sft-lora-smoke
+[axolotl.train] Model successfully saved to ./outputs/sft-lora-smoke-h100
 ```
 
 `train_runtime` 6.6 s (fa2) vs 15.9 s (sdpa) for the identical run — ~2.4x, though at this
@@ -590,7 +605,9 @@ Key config fields (full list: <https://docs.axolotl.ai/docs/config-reference.htm
 
 ## 7. Output
 
-Everything lands under the config's `output_dir` (`./outputs/<recipe>` by default):
+Everything lands under the config's `output_dir` — always a path relative to
+`training/llm/axolotl` (`./outputs/<recipe>`, e.g. `./outputs/sft-lora`,
+`./outputs/sft-lora-smoke-h100`, `./outputs/sft-lora-smoke-mi355x-8gpu`):
 
 - `checkpoint-<step>/` — periodic checkpoints (`saves_per_epoch` / `save_total_limit`).
 - Final weights at the top level of `output_dir`: a PEFT adapter
@@ -598,8 +615,9 @@ Everything lands under the config's `output_dir` (`./outputs/<recipe>` by defaul
   `model-*.safetensors` shards for full fine-tuning, plus the tokenizer files and the
   resolved chat template.
 - `merged/` — appears only after `--task merge-lora`.
-- `dataset_prepared_path` (`./last_run_prepared`) holds the tokenized arrow cache; delete it
-  if you change the data or the template, otherwise the stale cache is reused.
+- `dataset_prepared_path` (`./last_run_prepared`, or a per-recipe variant such as
+  `./last_run_prepared_smoke_h100` in the smoke configs) holds the tokenized arrow cache;
+  delete it if you change the data or the template, otherwise the stale cache is reused.
 - The console log you redirected to `train_llm_axolotl.log` is the run record; add
   `use_tensorboard: true` or the `wandb_*` fields to the YAML for a metrics backend.
 

@@ -1,4 +1,4 @@
-"""Qwen3 reranker reference inference (sentence-transformers CrossEncoder) — see readme_reranker_transformers.md."""
+"""Qwen3 reranker reference inference (sentence-transformers CrossEncoder) — see README.md."""
 import argparse
 import json, os, time
 

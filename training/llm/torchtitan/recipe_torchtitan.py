@@ -200,13 +200,13 @@ def cpt_qwen3_8b_smoke() -> Trainer.Config:
     return config
 
 
-# --- MI355X / ROCm bring-up config (added August 2026, see readme section 7) -----------
+# --- MI355X / ROCm bring-up config (see readme_torchtitan.md section 7) ----------------
 # Same wiring as the CPT recipes above (local-JSONL dataset registry, FSDP2 with
 # data_parallel_shard_degree=-1, ChunkedLoss, FullAC) but on torchtitan's `debugmodel`
 # flavor (dim 256, 8 layers, vocab 2048) with random init and checkpointing OFF, so it
 # needs no HF weight download and writes essentially nothing to disk. This is the config
-# used to validate the folder on 2x AMD Instinct MI355X; it is hardware-agnostic and
-# works unchanged on NVIDIA.
+# used to validate the folder on 2x AMD Instinct MI355X (gfx950); it is hardware-agnostic
+# and works unchanged on NVIDIA.
 def cpt_debugmodel_smoke() -> Trainer.Config:
     """Tiny random-init FSDP2 smoke (no HF download, no checkpoints) for bring-up."""
     from torchtitan.models.qwen3 import model_registry
