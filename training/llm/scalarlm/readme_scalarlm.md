@@ -163,10 +163,10 @@ python inference.py \
 One source tree, one `ml/` recipe, two server images. Runbooks: **`DOCKER_IMAGE_MI355.md`** (AMD)
 and **`DOCKER_IMAGE_H100.md`** (NVIDIA).
 
-| Tag | Hardware | Status on this branch |
+| Tag | Hardware | Status |
 |---|---|---|
-| `farbodatdocker/scalarlm:mi355-v1.6` | AMD MI355X — gfx950 / ROCm 7.2.4 | built from this branch @ `6bc7d82`; gated from the image itself (server and client, no `ml/` mount) before publish |
-| `farbodatdocker/scalarlm:h100-v1.5` | NVIDIA H100 — sm_90 / CUDA 13 | built from this branch @ `6bc7d82`; verified on 8×H100 — `ddp`/`fsdp` bit-identical to the pre-merge `nvidia` branch |
+| `farbodatdocker/scalarlm:mi355-v1.6` | AMD MI355X — gfx950 / ROCm 7.2.4 | built from this repo; gated from the image itself (server and client, no `ml/` mount) before publish |
+| `farbodatdocker/scalarlm:h100-v1.5` | NVIDIA H100 — sm_90 / CUDA 13 | built from this repo; verified on 8×H100 — `ddp`/`fsdp` bit-identical to the previous NVIDIA-only implementation |
 
 Both images are built from the same source revision by the same `repo/Dockerfile`. Build either
 with `build_image.sh`; it auto-detects the vendor, or set it explicitly:
@@ -181,7 +181,7 @@ TARGET=nvidia IMAGE_TAG=h100-v1.5  ./build_image.sh
 > come from `cray_infra.training.distributed` (torch.distributed/NCCL, reads `RANK` first) instead of the
 > `gpu_aware_mpi` shim, and the launcher is `mpirun -> torchrun` per node instead of `mpirun -> python`.
 > `h100-v1.5` is the first image built from this tree on an H100 host: `ddp` and `fsdp` losses are
-> bit-identical to the pre-merge `nvidia` branch, `pytorch_fsdp` agrees to ~1.7e-5 (it reduces at a
+> bit-identical to the previous NVIDIA-only implementation, `pytorch_fsdp` agrees to ~1.7e-5 (it reduces at a
 > different granularity), and classification at `batch_size > 1` and LoRA complete. Two build-side
 > gaps surfaced and are fixed in the Dockerfile (a venv `torchrun` shim, an explicit `scikit-learn`
 > install); neither touches `ml/`. `flash_attention_2` crashes on H100 as it does on MI355X, so the
@@ -248,7 +248,7 @@ All settings travel in `train_args`, which the server materializes into the job 
 | Layer | AMD MI355X / ROCm | NVIDIA H100 / CUDA |
 |---|---|---|
 | Client (`train.py` / `inference.py`) | pure Python, hardware-agnostic | same |
-| Server image | `mi355-v1.6` — measured on this branch | `h100-v1.5` — measured on this branch |
+| Server image | `mi355-v1.6` — measured from this repo | `h100-v1.5` — measured from this repo |
 | Collectives | RCCL via `torch.distributed` | NCCL via `torch.distributed` |
 
 **Other hardware (upstream claims — not verified here):** the client is hardware-agnostic (pure HTTP); server-side, upstream documents NVIDIA (A100/H100) and AMD (MI300X production).

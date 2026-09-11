@@ -97,7 +97,7 @@ LABEL org.opencontainers.image.description="${DESCRIPTION}"
 LABEL org.opencontainers.image.revision="${REVISION}${DIRTY}"
 LABEL org.opencontainers.image.authors="${MAINTAINER_NAME} <${MAINTAINER_EMAIL}>"
 LABEL maintainer="${MAINTAINER_NAME} <${MAINTAINER_EMAIL}>"
-LABEL org.opencontainers.image.source="https://github.com/farbodtavakkoli/training_junk"
+LABEL org.opencontainers.image.source="https://github.com/farbodtavakkoli/OTel"
 LABEL org.opencontainers.image.licenses="CC0-1.0"
 LABEL org.opencontainers.image.version="${IMAGE_TAG}"
 EOF

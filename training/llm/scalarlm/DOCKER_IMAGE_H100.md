@@ -11,7 +11,7 @@ Drop into the ScalarLM Kubernetes Helm chart via `image.repository` / `.tag` / `
 
 | Image | Hardware |
 |---|---|
-| `farbodatdocker/scalarlm:h100-v1.5` | NVIDIA H100 / Hopper (`sm_90`) — current: from-scratch `repo/Dockerfile` build of `amd-nvidia-merge` @ `6bc7d82` |
+| `farbodatdocker/scalarlm:h100-v1.5` | NVIDIA H100 / Hopper (`sm_90`) — current: from-scratch `repo/Dockerfile` build of the unified tree |
 | `farbodatdocker/scalarlm:mi355-v1.6` | AMD MI355X (ROCm) — same source revision; see `DOCKER_IMAGE_MI355.md` |
 
 ```yaml
@@ -23,9 +23,9 @@ image:
 
 > `h100-v1.5` is the first H100 image built by `TARGET=nvidia ./build_image.sh` from the unified
 > tree (digest `sha256:be7aac2525bfa06c45adf10ac44a15cfd5b5cebd7495556d2215dae520189611`, revision
-> label `6bc7d82`). vLLM is compiled for `sm_90` in the Dockerfile's `vllm` stage; the merged
+> label recorded in the image). vLLM is compiled for `sm_90` in the Dockerfile's `vllm` stage; the merged
 > inference server runs natively. Verified on 8×H100: `ddp` and `fsdp` losses bit-identical to the
-> pre-merge `nvidia` branch, `pytorch_fsdp` within ~1.7e-5 (different reduction granularity),
+> previous NVIDIA-only implementation, `pytorch_fsdp` within ~1.7e-5 (different reduction granularity),
 > classification at `batch_size > 1` and LoRA complete.
 >
 > Earlier tags were a chain of hand-built overlays: `h100-v1.1` (base sm_90 + training fixes),
@@ -133,8 +133,8 @@ not arise. It requires the torchrun environment (`RANK`/`LOCAL_RANK`/`WORLD_SIZE
 > **Since the amd/nvidia merge:** `h100-v1.3` was built against the earlier `gpu_aware_mpi` shim
 > and the plain `mpirun -> python` launcher. Those were replaced by the module and launcher above
 > (the `gpu_aware_mpi/` directory and its `setup.py` are gone). `h100-v1.5` is the first image built
-> from the unified tree and was verified on 8×H100 — `ddp`/`fsdp` bit-identical to the pre-merge
-> `nvidia` branch. Note that `flash_attention_2` crashes in the varlen kernel on this image, which is
+> from the unified tree and was verified on 8×H100 — `ddp`/`fsdp` bit-identical to the previous
+> NVIDIA-only implementation. Note that `flash_attention_2` crashes in the varlen kernel on this image, which is
 > why the loader maps it to `sdpa` unconditionally.
 
 ### 2 — Bake in this folder's `ml/`

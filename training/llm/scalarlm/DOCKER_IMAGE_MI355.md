@@ -8,8 +8,8 @@ Build / run / customize / publish runbook for the **MI355X (gfx950, CDNA 4)** se
 
 | Tag | Hardware | Notes |
 |---|---|---|
-| `farbodatdocker/scalarlm:mi355-v1.6` | AMD MI355X, gfx950 / ROCm 7.2.4 | current — built from `amd-nvidia-merge` @ `6bc7d82`, the same Dockerfile revision as `h100-v1.5` |
-| `farbodatdocker/scalarlm:mi355-v1.5` | AMD MI355X, gfx950 / ROCm 7.2.4 | first image off the `amd-nvidia-merge` branch (`218d2f9`) |
+| `farbodatdocker/scalarlm:mi355-v1.6` | AMD MI355X, gfx950 / ROCm 7.2.4 | current — built from the same unified Dockerfile revision as `h100-v1.5` |
+| `farbodatdocker/scalarlm:mi355-v1.5` | AMD MI355X, gfx950 / ROCm 7.2.4 | first image built from the unified AMD + NVIDIA tree |
 | `farbodatdocker/scalarlm:mi355-v1.0` | AMD MI355X, gfx950 / ROCm 7.2.4 | first published tag (pre-fix history, see version records) |
 | `farbodatdocker/scalarlm:h100-v1.5` | NVIDIA H100, sm_90 | see the NVIDIA doc |
 
@@ -37,8 +37,8 @@ is rebuilt, the label does not. `org.opencontainers.image.created` gives the bui
 `org.opencontainers.image.authors` the maintainer.
 
 The revision refers to a commit in **this** repository — the one that carries `repo/` and `ml/`. To
-see the underlying ScalarLM integration history instead, clone the bundle (§7); its
-`amd-integration` tip is the tree vendored here.
+see the underlying ScalarLM integration instead, apply `scalarlm_mi355.patch` to a fresh upstream
+clone (§7); the result is the tree vendored here.
 
 If you rebuild and republish under the same tag, pass the new revision to `--label` (see §2) so this
 check keeps telling the truth. An image whose label does not match the tree you think you built is
@@ -227,7 +227,7 @@ cat > "$BUILDDIR/Dockerfile" <<EOF
 FROM cray:amd4
 CMD ["/app/cray/scripts/start_one_server.sh"]
 LABEL org.opencontainers.image.authors="Farbod Tavakkoli"
-LABEL org.opencontainers.image.source="https://github.com/farbodtavakkoli/training_junk"
+LABEL org.opencontainers.image.source="https://github.com/farbodtavakkoli/OTel"
 LABEL org.opencontainers.image.revision="$(git rev-parse HEAD)"
 EOF
 docker build -t farbodatdocker/scalarlm:mi355-v1.6 "$BUILDDIR"
@@ -358,11 +358,11 @@ behaviour-preserving for the existing strategies.
 
 #### `mi355-v1.5` — published 2026-09-03
 
-First AMD image built from the unified `amd-nvidia-merge` branch. The baked `ml/` gains the
+First AMD image built from the unified AMD + NVIDIA tree. The baked `ml/` gains the
 classification `pad_token_id` fix (transformers raises at `batch_size > 1` without it) and the baked
 requirements pin `sentence_transformers>=5.0,<6`; the `gpu_aware_mpi` shim directory and the
 `local_training_config.yaml` sidecar are gone from the tree. v1.3/v1.4 remain published; they were
-built from the pre-merge `amd` branch.
+built from the earlier AMD-only tree.
 
 | Check | Result |
 |---|---|
@@ -380,12 +380,12 @@ recorded values.
 
 #### `mi355-v1.6` — published 2026-09-04
 
-Built from `amd-nvidia-merge` @ `6bc7d82`, the same revision `h100-v1.5` was built from, so the two
-hardware images now share one `repo/Dockerfile`. The only source change since v1.5 is that
+Built from the same source revision as `h100-v1.5` (see the revision label recorded below), so the
+two hardware images now share one `repo/Dockerfile`. The only source change since v1.5 is that
 Dockerfile: an explicit `scikit-learn` install plus an import gate for the embedding path, and an
 NVIDIA-only venv `torchrun` shim guarded on `VLLM_TARGET_DEVICE=cuda`. Both are inert on ROCm — the
 `rocm/primus` base already ships scikit-learn, and the AMD build passes `rocm` — so this image is
-v1.5 with a new label. `ml/` is byte-identical to `53807f8` (git tree `5967c061…`).
+v1.5 with a new label. `ml/` is unchanged from v1.5 (git tree `5967c061…`).
 
 | Check | Result |
 |---|---|
@@ -557,22 +557,7 @@ to commits on no remote, which clones as an empty directory.
 **`repo/ml/` is deliberately absent from version control.** It is created by `build_image.sh` from
 `ml/`. One tree, one source of truth; see §2.
 
-### Recovering the development history
-
-The branch-level history (`baseline-pre-amd`, `base-ddpfix`, `amd-pr-5`, `amd-integration`) was kept
-as `scalarlm_amd_history.bundle`. It is **no longer tracked in this repo**: `git bundle verify`
-reports it "records a complete history", i.e. it is a full clone of a repository whose base is the
-**public** upstream, so it carried ~9.3 MB to preserve a branch topology that the patch below and the
-vendored trees already reproduce. If you have a copy, it is still a complete clone source:
-
-```bash
-git clone scalarlm_amd_history.bundle scalarlm-history
-cd scalarlm-history
-git log --oneline 4566a84..amd-integration      # the 11 integration commits
-git diff baseline-pre-amd..amd-integration      # everything the integration changed
-```
-
-### Reconstructing from upstream instead
+### Reconstructing from upstream
 
 `scalarlm_mi355.patch` is the same integration as a single patch, verified to reproduce the tree
 **exactly** (git tree-hash equality). Use it when you want the change on top of a fresh upstream
@@ -598,10 +583,10 @@ git apply /path/to/scalarlm_mi355.patch
 
 ### When upstream ScalarLM moves
 
-To rebase, clone the bundle, add upstream as a remote, and rebase `amd-integration` onto the newer
-commit. The hunks most likely to conflict are the ones this integration rewrote:
+To rebase, clone upstream at the newer commit and apply `scalarlm_mi355.patch` to it, resolving any
+rejected hunks by hand. The hunks most likely to conflict are the ones this integration rewrote:
 `infra/cray_infra/training/distributed.py` (replaced wholesale),
 `ml/cray_megatron/megatron/distribution/{ddp,fsdp}.py` (the gradient-mean fixes), and
 `scripts/train_job_entrypoint.sh` (the torchrun launcher). Re-run gate 5 afterwards — the
 gradient-semantics tests are what catch a silently dropped fix. Then copy the rebased tree back over
-`repo/` and regenerate the patch and bundle.
+`repo/` and regenerate the patch.

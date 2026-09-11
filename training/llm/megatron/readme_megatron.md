@@ -491,7 +491,7 @@ sudo docker pull nvcr.io/nvidia/pytorch:25.06-py3
 sudo docker run -d --name megatron_h100 \
   --gpus '"device=GPU-xxxxxxxx-...."' \
   --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 \
-  -v /path/to/training_junk:/work \
+  -v /path/to/workspace:/work \
   -v /path/to/hf_cache:/models \
   -v /path/to/scratch_out:/out \
   -e HF_HOME=/models \
@@ -689,7 +689,7 @@ step — the fused kernels come from the container's TE/Apex).
 sudo docker run -d --name megatron_h100_2gpu \
   --gpus '"device=6,7"' \
   --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 \
-  -v /path/to/training_junk:/work -v /path/to/hf_cache:/models -v /path/to/scratch_out:/out \
+  -v /path/to/workspace:/work -v /path/to/hf_cache:/models -v /path/to/scratch_out:/out \
   -e HF_HOME=/models -w /work/training/llm/megatron \
   nvcr.io/nvidia/pytorch:25.06-py3 sleep infinity
 sudo docker exec megatron_h100_2gpu nvidia-smi -L   # MUST show exactly 2 GPUs

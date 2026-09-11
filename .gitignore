@@ -300,7 +300,7 @@ h100_new_bugs_found.md
 h100_new_bugs_v3.md
 h100_new_features-bugs.md
 h100_new_features-bugs_v2.md
-training/llm/scalarlm/scalarlm_amd_history.bundle
+*.bundle
 training/llm/scalarlm/docs/
 
 # --- additional exclusions: local venvs, scratch files, and ScalarLM path rules ---
