@@ -26,13 +26,10 @@ the CLI. Registry fields:
 | `epochs` | Number of training epochs |
 | `learning_rate` | Optimizer LR — static lookup tables want a much higher LR |
 | `use_checkpointing` | Gradient checkpointing on/off (n/a for static) |
-| `max_seq_length` | Optional; `None` keeps the model default. Gemma uses 1024 — covers >99.9% of the original Tele-Eval data |
+| `max_seq_length` | Optional; `None` keeps the model default (Gemma uses 1024) |
 | `matryoshka_dims` | Optional; `None` derives dims dynamically from the hidden size |
 | `eval_corpus_size` | `None` — corpus = all positives; int — distractor pool of that size |
 | `eval_on_start` | Run a baseline evaluation before training |
-
-The Gemma train batch (96) is downscaled relative to smaller models because each row
-expands to 7 inputs — 1 anchor + 1 positive + 5 negatives.
 
 Design notes:
 
@@ -41,14 +38,6 @@ Design notes:
 - **Loader switch** — `transformer` ⇒ `SentenceTransformer(name)` with bf16 + flash-attn;
   `static` ⇒ `StaticEmbedding.from_model2vec(name)` — a lookup table, so no
   dtype/attention/tokenizer kwargs apply.
-- **Prompts** — query/document instruction prefixes are set per family (BGE's query
-  prefix, Gemma's `search_query:` / `search_document:`).
-- **MTEB compatibility** — `SafeSTWrapper` coerces MTEB's varied encode inputs (dicts,
-  ndarrays, nested lists) and injects a model-meta fallback so off-hub / static models
-  still evaluate; MTEB 2.7.x otherwise crashes on models without a strict
-  `organization/model` name.
-- **Tokenizer quirk** — a problematic `fix_mistral_regex` tokenizer flag (from Gemma) is
-  popped before serialization; a harmless no-op for other families.
 - **Best model** — `load_best_model_at_end` on `telco_unseen` nDCG@10; the final model is
   saved to `<output_dir>/final_model`.
 
@@ -69,24 +58,29 @@ python -c "import sentence_transformers, mteb; print('imports OK')"
 
 ### NVIDIA (CUDA)
 
-The default `torch` wheels from PyPI ship with CUDA support — `pip install -r
-requirements_embedding.txt` is all you need. Transformer-backed models load with
-`attn_implementation="flash_attention_2"`; building `flash-attn` needs the CUDA toolkit:
+The default `torch` wheels from PyPI ship with CUDA support: the `torch==2.11.0` pin
+resolves to a native `2.11.0+cu130` wheel, so no `--index-url` is needed.
+
+```bash
+python3 -m venv .env_sentence_transformers
+source .env_sentence_transformers/bin/activate
+pip install torch==2.11.0 numpy==2.5.1     # -> torch 2.11.0+cu130
+pip install -r requirements_embedding.txt  # torch/numpy already satisfied
+python -c "import torch;print(torch.__version__, torch.version.cuda)"   # re-check: several deps clobber torch
+```
+
+Transformer-backed models load with `attn_implementation="flash_attention_2"` when
+`flash_attn` imports and fall back to `sdpa` otherwise, so flash-attn is optional. There is
+no prebuilt wheel for this torch/CUDA combination — build it from source if you want it:
 
 ```bash
 export CUDA_HOME=/usr/local/cuda-13.0
-export PATH=$CUDA_HOME/bin:$PATH
-export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
-pip install flash-attn==2.8.3
+export PATH=$CUDA_HOME/bin:$PATH LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+pip install flash-attn==2.8.3 --no-build-isolation
 ```
-
-If you can't build `flash-attn`, change the implementation to `"sdpa"` in `load_model()`.
 
 ### AMD (ROCm)
 
-sentence-transformers sits on top of PyTorch, so it runs on AMD GPUs via the official
-ROCm torch wheels — PyTorch publishes pip wheels for ROCm-capable Linux systems (see
-[pytorch.org — Get Started, "With ROCm"](https://pytorch.org/get-started/locally/)).
 Install torch from the ROCm wheel index **before** the rest of the requirements:
 
 ```bash
@@ -94,247 +88,9 @@ pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
 pip install -r requirements_embedding.txt
 ```
 
-Notes for ROCm:
-- The ROCm build reuses the CUDA semantics at the Python API level — `cuda:{rank}`
-  devices, `torch.cuda.set_device`, and the `nccl` backend (mapped to RCCL) work as-is,
-  so the script needs no code changes.
-- `flash-attn` as pinned here is a CUDA build — skip it. `load_model()` now detects a
-  ROCm torch build (`torch.version.hip`) and selects `attn_implementation="sdpa"`
-  automatically; NVIDIA keeps `flash_attention_2`.
-
-### Platform notes — AMD Instinct MI355X (ROCm 7.2)
-
-This path works on MI355X with the changes below. Single-GPU smoke training of
-`google/embeddinggemma-300m` on the shipped OTel sample runs end to end on one MI355X
-(gfx950, 288GB) — finite decreasing loss, all three evaluators (telco IR + MTEB), best
-checkpoint reload, and final-model save. The changes vs. the NVIDIA path:
-
-1. torch from the ROCm wheel index (the `torch==2.11.0` pin exists there —
-   installs as `2.11.0+rocm7.2`); every other pin in
-   `requirements_embedding.txt` installed unmodified.
-2. `flash-attn` skipped; sdpa auto-selected by the ROCm switch in `load_model()`.
-
-Exact install that worked (Python 3.12.3, ROCm 7.2.4):
-
-```bash
-python3 -m venv .env_sentence_transformers
-source .env_sentence_transformers/bin/activate
-pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
-pip install -r requirements_embedding.txt
-```
-
-Exact smoke command (single GPU). Note it is `torchrun`, not `accelerate launch`:
-with `--num_processes=1` accelerate uses its simple launcher and does not set `RANK`,
-which the script's explicit `dist.init_process_group` requires — a launcher quirk,
-not a ROCm one. Add `--master_port` if 29500 is taken by another job:
-
-```bash
-export HIP_VISIBLE_DEVICES=0 CUDA_VISIBLE_DEVICES=0
-torchrun --nproc_per_node=1 --master_port=29610 train_embedding_standalone.py \
-  --model_name google/embeddinggemma-300m --batch_size 8 --epochs 1
-```
-
-**Expected output** (11 steps; `--batch_size 8` because the 100-row sample with
-`dataloader_drop_last=True` yields zero steps at the registry batch of 96):
-
-```
-{'loss': '5.162', 'grad_norm': '380', 'learning_rate': '0', 'epoch': '0.09091'}
-{'loss': '1.436', 'grad_norm': '241', 'learning_rate': '1e-05', 'epoch': '0.2727'}
-{'train_runtime': '35.12', 'train_samples_per_second': '2.563', 'train_loss': '2.264', 'epoch': '1'}
-[rank=0] INFO: MTEB Success. Avg Score: 0.5605
-```
-
-`rocm-smi` sampled during the run showed 84–99% GPU utilization and ~28GB peak VRAM.
-The RCCL (`nccl`) backend, bf16, gradient checkpointing, MatryoshkaLoss, and the Gemma
-tokenizer workaround all behaved identically to CUDA. The 8-GPU verification is below.
-
-### Platform notes — NVIDIA H100 80GB (CUDA 13.0)
-
-This path works on H100 with a one-line attn-fallback fix. Single-GPU smoke training of
-`google/embeddinggemma-300m` on the shipped OTel sample runs end to end on one H100 80GB
-(Hopper cc 9.0, driver 580.173.02) — finite decreasing loss, all three evaluators
-(telco IR + MTEB), best-checkpoint reload, and final-model save. MTEB parity with the
-MI355X baseline (**0.5609** vs. 0.5605/0.5613). Differences vs. the ROCm path:
-
-1. torch from the default PyPI index — the `torch==2.11.0` pin resolves to
-   `2.11.0+cu130` (native CUDA 13, real bf16 matmul confirmed on-GPU); no `--index-url`
-   needed. Every other pin in `requirements_embedding.txt` installed unmodified.
-2. `flash-attn==2.8.3` **built from source** against torch 2.11+cu130 (no prebuilt wheel
-   exists for this torch/CUDA combo) and runs on H100 — so `flash_attention_2` was used,
-   not sdpa.
-3. `load_model()`'s attn switch was hardened: on CUDA it now picks `flash_attention_2`
-   only if `import flash_attn` succeeds, else falls back to `sdpa`. The shipped code
-   unconditionally requested `flash_attention_2` on any non-ROCm build, which crashes on
-   a CUDA box without flash-attn installed. ROCm behavior (`torch.version.hip` → sdpa) is
-   unchanged.
-
-Exact install that worked (Python 3.12.3, CUDA 13.0, driver 580.173.02):
-
-```bash
-python3 -m venv .env_sentence_transformers
-source .env_sentence_transformers/bin/activate
-pip install torch==2.11.0 numpy==2.5.1          # -> torch 2.11.0+cu130 (verify torch.version.cuda == '13.0')
-pip install -r requirements_embedding.txt        # torch/numpy already satisfied
-# Optional but used here — flash-attn built from source (needs the CUDA toolkit):
-export CUDA_HOME=/usr/local/cuda-13.0
-export PATH=$CUDA_HOME/bin:$PATH LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
-pip install flash-attn==2.8.3 --no-build-isolation   # a few minutes to build; skip -> sdpa
-python -c "import torch;print(torch.__version__, torch.version.cuda)"   # re-check: several deps clobber torch
-```
-
-Exact smoke command (single GPU). Note it is `torchrun`, not `accelerate launch` (same
-launcher quirk as ROCm: `accelerate --num_processes=1` does not set `RANK`, which the
-script's `dist.init_process_group` requires). On CUDA use plain `CUDA_VISIBLE_DEVICES`
-(no `HIP_VISIBLE_DEVICES`). `--experiment_root` must point at the model cache because the
-script sets `HF_HOME = --experiment_root` internally; `--output_dir` keeps checkpoints off
-that cache dir:
-
-```bash
-# If an outbound proxy 403s huggingface.co (model resolution + MTEB SciFact/NFCorpus
-# dataset download), unset it first; a cache-resident model is unaffected.
-unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
-export CUDA_VISIBLE_DEVICES=4          # one assigned GPU on a shared node
-export HF_HOME=/path/to/model/cache HF_DATASETS_CACHE=/tmp/dscache_emb_st
-torchrun --nproc_per_node=1 --master_port=29644 train_embedding_standalone.py \
-  --model_name google/embeddinggemma-300m --batch_size 8 --epochs 1 \
-  --experiment_root /path/to/model/cache --output_dir /path/to/out
-```
-
-**Expected output** (11 steps; `--batch_size 8` because the 100-row sample with
-`dataloader_drop_last=True` yields 0 steps at the registry batch of 96 — identical batch
-geometry to the MI355X smoke):
-
-```
-{'loss': '5.097', 'grad_norm': '392', 'learning_rate': '0', 'epoch': '0.09091'}
-{'loss': '1.44', 'grad_norm': '223', 'learning_rate': '1e-05', 'epoch': '0.2727'}
-{'train_runtime': '70.47', 'train_samples_per_second': '1.277', 'train_steps_per_second': '0.156', 'train_loss': '2.286', 'epoch': '1'}
-[rank=0] INFO: [rank=0] MTEB Success. Avg Score: 0.5609
-```
-
-Loss is noisy step-to-step (8-row global batch with in-batch negatives) but decreasing:
-mean of the first 3 steps 3.285 → mean of the last 3 steps 1.880, final `train_loss`
-2.286. `telco_unseen`/`telco_seen` nDCG@10 were 1.0 (saturated on the ~10-doc eval
-corpus — uninformative, same as MI355X). MTEB **0.5609** (SciFact 0.7471, NFCorpus
-0.3747), within ±0.001 of the MI355X 1-GPU baseline.
-
-GPU residency check — `nvidia-smi` filtered to the job's PID and the target GPU's UUID,
-sampled from inside the run:
-
-```
-$ nvidia-smi --query-compute-apps=pid,process_name,used_memory,gpu_uuid --format=csv,noheader | grep <GPU-UUID>
-<pid>, .../.env_sentence_transformers/bin/python3, 5336 MiB, <GPU-UUID>
-# per-GPU snapshot: mem=5345 MiB util=62%  (peak ~5.3 GiB — see VRAM note)
-```
-
-**VRAM.** Peak was only ~5.3 GiB (batch 8, seq 1024, grad-checkpointing on) — no OOM
-concerns on the 80 GB card; the registry `train_batch=96` would fit comfortably (it is
-disabled here only by the drop-last step-count trap, not memory). Contrast the MI355X
-~28 GiB reading, which was at the default larger batch.
-
-**Multi-GPU (not exercised on H100).** The node's other GPUs were held by a co-tenant
-job. To reproduce the ROCm 8-GPU result on H100 it would be the same recipe:
-`torchrun --nproc_per_node=8 --master_port=<free> ... --batch_size 1` (global batch 8 →
-11 steps, matching this baseline), NCCL backend, `gather_across_devices=True` gathering
-the negative pool across all ranks. Assert `torch.cuda.device_count()==8` after setting
-`CUDA_VISIBLE_DEVICES` before launching.
-
-### 8-GPU run (8x MI355X, ROCm 7.2.4)
-
-This path works with no code change. The script scales from 1 to 8 MI355X GPUs as shipped —
-the only thing that has to change is `--batch_size`, because the 100-row sample and
-`dataloader_drop_last=True` leave too few optimizer steps at 8 ranks (see *Batch geometry*).
-Verified on 8×MI355X (gfx950, 288GB), ROCm 7.2.4, `torch==2.11.0+rocm7.2`.
-
-Exact working command (shipped dataset, one process per GPU):
-
-```bash
-source .env_sentence_transformers/bin/activate
-export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-torchrun --nproc_per_node=8 --master_port=29631 train_embedding_standalone.py \
-  --model_name google/embeddinggemma-300m --batch_size 1 --epochs 1
-```
-
-**Parallelism.** Plain single-node DDP via `torchrun` — 8 ranks, one rank per GPU, RCCL
-(the ROCm `nccl` backend) for gradient all-reduce. The script's own
-`dist.init_process_group` picks `LOCAL_RANK`/`RANK` straight out of the torchrun
-environment, so no launcher config is involved; `accelerate launch --num_processes=8`
-works too, but `torchrun` is what was verified (and `--num_processes=1` is broken for this
-script — see the single-GPU section). `MultipleNegativesRankingLoss` is constructed with
-`gather_across_devices=True`, so DDP is not merely data parallel here: the in-batch
-negative pool is gathered across all 8 ranks. A probe at `--batch_size 8` measured the
-candidate pool growing 48 → 384 vectors (8×) with gradients still flowing through the
-gather, which is the reason multi-GPU is worth doing for this trainer at all.
-
-**Batch geometry (the one thing you must get right).** Steps per epoch are
-`floor(train_rows / (per_device_batch × 8))` because `dataloader_drop_last=True`. The
-shipped `OTel_embedding_sample_100.jsonl` splits 100 rows into 90 train / 10 eval, so at
-8 ranks:
-
-| `--batch_size` | global batch | optimizer steps/epoch |
-|---|---|---|
-| 96 (registry default) | 768 | **0 — silently trains nothing** |
-| 8 (the 1-GPU smoke value) | 64 | 1 |
-| **1 (used here)** | **8** | **11** |
-
-`--batch_size 1` was chosen so the global batch (1×8 = 8) equals the 1-GPU baseline's
-global batch (8×1 = 8) — same optimizer trajectory, so the MTEB score is directly
-comparable. A second run used a 32× replicated copy of the sample (3200 rows → 2880 train)
-at `--batch_size 8`, giving a global batch of 64 and 45 steps/epoch × 2 epochs = 90 steps,
-purely to exercise the pipeline for long enough to get clean utilization evidence. That
-replicated file was written outside the repo and is **a pipeline proof, not a learning
-result** — see the caveats.
-
-**Measured evidence** (`rocm-smi` sampled every 10s from inside the run, with
-`--showpids`/`pgrep` in the same sample to confirm the PIDs were this job's):
-
-| Run | steps | wall | throughput | final train loss | MTEB avg |
-|---|---|---|---|---|---|
-| shipped, `--batch_size 1`, 1 epoch | 11 | 35.0s | 2.57 samples/s | 2.274 | **0.5613** |
-| replicated ×32, `--batch_size 8`, 2 epochs | 90 | 125.8s | 45.8 samples/s (0.716 steps/s) | 1.761 | 0.5208 |
-
-Per-GPU utilization and VRAM during the training phase (all 8 GPUs, steady state):
-
-```
-use% [97, 98, 98, 98, 98, 97, 97, 98]   VRAM 11.6 12.1 11.8 11.5 11.8 12.1 11.6 11.6 GiB
-use% [97, 98, 98, 95, 98, 96, 94, 96]   VRAM 11.6 12.1 11.8 12.3 11.8 12.1 12.0 11.6 GiB
-use% [98, 98, 99, 97, 98, 98, 97, 98]   VRAM 11.7 12.1 11.8 12.3 11.8 12.1 12.0 11.7 GiB
-```
-
-94–99% busy on every rank, ~11.5–12.3 GiB per GPU at `--batch_size 8` (~10.5–10.9 GiB at
-`--batch_size 1`) — roughly 4% of each card's 288GB, so there is a lot of headroom for
-larger per-device batches. Rank 0 peaks at **29.3 GiB** during evaluation, because the
-MTEB check runs rank-0-only; in those samples ranks 1–7 read 100% busy while spinning in
-the RCCL barrier, not doing useful work. Both runs finished with `rc=0`, decreasing loss,
-all three evaluators, and the final-model save.
-
-**Quality vs. the 1-GPU baseline.** The comparable run (same global batch of 8, same 11
-steps) scored **MTEB 0.5613** (SciFact 0.7475, NFCorpus 0.3751) against the 1-GPU
-baseline's **0.5605** — a +0.0008 difference, i.e. quality held; nothing about DDP or the
-cross-device gather degrades the result. `telco_unseen`/`telco_seen` nDCG@10 were 1.0 in
-both, but that metric is saturated on a ~100-document corpus and says nothing useful.
-
-**Caveats.**
-
-- **No speedup at this size.** 8 GPUs at global batch 8 took 35.0s versus 35.1s on one GPU
-  — splitting an 8-row global batch across 8 GPUs is launch- and sync-bound, so the extra
-  cards buy nothing. Multi-GPU pays off only when you keep the per-device batch up
-  (45.8 samples/s at global batch 64); do not read the two rows of the table above as a
-  scaling measurement, since the short run's fixed warmup is amortized very differently.
-- **The replicated dataset is not a learning result.** Its MTEB fell to 0.5208 after 90
-  steps over only 100 unique rows repeated 32×, which is over-fitting a tiny domain sample.
-  Duplicated rows also land in the same global batch, so some of MNRL's "negatives" are
-  actually copies of the positive. It exists to prove the 8-rank pipeline, nothing more; it
-  was written outside the repo and is deliberately not committed.
-- **Checkpoint saving can be disabled** on a disk-constrained host by patching
-  `save_strategy="no"` / `load_best_model_at_end=False` onto the training args from an
-  external wrapper — no change to the repo script. Checkpointing is not related to whether
-  8 GPUs work; the default `save_strategy="epoch"` path was also exercised at 8 ranks and
-  wrote `checkpoint-45` and `final_model` normally.
-- **Watch the venv's device pin.** If `.env_sentence_transformers/bin/activate` carries a
-  leftover `export HIP_VISIBLE_DEVICES=0` / `CUDA_VISIBLE_DEVICES=0` from a single-GPU
-  run, sourcing it and launching 8 ranks silently trains on one GPU; override both
-  after activating, and assert with
-  `python -c "import torch; assert torch.cuda.device_count()==8"` before training.
+Do **not** install `flash-attn` on ROCm — the pin here is a CUDA build. `load_model()`
+detects a ROCm torch build (`torch.version.hip`) and selects
+`attn_implementation="sdpa"` automatically.
 
 ## Environment & secrets
 
@@ -364,8 +120,10 @@ Shipped sample: `OTel_embedding_sample_100.jsonl` (100 rows) — the default
 
 ## Run
 
-Launch with `accelerate` (single-node DDP). The model family is selected by
-`--model_name`; everything else defaults from the registry.
+Launch with `accelerate` (single-node DDP) for multi-process runs, or `torchrun` for any
+run including single-GPU — see *Single GPU* below for why `accelerate --num_processes=1`
+does not work here. The model family is selected by `--model_name`; everything else
+defaults from the registry.
 
 Smoke test against the shipped sample:
 
@@ -400,6 +158,69 @@ accelerate launch --num_processes=8 train_embedding_standalone.py --model_name B
   --batch_size 24 --epochs 3 --lr 2e-5 --eval_corpus_size 100000
 ```
 
+### Single GPU
+
+Use **`torchrun`, not `accelerate launch`**: with `--num_processes=1` accelerate uses its
+simple launcher and does not set `RANK`, which the script's explicit
+`dist.init_process_group` requires. This is a launcher quirk, not a hardware one. Pass
+`--master_port` if 29500 is already taken.
+
+`--experiment_root` must point at the model cache, because the script sets
+`HF_HOME = --experiment_root` internally; give `--output_dir` separately so checkpoints
+stay off the cache directory.
+
+```bash
+export HIP_VISIBLE_DEVICES=0 CUDA_VISIBLE_DEVICES=0   # on NVIDIA set only CUDA_VISIBLE_DEVICES
+export HF_HOME=/path/to/model/cache HF_DATASETS_CACHE=/tmp/dscache_emb_st
+torchrun --nproc_per_node=1 --master_port=29610 train_embedding_standalone.py \
+  --model_name google/embeddinggemma-300m --batch_size 8 --epochs 1 \
+  --experiment_root /path/to/model/cache --output_dir /path/to/out
+```
+
+If an outbound proxy 403s huggingface.co (model resolution plus the MTEB SciFact/NFCorpus
+dataset download), unset it first — `unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy
+https_proxy all_proxy`. A cache-resident model is unaffected.
+
+**`--batch_size 8` is deliberate**: the shipped 100-row sample with
+`dataloader_drop_last=True` yields **zero** optimizer steps at the registry default batch
+of 96.
+
+**Expected output** (11 steps):
+
+```
+{'loss': '5.097', 'grad_norm': '392', 'learning_rate': '0', 'epoch': '0.09091'}
+{'loss': '1.44', 'grad_norm': '223', 'learning_rate': '1e-05', 'epoch': '0.2727'}
+{'train_runtime': '70.47', 'train_samples_per_second': '1.277', 'train_loss': '2.286', 'epoch': '1'}
+[rank=0] INFO: MTEB Success. Avg Score: 0.5609
+```
+
+Loss is noisy step to step but decreasing in the mean. **MTEB average ~0.56** is the useful
+fingerprint that the run worked. `telco_unseen` / `telco_seen` nDCG@10 both read 1.0 —
+saturated on a ~10-document eval corpus, so treat them as a smoke signal only.
+
+### Multi-GPU
+
+Plain single-node DDP via `torchrun`, one rank per GPU; no code change is needed.
+
+```bash
+source .env_sentence_transformers/bin/activate
+# If bin/activate carries a leftover single-GPU device pin, sourcing it and launching N
+# ranks silently trains on one GPU. Override after activating, and assert:
+export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+python -c "import torch; assert torch.cuda.device_count()==8"
+torchrun --nproc_per_node=8 --master_port=29631 train_embedding_standalone.py \
+  --model_name google/embeddinggemma-300m --batch_size 1 --epochs 1
+```
+
+**Batch geometry.** Steps per epoch are
+`floor(train_rows / (per_device_batch × ranks))` because `dataloader_drop_last=True`. Size
+`--batch_size` so that this stays above zero, or the run silently trains nothing: the
+shipped 100-row sample (90 train / 10 eval) needs `--batch_size 1` at 8 ranks.
+
+**Checkpoint saving can be disabled** on a disk-constrained host by patching
+`save_strategy="no"` / `load_best_model_at_end=False` onto the training args from an
+external wrapper — no change to the repo script.
+
 ## Arguments
 
 | Flag | Default | Meaning |
@@ -433,24 +254,16 @@ Each epoch runs a `SequentialEvaluator`:
 `--eval_corpus_size` controls the retrieval corpus: unset ⇒ all known positives; an int ⇒
 required answers plus that many sampled distractors (used for the larger Gemma/model2vec runs).
 
-## Hardware support & evidence
+## Hardware support
 
-- **Tested:** Azure cluster, 8×H100 80GB — single-node DDP via `accelerate`. The registry
-  batch sizes are tuned for 80GB GPUs.
-- **NVIDIA:** default PyPI torch wheels; flash-attention 2 optional (fallback: `"sdpa"`).
-- **AMD:** **tested** — 1× and 8× MI355X (gfx950, 288GB), ROCm 7.2.4,
-  `torch==2.11.0+rocm7.2` from
-  [download.pytorch.org/whl/rocm7.2](https://download.pytorch.org/whl/rocm7.2/torch/).
-  The ROCm build keeps the `torch.cuda` API semantics, and the script runs unchanged
-  apart from the (now automatic) flash-attn → sdpa switch. Single-node DDP across 8
-  MI355X via `torchrun` is verified too (94–99% utilization on all 8 ranks, MTEB parity
-  with the 1-GPU run) — only `--batch_size` has to be lowered so the 100-row sample still
-  yields optimizer steps at 8 ranks. See "Platform notes — AMD Instinct MI355X" and
-  "8-GPU run" above for the exact commands and evidence.
-- **Other hardware (upstream claims — not verified here):** sentence-transformers runs on
-  any PyTorch backend and auto-selects `cuda`, `mps`, or `cpu` — so Apple Silicon (MPS)
-  and CPU training are claimed upstream via the HF Trainer (single-process; no
-  distributed backend on MPS). Its ONNX and OpenVINO backends are inference-only.
+| | NVIDIA | AMD |
+|---|---|---|
+| Verified | H100 80GB (Hopper cc 9.0), CUDA 13.0, 1 GPU | MI355X 288GB (gfx950), ROCm 7.2.4, 1 and 8 GPUs |
+| PyTorch | `torch==2.11.0` resolves to `+cu130` on plain PyPI | `torch==2.11.0` from `download.pytorch.org/whl/rocm7.2` |
+| Attention | `flash_attention_2` (source-built) or `sdpa` | `sdpa` (selected automatically) |
+
+The script needs **no code changes** on either vendor; the flash-attn → sdpa switch is
+automatic. Registry batch sizes are tuned for 80GB GPUs.
 
 ## Notes
 
@@ -458,5 +271,5 @@ required answers plus that many sampled distractors (used for the larger Gemma/m
   the other ranks in sync.
 - `transformers 5.0.0.dev0` misses `save_safetensors` — the script patches it onto the
   training args if absent.
-- The original training data for this work was an internal telco retrieval set; the
-  shipped OTel sample is only for pipeline validation, not for producing a useful model.
+- The shipped OTel sample is only for pipeline validation, not for producing a useful
+  model.

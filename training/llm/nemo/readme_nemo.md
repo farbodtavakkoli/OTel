@@ -15,7 +15,7 @@ NeMo AutoModel is YAML-recipe driven and is launched by its own `automodel` CLI,
 the torchrun/SPMD launch. `train_llm_nemo.py` is therefore a thin wrapper: it turns argparse
 knobs into a valid AutoModel recipe YAML, preflights the data, writes the recipe next to the
 run, and execs `automodel <config.yaml> --nproc-per-node N`, propagating its exit code.
-Reimplementing the training loop here would fight the framework.
+Reimplementing the training loop here would work against the framework's design.
 
 Files in this folder:
 - `train_llm_nemo.py` — entrypoint. Generates a NeMo AutoModel recipe YAML from CLI flags and launches the `automodel` CLI.
@@ -23,25 +23,18 @@ Files in this folder:
 - `requirements_nemo.txt` — dependencies, with the NGC container called out as the recommended path.
 - `readme_nemo.md` — this document.
 
-> **Tested topology:** **partially tested — on AMD, of all things.** This folder was written
-> against upstream documentation and source (NVIDIA-NeMo/Automodel `main`) for the pinned
-> versions below, and targets the repo default of a single node with 8xH100 80GB, which
-> remains **unrun** at that scale. The full `train_llm_nemo.py` → `automodel` → training path
-> *was* executed end-to-end on **1x AMD Instinct MI355X (gfx950, ROCm 7.2)** — both full SFT
-> and LoRA, against the shipped sample, producing loadable checkpoints. That required
-> exactly one fix (the `transformers` pin, now corrected). See "AMD MI355X (ROCm 7.2) —
-> attempted" in section 2 for the commands and logs. The SFT path was
-> also run across **8x MI355X** (`dp_size 8`, world size 8, FSDP2 + RCCL) to exit code 0 —
-> see "8-GPU run (8x MI355X, ROCm 7.2.4)" in section 2, which also documents the one real
-> limitation found (the `automodel` CLI cannot change torchrun's rendezvous port).
-> Tensor/pipeline/context parallel (`tp_size`/`pp_size`/`cp_size` > 1), LoRA at 8 GPUs, and
-> all NVIDIA-specific paths (Transformer Engine, FP8) are still unexercised.
-> Multi-node is exposed through the parallelism flags and upstream's `sbatch slurm.sub`
-> workflow but is not covered here. Treat every command as a starting point to verify,
-> and see Notes for the API-churn caveats — NeMo's LLM API changed substantially and the
-> version you install may not match. The script's stdlib helpers (`preflight`,
-> `split_train_val`, `build_recipe`) *have* been run against the shipped sample; the
-> GPU/`automodel` launch path has not.
+> **Hardware coverage.** The full `train_llm_nemo.py` → `automodel` → training path runs end
+> to end on **AMD Instinct MI355X (gfx950, ROCm 7.2)** — full SFT and LoRA on one GPU against
+> the shipped sample, producing loadable checkpoints, plus SFT across **8x MI355X**
+> (`dp_size 8`, world size 8, FSDP2 + RCCL). On **NVIDIA H100 (CUDA 13)** both routes work:
+> the NGC container and a bare-host pip venv, SFT and LoRA, single GPU. See "AMD MI355X
+> (ROCm 7.2)", "8-GPU run (8x MI355X, ROCm 7.2.4)" and "NVIDIA H100 80GB (CUDA 13)" in
+> section 2 for the commands, including the one real limitation found at 8 GPUs (the
+> `automodel` CLI cannot change torchrun's rendezvous port).
+>
+> Not covered: tensor/pipeline/context parallel (`tp_size`/`pp_size`/`cp_size` > 1), LoRA at
+> 8 GPUs, FP8, and multi-node. See Notes for the API-churn caveat — NeMo's LLM API changed
+> substantially and the version you install may not match.
 
 ## 2. Install
 
@@ -93,33 +86,23 @@ python -c "import nemo_automodel; print('NeMo AutoModel ready')"
 automodel --help
 ```
 
-### NVIDIA H100 80GB (CUDA 13) — verified
+### NVIDIA H100 80GB (CUDA 13)
 
-> **Result: works.** Validated on **1x NVIDIA H100 80GB HBM3**
-> (Hopper cc 9.0), driver **580.173.02**, Python 3.12.3. **Both install routes ran**:
-> the **NGC container** — the native, supported path that is *unavailable* on AMD —
-> AND the bare-host pip route. Full **SFT** and **LoRA** paths of `train_llm_nemo.py`
-> ran to **exit code 0** against the shipped sample, wrote consolidated HF safetensors
-> / a reloadable LoRA adapter, and were confirmed resident on **GPU 5 only** (the box is
-> shared; GPUs 0–3 were a co-tenant production job, untouched). Single-GPU functional
-> check; multi-GPU is deferred (see end of this subsection).
+> **Both install routes work** on H100 (Hopper cc 9.0, CUDA 13, Python 3.12): the **NGC
+> container** — the native, supported path that is *unavailable* on AMD — and the bare-host
+> pip route. Full **SFT** and **LoRA** paths of `train_llm_nemo.py` train against the shipped
+> sample on a single GPU, writing consolidated HF safetensors and a reloadable LoRA adapter.
 
-**The headline vs AMD.** On MI355X the NGC container was genuinely unusable (CUDA-only,
-no NVIDIA runtime) and only the pip route worked. **On H100 the container is the easy,
-native path and it works** — including `transformer-engine 2.14.1`, the exact package
-whose build fails on ROCm with `RuntimeError: CUDA not found.` (see the AMD section). So
-on H100 you get the full NVIDIA surface (TE / FP8) that AMD structurally cannot.
-
-**Route A — NGC container (recommended).** The pull is 403'd through the box proxy; unset
-it first (pypi.org stays reachable, but nvcr.io needs the proxy off):
+**Route A — NGC container (recommended).** Behind a proxy the `nvcr.io` pull is 403'd; unset
+it first (pypi.org stays reachable either way):
 
 ```bash
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
-docker pull nvcr.io/nvidia/nemo-automodel:26.06.00        # ~20GB, exit 0
+docker pull nvcr.io/nvidia/nemo-automodel:26.06.00        # ~20GB
 
-# NOTE: docker 29.1.3 here registers only the `runc` runtime — `--runtime=nvidia`
+# NOTE: recent Docker may register only the `runc` runtime, so `--runtime=nvidia`
 # errors ("unknown or invalid runtime name: nvidia"). The `--gpus` flag alone is the
-# working GPU-passthrough mechanism (nvidia-container-toolkit hook). Pin ONE GPU:
+# working GPU-passthrough mechanism (nvidia-container-toolkit hook). Pin the GPU:
 docker run --rm --gpus '"device=5"' --ipc host \
   -e HF_HOME=/models -e HF_HUB_OFFLINE=1 \
   -v $HF_HOME:/models -v <repo>:/work \
@@ -142,21 +125,18 @@ $ python -c "import transformer_engine as te;print('transformer_engine', te.__ve
 transformer_engine 2.14.1                          # <-- present; this is what fails on ROCm
 ```
 
-The container reports `CUDA Forward Compatibility mode ENABLED. Using CUDA 13.2 driver
-version 595.58.03 with kernel driver version 580.173.02` — its userspace CUDA 13.2 runs
-fine forward-compat over the host's 580.173.02 driver. In-container SFT ran to exit 0
-(20/20 steps, consolidated HF safetensors written to the mounted `/out`); steady tps was
-notably higher than the pip route (peaks ~18k vs ~9k tok/s) with TE/optimized kernels.
+The container may report `CUDA Forward Compatibility mode ENABLED` — its userspace CUDA 13.2
+runs forward-compat over an older host driver, which is fine. In-container SFT trains and
+writes consolidated HF safetensors to the mounted output dir.
 
-**Route B — bare-host pip (tested fallback; mirrors the AMD recipe but CUDA wheels).**
-Used for the detailed SFT+LoRA logs below. Unlike AMD's `--index-url .../rocm7.2`, the
-plain PyPI wheel is CUDA-native here:
+**Route B — bare-host pip (fallback; mirrors the AMD recipe but with CUDA wheels).**
+Unlike AMD's `--index-url .../rocm7.2`, the plain PyPI wheel is CUDA-native here:
 
 ```bash
 cd training/llm/nemo
 ln -sf ../../../dev.env dev.env               # HF_TOKEN; loaded by train_llm_nemo.py
 python3 -m venv .env_nemo && source .env_nemo/bin/activate
-pip install torch numpy                       # -> torch 2.13.0+cu130 (CUDA 13.0)
+pip install torch numpy                       # -> the current CUDA 13 build (CUDA 13.0)
 pip install nemo-automodel==0.5.0 transformers==5.8.1 \
             datasets torchdata megatron-fsdp==0.5.0 pyyaml python-dotenv
 python -c "import torch;print(torch.__version__, torch.cuda.is_available())"
@@ -164,21 +144,21 @@ python -c "import torch;print(torch.__version__, torch.cuda.is_available())"
 automodel --help                              # exit 0
 ```
 
-Two operational notes that bit here and will bite you:
+Two operational notes:
 
-- **HF metadata check hits the proxy even for a cached model.** The first SFT attempt
-  died with `httpx.ProxyError: 403 Forbidden` while `Qwen/Qwen3-0.6B` (cached) was being
-  *resolved* — HF was listing the repo tree online through the proxy. Fix: run with the
-  proxy unset **and** `export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1` (the weights are
-  cached, so no download is needed). This is the same proxy trap as the NGC pull.
+- **The HF metadata check hits the network even for a cached model.** Behind a proxy this
+  surfaces as `httpx.ProxyError: 403 Forbidden` while `Qwen/Qwen3-0.6B` is being *resolved*
+  — HF is listing the repo tree online. Fix: run with the proxy unset **and** `export
+  HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1` (the weights are cached, so no download is
+  needed). Same trap as the NGC pull.
 - **SDPA uses flash-attention kernels on H100 out of the box.** The default
   `attn_implementation: sdpa` logs `Patched model with SDPA method=[CUDNN_ATTENTION,
   FLASH_ATTENTION, EFFICIENT_ATTENTION, MATH]` — i.e. you already get FlashAttention via
   PyTorch SDPA without building `flash-attn`. (`flash_attention_2` remains selectable if
-  you install the wheel, but was unnecessary for the smoke.)
+  you install the wheel, but is unnecessary.)
 
-**Full SFT — GPU 5, pip route.** 9 train / 1 val split, seq 512, gbs 2 / lbs 1 →
-grad_accum 2, capped at 12 optimizer steps over 4 epochs:
+**Full SFT, pip route.** 9 train / 1 val split, seq 512, gbs 2 / lbs 1 → grad_accum 2,
+capped at 12 optimizer steps over 4 epochs:
 
 ```bash
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
@@ -197,27 +177,17 @@ Trainable parameters: 596,049,920 | Trainable parameters percentage: 100.00%
 step 0  | epoch 0 | loss 1.8393 | grad_norm 31.3682 | mem 5.63 GiB | num_label_tokens 265
 step 10 | epoch 2 | loss 1.7023 | grad_norm 27.5500 | mem 6.54 GiB | num_label_tokens 265
 Successfully exported consolidated HF safetensors to .../epoch_2_step_11/model/consolidated
-Training: 100%|##########| 12/12 [00:41<00:00,  3.44s/step]        # exit code 0
+Training: 100%|##########| 12/12
 ```
 
 The consolidated checkpoint reloads as a plain HF model, so the section 7 contract holds:
-```
-AutoModelForCausalLM.from_pretrained(".../epoch_2_step_11/model/consolidated")
-#  -> SFT CHECKPOINT RELOAD OK | params 596,049,920
-```
+`AutoModelForCausalLM.from_pretrained(".../epoch_2_step_11/model/consolidated")` returns a
+596,049,920-parameter model.
 
-**GPU-5 residency, sampled from inside the SFT run** (its own PID on GPU 5's UUID; GPUs
-0–3 belong to the co-tenant job and were never touched):
-```
-$ nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory --format=csv | grep <gpu-uuid>
-<pid>, GPU-<uuid>, 4862 MiB      # the training PID, on the pinned GPU only
-```
-
-**LoRA — GPU 5, pip route (`use_triton: true`).** Here `--seq_length 2048` (keeps the
-long OTel assistant turns instead of truncating them) with 8 epochs / 24 steps gives a
-**cleanly decreasing** curve — the sharpest evidence in this section. It is a longer variant
-than the shipped `generated_recipe_lora.yaml` (seq 512 / 4 epochs / 12 steps), so it is given
-its own `--config_out` instead of overwriting that file:
+**LoRA, pip route (`use_triton: true`).** `--seq_length 2048` keeps the long OTel assistant
+turns instead of truncating them, and with 8 epochs / 24 steps gives a cleanly decreasing
+curve. It is a longer variant than the shipped `generated_recipe_lora.yaml` (seq 512 /
+4 epochs / 12 steps), so give it its own `--config_out` rather than overwriting that file:
 
 ```bash
 python3 train_llm_nemo.py --model_name Qwen/Qwen3-0.6B --use_lora \
@@ -234,44 +204,30 @@ step 10 | epoch 2 | loss 0.8804 | grad_norm 3.62 | mem 5.16 GiB | num_label_toke
 step 16 | epoch 3 | loss 0.5780 | grad_norm 5.13 | mem 7.92 GiB | num_label_tokens 158
 step 18 | epoch 3 | loss 0.3516 | grad_norm 3.46 | mem 3.98 GiB | num_label_tokens 424
 [val] step 9  | loss 0.9033   ->   [val] step 11 | loss 0.8679   ->   [val] step 14 | loss 0.8330
-Saving checkpoint to .../checkpoints_lora/epoch_4_step_23         # exit code 0
+Saving checkpoint to .../checkpoints_lora/epoch_4_step_23
 #  -> model/adapter_model.safetensors (392 tensors), adapter_config.json, automodel_peft_config.json
 ```
 
-The **held-out validation loss falls monotonically 0.9033 → 0.8679 → 0.8330** (constant
-22-token val batch, so it is a clean apples-to-apples signal), and train loss drops from
-~1.07 to ~0.35. The adapter reloads: `safe_open(...) -> ADAPTER OK | 392 tensors | e.g.
-base_model.model.model.layers.0.mlp.down_proj.lora_A.weight`.
+The held-out validation loss should fall alongside the train loss. The adapter reloads with
+`safe_open(...)`, e.g. `base_model.model.model.layers.0.mlp.down_proj.lora_A.weight`.
 
-**Quirks / what it took (H100-specific or found here):**
+**Quirks on NVIDIA:**
 
-- **`--runtime=nvidia` is not registered** on this host's docker 29.1.3 (only `runc`); use
-  `--gpus '"device=N"'` alone. Deviation from the README's container command above —
-  corrected there.
-- **Proxy + `HF_HUB_OFFLINE=1`** are both required even for a cached model (403 otherwise),
+- **`--runtime=nvidia` may not be registered** (only `runc`); use `--gpus '"device=N"'`
+  alone, as the container command above does.
+- **Unset the proxy and set `HF_HUB_OFFLINE=1`** even for a cached model (403 otherwise),
   for both the NGC pull and the pip-route run. See the note above.
-- **VRAM is a non-issue at this scale** — Qwen3-0.6B SFT peaked ~6.5 GiB and LoRA ~8 GiB of
-  the 80 GB, so none of the MI355X→H100 288→80 GB reductions the brief warns about were
-  needed here. (They would matter for a multi-billion-param model.)
-- **`--warmup_steps` must stay `< --max_steps`** — same platform-neutral scheduler assert
-  the AMD section documents; kept `warmup 2–3` under `max_steps 12–24`.
+- **`--warmup_steps` must stay `< --max_steps`** — the same platform-neutral scheduler assert
+  the AMD section documents.
 - **Data/seq-len artifact, not a bug:** at seq 512 several micro-batches truncate the
-  assistant span entirely and log `num_label_tokens 0 | loss 0.0000` (visible in the SFT
-  run). Raising to seq 2048 (the LoRA run) largely removes it. Not H100-specific.
+  assistant span entirely and log `num_label_tokens 0 | loss 0.0000`. Raising to seq 2048
+  largely removes it. Not NVIDIA-specific.
 
-**Multi-GPU (deferred).** Only single-GPU `dp_size 1` was run — GPUs 0–3 were a live
-co-tenant job. A 2- or 8-GPU pass would reuse the exact recipe with `--nproc_per_node N
---dp_size N`; on H100 the natural launch is `automodel <cfg> --nproc-per-node N` (or the
+**Multi-GPU.** A 2- or 8-GPU pass reuses the exact recipe with `--nproc_per_node N
+--dp_size N`; on NVIDIA the natural launch is `automodel <cfg> --nproc-per-node N` (or the
 `torchrun --master_port <free>` escape hatch the AMD 8-GPU section documents, since
 `automodel` cannot change torchrun's default 29500). NCCL (not RCCL) collectives apply.
-
-**Summary on NVIDIA H100: this path works.** The NGC container — the native path, and the one AMD
-cannot run — pulls and runs with `transformer-engine 2.14.1` present; the bare-host pip
-route (`torch 2.13.0+cu130`) also runs both SFT and LoRA to exit 0 with a decreasing
-validation loss, reloadable checkpoints, and confirmed single-GPU (GPU 5) residency. This
-is the "upgrade over AMD" the folder was waiting for: on H100 the container is the easy
-path and the full NVIDIA kernel surface (TE/FP8) is available rather than structurally
-blocked.
+Not covered here.
 
 | Component | On H100 / CUDA 13 |
 |---|---|
@@ -279,26 +235,20 @@ blocked.
 | `transformer-engine` 2.14.1 (in container) | **present** (the exact TE that fails to build on ROCm) |
 | Bare-host pip `torch 2.13.0+cu130` | works; not clobbered by the nemo install |
 | `nemo-automodel` 0.5.0 + `automodel` CLI | works (both routes) |
-| SFT (full FT) → consolidated HF safetensors | works, exit 0, reloads with `from_pretrained` |
-| PEFT/LoRA (`use_triton: true`) | works, exit 0, decreasing val loss, adapter reloads |
+| SFT (full FT) → consolidated HF safetensors | works; reloads with `from_pretrained` |
+| PEFT/LoRA (`use_triton: true`) | works; decreasing val loss, adapter reloads |
 | `attn_implementation: sdpa` | works — uses FLASH_ATTENTION/CUDNN backends natively |
-| Multi-GPU (`dp_size` > 1), TP/PP/CP | **deferred** (co-tenant on GPUs 0–3) |
+| Multi-GPU (`dp_size` > 1), TP/PP/CP | not covered |
 
 ### AMD / ROCm
 
-Upstream is distributed NVIDIA-first: the documented install paths are the NGC container
-and a CUDA-extra build, the kernel layer is NVIDIA-oriented (Transformer Engine, DeepEP,
-FP8 on GB200), and benchmarks are published on H100/GB200 only. There is no ROCm image and
-no ROCm install documentation upstream.
-
-**But the SFT/LoRA path this folder actually generates does run on AMD Instinct.** It was
-executed end-to-end on an MI355X — see the section below for the commands, the evidence,
-and the one pin you must change.
+Upstream is NVIDIA-first — there is no ROCm image and no ROCm install documentation. **But
+the SFT/LoRA path this folder generates does run on AMD Instinct**, via the pip route below.
 
 ```bash
 python3.12 -m venv .env_nemo && source .env_nemo/bin/activate
 pip install --index-url https://download.pytorch.org/whl/rocm7.2 torch
-# NOTE: change transformers==5.12.1 -> transformers==5.8.1 first (see requirements file)
+# NOTE: transformers must be pinned to 5.8.1, not 5.12.1 (see requirements file)
 pip install -r requirements_nemo.txt
 ```
 
@@ -310,19 +260,16 @@ kernels; you keep HF-checkpoint SFT, PEFT/LoRA, FSDP2 and safetensors checkpoint
 Megatron-Bridge). Prefer it for large-scale AMD work; this folder is a viable AMD option
 when you specifically want AutoModel's HF-native recipe/checkpoint contract.
 
-### AMD MI355X (ROCm 7.2) — attempted
+### AMD MI355X (ROCm 7.2)
 
-> **Result: works with one change.** Validated on 1x **AMD Instinct MI355X**
-> (`gfx950:sramecc+:xnack-`, 288 GB HBM), ROCm 7.2, Ubuntu, Python 3.12.3,
-> `torch 2.13.0+rocm7.2`, `nemo-automodel 0.5.0`. Both the **full SFT** and the
-> **LoRA (`use_triton: true`)** paths of `train_llm_nemo.py` ran to completion against the
-> shipped `data/OTel_LLM_sample_10.jsonl` sample and wrote loadable checkpoints. This is a
-> single-GPU functional check, not a performance or multi-GPU/parallelism validation.
+> **Works, with one pin change.** On AMD Instinct MI355X (`gfx950:sramecc+:xnack-`, 288 GB
+> HBM), ROCm 7.2, Python 3.12, `torch 2.13.0+rocm7.2`, `nemo-automodel 0.5.0`, both the
+> **full SFT** and the **LoRA (`use_triton: true`)** paths of `train_llm_nemo.py` train
+> against the shipped `data/OTel_LLM_sample_10.jsonl` sample and write loadable checkpoints.
 
-**Environment.** The NGC container was deliberately **not** pulled: it is CUDA-only
-(`nvcr.io/nvidia/nemo-automodel:26.06.00` needs `--runtime=nvidia` and CUDA devices,
-neither of which exists on a ROCm host), so the container path is genuinely unavailable
-here. Everything below is the native pip route.
+**Environment.** The NGC container is unavailable here: it is CUDA-only
+(`nvcr.io/nvidia/nemo-automodel:26.06.00` needs `--runtime=nvidia` and CUDA devices, neither
+of which exists on a ROCm host). Everything below is the native pip route.
 
 ```bash
 cd training/llm/nemo
@@ -349,11 +296,10 @@ The conflict is caused by:
 ERROR: ResolutionImpossible
 ```
 
-`requirements_nemo.txt` pinned `transformers==5.12.1`; `nemo-automodel==0.5.0` pins
-`transformers==5.8.1` **exactly**. That is a hard resolver failure on **any** platform,
-NVIDIA included. The pin has been corrected in `requirements_nemo.txt`.
+`nemo-automodel==0.5.0` pins `transformers==5.8.1` **exactly**, so any other pin is a hard
+resolver failure on **any** platform, NVIDIA included. `requirements_nemo.txt` carries 5.8.1.
 
-**2. With that one pin fixed, the whole stack installs on ROCm.**
+**2. With that pin right, the whole stack installs on ROCm.**
 
 ```bash
 pip install -r requirements_nemo.txt      # transformers==5.8.1
@@ -363,15 +309,14 @@ python -c "import nemo_automodel; print(nemo_automodel.__version__)"   # 0.5.0+7
 automodel --help                                                       # exit 0
 ```
 
-The reason this works: **`nemo-automodel` ships a pure-Python `py3-none-any` wheel**, and
-none of its *required* dependencies is CUDA-bound. `megatron-fsdp==0.5.0` is likewise pure
-Python (`torch`, `einops`, `packaging`). Every NVIDIA-only component lives behind the
-optional `[cuda]`, `[fa]` and `[moe]` extras, which this folder does not install.
+`nemo-automodel` ships a pure-Python wheel and none of its *required* dependencies is
+CUDA-bound; every NVIDIA-only component lives behind the optional `[cuda]`, `[fa]` and
+`[moe]` extras, which this folder does not install.
 
-**3. Actual training on GPU 6 — full SFT.**
+**3. Full SFT.**
 
 ```bash
-export HIP_VISIBLE_DEVICES=6 CUDA_VISIBLE_DEVICES=6 HF_HOME=/path/to/hf_cache
+export HIP_VISIBLE_DEVICES=0 CUDA_VISIBLE_DEVICES=0 HF_HOME=/path/to/hf_cache
 python train_llm_nemo.py --model_name Qwen/Qwen3-0.6B \
   --checkpoint_dir ./checkpoints_sft --config_out generated_recipe.yaml \
   --nproc_per_node 1 --dp_size 1 --seq_length 512 \
@@ -384,22 +329,18 @@ python train_llm_nemo.py --model_name Qwen/Qwen3-0.6B \
 Backend: nccl
 - torch: 2.13.0+rocm7.2 CUDA None
 Trainable parameters: 596,049,920 | Trainable parameters percentage: 100.00%
-step 0  | epoch 0 | loss 1.8380 | grad_norm 31.4733 | mem 5.72 GiB | tps 61.20
-step 4  | epoch 0 | loss 2.3122 | grad_norm 72.4026 | mem 6.35 GiB | tps 7093.50
-step 10 | epoch 2 | loss 1.7038 | grad_norm 27.5190 | mem 6.62 GiB | tps 95.20
+step 0  | epoch 0 | loss 1.8380 | grad_norm 31.4733 | mem 5.72 GiB
+step 10 | epoch 2 | loss 1.7038 | grad_norm 27.5190 | mem 6.62 GiB
 Successfully exported consolidated HF safetensors to .../epoch_2_step_11/model/consolidated
-Training: 100%|##########| 12/12 [00:18<00:00,  1.50s/step]     # exit code 0
+Training: 100%|##########| 12/12
 ```
 
 The consolidated checkpoint reloads as an ordinary HF model, so the section 7 output
 contract holds unchanged on AMD:
+`AutoModelForCausalLM.from_pretrained(".../epoch_2_step_11/model/consolidated")` returns a
+596,049,920-parameter model.
 
-```
-AutoModelForCausalLM.from_pretrained(".../epoch_2_step_11/model/consolidated")
-#  -> LOADED | params 596,049,920
-```
-
-**4. Actual training on GPU 6 — LoRA, including NVIDIA's Triton LoRA kernel.**
+**4. LoRA, including NVIDIA's Triton LoRA kernel.**
 
 `build_recipe()` sets `peft.use_triton: true`, which is the most AMD-suspect thing the
 folder emits. It works — Triton's ROCm backend JIT-compiles for `gfx950`:
@@ -418,14 +359,14 @@ Trainable parameters: 10,092,544 | Trainable parameters percentage: 1.67%
 step 0  | loss 1.8339 | grad_norm 9.2990 | mem 2.88 GiB     # 37.7 s -- Triton JIT for gfx950
 step 5  | loss 1.1134 | grad_norm 5.3182 | mem 3.00 GiB
 step 11 | loss 0.0767 | grad_norm 8.4692 | mem 3.00 GiB
-Saving checkpoint to .../checkpoints_lora/epoch_2_step_11   # exit code 0
+Saving checkpoint to .../checkpoints_lora/epoch_2_step_11
 #  -> model/adapter_model.safetensors, adapter_config.json, automodel_peft_config.json
 ```
 
-Note the ~38 s first step: that is one-time Triton kernel compilation for `gfx950`, not a
-hang. Subsequent steps run at ~1.6 step/s.
+Note the slow first step: that is one-time Triton kernel compilation for `gfx950`, not a
+hang.
 
-**5. What genuinely does NOT work on AMD — the `[cuda]` extra.**
+**5. What does not work on AMD — the `[cuda]` extra.**
 
 ```bash
 pip install --no-build-isolation "transformer-engine[pytorch]>=2.14.1"
@@ -442,13 +383,12 @@ Collecting transformer_engine_torch==2.18.0
 error: metadata-generation-failed
 ```
 
-**This is the CUDA hard dependency**, and it is decisive but *optional*: Transformer
-Engine's build backend refuses even to generate metadata without a CUDA toolkit — there is
-no ROCm code path to fall back to. The same applies to the rest of `extra == "cuda"`
-(`causal-conv1d`, `mamba-ssm`, `nv-grouped-gemm`, `tilelang`, `tile-kernels`,
-`apache-tvm-ffi`), to `extra == "fa"` (`flash-attn`) and to `extra == "moe"` (`deep_ep`).
+Transformer Engine's build backend refuses even to generate metadata without a CUDA toolkit.
+The same applies to the rest of `extra == "cuda"` (`causal-conv1d`, `mamba-ssm`,
+`nv-grouped-gemm`, `tilelang`, `tile-kernels`, `apache-tvm-ffi`), to `extra == "fa"`
+(`flash-attn`) and to `extra == "moe"` (`deep_ep`). Do not install them on ROCm.
 
-**Summary on AMD MI355X: works with changes.**
+**Summary on AMD MI355X:**
 
 | Component | On MI355X / ROCm 7.2 |
 |---|---|
@@ -465,18 +405,13 @@ no ROCm code path to fall back to. The same applies to the rest of `extra == "cu
 | **FP8 / MXFP8, MoE + DeepEP, mamba-ssm, flash-attn** | **unavailable** |
 | NGC container `nemo-automodel:26.06.00` | **unavailable — no NVIDIA runtime, no CUDA devices** |
 
-Root cause of the *limits* (not of a failure): the NVIDIA-only surface is confined to
-optional extras built around Transformer Engine, whose build system hard-requires a CUDA
-toolkit. The recipe `train_llm_nemo.py` generates never references those extras, so the
-folder's own contract is satisfied on ROCm.
-
-**Caveats and gotchas found while doing this:**
+**Caveats:**
 
 - **`triton` overwrites `triton-rocm`.** `flashoptim` (a *required* nemo-automodel dep)
   requires `triton>=3.0.0; sys_platform == "linux"`, so pip installs the NVIDIA-published
-  `triton` wheel on top of the `triton-rocm` that the ROCm torch wheel brought in. It
-  happened to be benign here — `triton` 3.7.1 ships **both** `amd` and `nvidia` backends
-  and torch stayed fully functional — but check
+  `triton` wheel on top of the `triton-rocm` that the ROCm torch wheel brought in. This is
+  benign at `triton` 3.7.1, which ships **both** `amd` and `nvidia` backends and leaves
+  torch fully functional — but check
   `python -c "import torch; print(torch.cuda.is_available())"` after installing, and
   reinstall `pytorch-triton-rocm` if a future version drops the AMD backend.
 - **`--warmup_steps` must be < `--max_steps`** (platform-neutral bug). The defaults
@@ -486,35 +421,29 @@ folder's own contract is satisfied on ROCm.
 - **Run `automodel` from an activated venv.** `train_llm_nemo.py` shells out to a bare
   `automodel`, so invoking `.env_nemo/bin/python train_llm_nemo.py` without
   activating gives `FileNotFoundError: [Errno 2] No such file or directory: 'automodel'`.
-- **Not validated on AMD by the single-GPU run:** multi-GPU / `tp_size` / `pp_size` /
-  `cp_size` meshes, RCCL collectives across ranks, throughput, and larger models. Only
-  single-GPU `dp_size 1` was exercised there. **The multi-GPU half of this is covered by
-  the 8-GPU section immediately below.** `tp_size`/`pp_size`/`cp_size`
-  above 1 remain unexercised.
+- **Not covered by the single-GPU route:** `tp_size` / `pp_size` / `cp_size` meshes,
+  throughput, and larger models. Multi-GPU data parallel *is* covered — see the 8-GPU
+  section immediately below.
 
 ### 8-GPU run (8x MI355X, ROCm 7.2.4)
 
-> **This runs on 8x AMD Instinct MI355X.** The full SFT path was
-> executed across **all 8 GPUs** (`gfx950`, 288 GB HBM each, ROCm **7.2.4**,
-> `torch 2.13.0+rocm7.2`, `nemo-automodel 0.5.0+761b6fe`, `transformers 5.8.1`,
-> Python 3.12.3) and completed with **exit code 0**, writing a consolidated HF
-> safetensors checkpoint that reloads. **No install changes were needed** — the venv from
-> the single-GPU run (`.env_nemo`) worked unmodified, so
-> `requirements_nemo.txt` is unchanged. FSDP2 sharding and RCCL collectives across 8 ranks
-> work. This upgrades the "multi-GPU unexercised" caveat above: pure data parallel
-> (`dp_size 8`) is now **tested**; TP/PP/CP meshes are still **untested**.
+> **The full SFT path runs across 8x AMD Instinct MI355X** (`gfx950`, 288 GB HBM each,
+> ROCm 7.2.4, `torch 2.13.0+rocm7.2`, `nemo-automodel 0.5.0+761b6fe`, `transformers 5.8.1`,
+> Python 3.12), writing a consolidated HF safetensors checkpoint that reloads. **No install
+> changes are needed** — the single-GPU venv works unmodified, so `requirements_nemo.txt` is
+> unchanged. FSDP2 sharding and RCCL collectives across 8 ranks work. TP/PP/CP meshes remain
+> uncovered.
 
-**One real blocker found, and it is in the launch path, not in NeMo.** The folder's own
+**One real blocker, and it is in the launch path, not in NeMo.** The folder's own
 command — `train_llm_nemo.py --nproc_per_node 8` → `automodel <cfg> --nproc-per-node 8` —
 goes through `InteractiveLauncher`, which calls `torch.distributed.run` with
 `get_args_parser().parse_known_args()` and therefore inherits **torchrun's default
 `--master_port 29500`**. `automodel` exposes no port flag, and extra flags are forwarded to
 its config-override parser rather than to torchrun, so **the rendezvous port cannot be
-changed through the folder's CLI**. On a shared box where port 29500 is already bound
-(here: another job's torchrun was `LISTEN`ing on 29500), that path collides. The supported
-escape hatch is upstream's own documented invocation — `InteractiveLauncher` detects an
-existing torchrun worker (`LOCAL_RANK` + torchelastic env) and runs the recipe in-process
-instead of re-launching:
+changed through the folder's CLI**. On a shared box where port 29500 is already bound, that
+path collides. The supported escape hatch is upstream's own documented invocation —
+`InteractiveLauncher` detects an existing torchrun worker (`LOCAL_RANK` + torchelastic env)
+and runs the recipe in-process instead of re-launching:
 
 ```bash
 cd training/llm/nemo && source .env_nemo/bin/activate
@@ -547,78 +476,36 @@ steps** per optimizer step; `seq_length 512`; 20 optimizer steps; `attn_implemen
 sdpa`; `dist_env.backend: nccl` (ROCm maps this onto RCCL).
 
 **Data note.** The shipped `data/OTel_LLM_sample_10.jsonl` splits to 9 train rows — fewer
-than a single global batch across 8 ranks — so it was duplicated x64 into a 640-row JSONL
-(628 train / 12 val) purely to give every rank real data. The schema is unchanged.
+than a single global batch across 8 ranks — so duplicate it (x64 gives a 640-row JSONL,
+628 train / 12 val) purely so every rank has real data. The schema is unchanged.
 
-**Expected output** (from the run log):
+**Expected output:**
 
 ```
-=== LOCK ACQUIRED (machine-wide flock held by the launcher) ===
 PREFLIGHT OK device_count 8 AMD Instinct MI355X
 > initializing torch distributed with 8 workers
 step 0  | epoch 0 | loss 1.8957 | grad_norm 30.6374 | mem 4.81 GiB | tps 150.43(18.80/gpu)
 step 5  | epoch 0 | loss 1.5928 | grad_norm 24.2663 | mem 5.10 GiB | tps 2807.56(350.95/gpu)
 [val] name "default" | step 9  | epoch 0 | loss 1.7634
-step 15 | epoch 0 | loss 1.3987 | grad_norm 20.8935 | mem 5.10 GiB | tps 4018.76(502.34/gpu)
 step 19 | epoch 0 | loss 1.5724 | grad_norm 27.1872 | mem 4.58 GiB | tps 9444.95(1180.62/gpu)
 [val] name "default" | step 19 | epoch 0 | loss 1.6892
 Saving checkpoint to .../checkpoints_8gpu/epoch_0_step_19
 Successfully exported consolidated HF safetensors to .../epoch_0_step_19/model/consolidated
 Updated LOWEST_VAL checkpoint symlink to epoch_0_step_19 (val_loss=1.6892)
-Training: 100%|##########| 20/20 [00:20<00:00,  1.02s/step]
-=== TRAIN EXIT CODE 0 ===
+Training: 100%|##########| 20/20
 ```
 
-Note the per-GPU throughput reporting (`tps N(M/gpu)`) — AutoModel divides by the world
-size, which is itself confirmation that all 8 ranks are in the group. Steady-state was
-~2.4 step/s at ~5.1 GiB torch-reported memory per rank.
-
-**8-GPU evidence, sampled in-band during the run** (single `rocm-smi` sample, taken from
-inside the job, cross-checked against this job's own PIDs in the same sample):
-
-```
---- pgrep -af (the job's own processes) ---
-<agent-pid>       .../torchrun --nproc-per-node 8 ... --master_port 29770 -m nemo_automodel.cli.app ...
-<8 worker pids>   .../python3 -u -m nemo_automodel.cli.app .../generated_recipe_8gpu.yaml   # 8 workers
-
---- rocm-smi --showpids (same sample) ---
-PID     PROCESS NAME  GPU(s)  VRAM USED
-669223  python3       1       12156174336
-669224  python3       1       13469945856
-669225  python3       1       12869206016
-669226  python3       1       13457362944
-669227  python3       1       12932120576
-669228  python3       1       13167955968
-669229  python3       1       13205704704
-669230  python3       1       13186338816
-669066  pt_elastic    0       0                  # the torchrun agent itself
-
---- rocm-smi --showuse (same sample) ---
-GPU[0] 85%   GPU[1] 91%   GPU[2] 79%   GPU[3] 74%
-GPU[4] 74%   GPU[5] 77%   GPU[6] 78%   GPU[7] 90%
-```
-
-All 8 GPUs busy, ~12-13 GB VRAM per rank, and every KFD process in the sample is one of
-the job's own PIDs — no foreign process, so the utilisation is attributable to this run.
-(On a shared box, serialise the run behind a machine-wide `flock` and sample from inside
-the held lock. A post-hoc `rocm-smi` would prove nothing.)
+The per-GPU throughput reporting (`tps N(M/gpu)`) divides by the world size, which confirms
+all 8 ranks are in the group.
 
 **Output contract holds at 8 GPUs.** The FSDP2-sharded checkpoint consolidates to plain HF
-safetensors and reloads on CPU:
+safetensors and reloads on CPU with
+`AutoModelForCausalLM.from_pretrained(".../epoch_0_step_19/model/consolidated")`.
 
-```
-AutoModelForCausalLM.from_pretrained(".../checkpoints_8gpu/epoch_0_step_19/model/consolidated")
-#  -> LOADED | params 596,049,920
-```
-
-**What differed from the prior (single-GPU) state:** nothing in the environment. No package
-was installed, upgraded or pinned differently; `requirements_nemo.txt` is untouched. The
-only deltas are the launch invocation (explicit `torchrun --master_port`, because of the
-hardcoded-29500 limitation above), `dp_size 8` in the generated recipe, and a larger input
-file. Still untested on AMD: `tp_size`/`pp_size`/`cp_size` > 1, LoRA at 8 GPUs (only full
-SFT was run multi-GPU), models large enough to stress sharding, and anything behind the
-`[cuda]` extra (Transformer Engine, FP8/MXFP8, MoE/DeepEP), which remains permanently
-unavailable here — see the `RuntimeError: CUDA not found.` above.
+**What changes from the single-GPU setup:** nothing in the environment — only the launch
+invocation (explicit `torchrun --master_port`, because of the hardcoded-29500 limitation
+above), `dp_size 8` in the generated recipe, and a larger input file. Not covered on AMD:
+`tp_size`/`pp_size`/`cp_size` > 1, LoRA at 8 GPUs, and anything behind the `[cuda]` extra.
 
 ## 3. Environment & secrets
 
@@ -650,13 +537,12 @@ Each row also carries extra columns (`unmask`, `flow`, `source_id`, `source_repo
 /path/to/your.jsonl` in the same schema — the sample is the default so a smoke run works
 out of the box.
 
-**Good news: no conversion is needed.** Earlier NeMo SFT required its own
-`{"input": ..., "output": ...}` JSONL schema, which is where the "NeMo wants its own
-format" reputation comes from. The current AutoModel `ChatDataset` reads OpenAI-style
+**No conversion is needed.** Earlier NeMo SFT required its own
+`{"input": ..., "output": ...}` JSONL schema. The current AutoModel `ChatDataset` reads OpenAI-style
 `messages` rows natively — it is the exact contract above — and renders them through the
 tokenizer's own chat template to produce `input_ids` / `labels` / `attention_mask`.
 
-Two things worth knowing:
+Two constraints:
 
 - **A chat template is required.** `ChatDataset` raises if the tokenizer has none. Base
   (non-instruct) checkpoints often ship without one; use the `-Instruct` variant, or pass
@@ -766,73 +652,35 @@ commands exactly as documented there: `generated_recipe.yaml` (full SFT,
 `checkpoint.checkpoint_dir: ./checkpoints_sft`) and `generated_recipe_lora.yaml`
 (LoRA, `./checkpoints_lora`).
 
-## 8. Hardware support & evidence
+## 8. Hardware support
 
-**Other hardware (upstream claims — not verified here):** none — NVIDIA-first stack (NGC containers, Transformer Engine).
-
-
-- **NVIDIA — supported.** NeMo AutoModel is an NVIDIA NeMo Framework library; the current
-  release pairing is v0.5.0 with the `nvcr.io/nvidia/nemo-automodel:26.06.00` NGC
-  container, and upstream's feature list is built on NVIDIA-oriented kernel paths
-  (Transformer Engine, DeepEP, Triton, FP8/MXFP8 on GB200). Benchmarks are published for
-  H100/GB200-class GPUs only. Source: the
-  [NVIDIA-NeMo/Automodel README](https://github.com/NVIDIA-NeMo/Automodel) and the
-  [NGC container catalog](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo-automodel/tags).
-  **Verified here on 1x NVIDIA H100 80GB HBM3 (driver 580.173.02):**
-  the `nemo-automodel:26.06.00` NGC container pulls and runs (with
-  `transformer-engine 2.14.1` present), and the bare-host pip route (`torch 2.13.0+cu130`)
-  ran both SFT and LoRA to exit 0 with decreasing validation loss and reloadable
-  checkpoints — commands, logs and GPU-residency evidence in the
-  "NVIDIA H100 80GB (CUDA 13) — verified" subsection of section 2. Single-GPU;
-  multi-GPU deferred (shared node).
-- **AMD/ROCm — undocumented upstream, but empirically working here.** No ROCm container, no
-  ROCm install path and no AMD hardware documentation exists upstream, so
-  AMD is **unsupported by NVIDIA** and you are on your own for bugs. Nevertheless this
-  folder's SFT and LoRA paths were **run to completion on 1x AMD Instinct MI355X (gfx950),
-  ROCm 7.2, `torch 2.13.0+rocm7.2`, `nemo-automodel 0.5.0`** — full
-  evidence, commands and logs in the "AMD MI355X (ROCm 7.2) — attempted" subsection of
-  section 2 — and the SFT path was additionally **run to completion across 8x MI355X
-  (ROCm 7.2.4, `dp_size 8`, world size 8)**, with in-band 8-GPU
-  `rocm-smi` evidence in the "8-GPU run" subsection. The NVIDIA-only surface (Transformer Engine, FP8/MXFP8, MoE/DeepEP,
-  flash-attn, mamba-ssm) is entirely inside optional extras that this folder does not
-  install; `transformer-engine` itself is the hard CUDA dependency and fails with
-  `RuntimeError: CUDA not found.` at metadata generation.
-- **AMD, what to use anyway.** `training/llm/primus/` is still this repo's first-party AMD
-  path (AMD-authored, ROCm images), and `training/llm/verl/` is the AMD RL path. Pick this
-  folder on AMD only when you specifically want AutoModel's HF-native recipe and checkpoint
-  contract, and expect no vendor support.
+- **NVIDIA — supported.** Both routes work on H100 80GB: the
+  `nvcr.io/nvidia/nemo-automodel:26.06.00` NGC container (with `transformer-engine 2.14.1`)
+  and the bare-host pip route (`torch 2.13.0+cu130`), for SFT and LoRA — commands in the
+  "NVIDIA H100 80GB (CUDA 13)" subsection of section 2. Single-GPU; multi-GPU not covered.
+- **AMD/ROCm — undocumented upstream, but working.** There is no ROCm container or install
+  path upstream, so expect no vendor support. This folder's SFT and LoRA paths still train on
+  **AMD Instinct MI355X (gfx950), ROCm 7.2, `torch 2.13.0+rocm7.2`, `nemo-automodel 0.5.0`**
+  — see "AMD MI355X (ROCm 7.2)" — and SFT also trains across **8x MI355X (`dp_size 8`)**, see
+  the "8-GPU run" subsection. The NVIDIA-only surface (Transformer Engine, FP8/MXFP8,
+  MoE/DeepEP, flash-attn, mamba-ssm) sits entirely in optional extras this folder does not
+  install.
+- **AMD, what to use anyway.** `training/llm/primus/` is this repo's first-party AMD path and
+  `training/llm/verl/` is the AMD RL path. Pick this folder on AMD only when you want
+  AutoModel's HF-native recipe and checkpoint contract.
 
 ## 9. Notes
 
-- **IMPORTANT — the API this was written against.** The brief for this folder targeted the
-  **NeMo 2.0** Python-config API: `nemo.collections.llm`, `llm.import_ckpt`, and NeMo-Run
-  recipes. **That API is no longer the current upstream shape.** In the upstream layout
-  this folder targets:
-  - `github.com/NVIDIA/NeMo` now redirects to **`NVIDIA-NeMo/Speech`**, whose
-    `nemo/collections/` contains only `asr`, `audio`, `common`, and `speechlm2`. There is
-    **no `llm` collection**, so `nemo.collections.llm` and `llm.import_ckpt` are not
-    importable from the current main repo.
-  - The monorepo was split into the **NVIDIA-NeMo** org. LLM post-training now lives in
-    [Automodel](https://github.com/NVIDIA-NeMo/Automodel) (HF-native SFT/PEFT — what this
-    folder uses), [Megatron-Bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge)
-    (HF <-> Megatron conversion + Megatron-Core training), and
-    [RL](https://github.com/NVIDIA-NeMo/RL) (post-training RL).
+- **Check which library you have before debugging.** This folder targets **NeMo AutoModel**;
+  `automodel --help` succeeding means you are on it. On an **older** NeMo (2.x,
+  `nemo_toolkit[llm]`) the `nemo.collections.llm` / `llm.import_ckpt` API applies instead and
+  the recipe YAML here will **not** work.
 
-  If you install an **older** NeMo (2.x, `nemo_toolkit[llm]`), the `nemo.collections.llm`
-  API and `llm.import_ckpt` still exist and the recipe YAML in this folder will **not**
-  apply. Check which library you actually have before debugging: `automodel --help`
-  succeeding means you are on AutoModel.
-
-- **HF <-> NeMo checkpoint conversion.** In NeMo 2.0 this was
-  `llm.import_ckpt(model=..., source="hf://<repo-id>")`, which converted an HF checkpoint
-  into NeMo's own format before training, plus `llm.export_ckpt` to go back. **AutoModel
-  removes that step entirely** — it trains the HF checkpoint in place and writes
-  safetensors back out (`checkpoint.model_save_format: safetensors`,
-  `save_consolidated: true`), so the output loads with plain
-  `AutoModelForCausalLM.from_pretrained`. That is the single biggest practical reason to
-  prefer this path. When you *do* need Megatron format (very large models, 6D
-  parallelism), conversion moved to **Megatron-Bridge**, whose CLI is the successor to
-  `import_ckpt`:
+- **HF <-> NeMo checkpoint conversion is no longer a step.** AutoModel trains the HF
+  checkpoint in place and writes safetensors back out
+  (`checkpoint.model_save_format: safetensors`, `save_consolidated: true`), so the output
+  loads with plain `AutoModelForCausalLM.from_pretrained`. When you *do* need Megatron format
+  (very large models, 6D parallelism), use **Megatron-Bridge**:
   ```bash
   ./scripts/conversion/convert.sh import \
     --executor local --device cpu \
@@ -848,11 +696,10 @@ commands exactly as documented there: `generated_recipe.yaml` (full SFT,
   Megatron-Bridge also exports Megatron LoRA/DoRA adapters to HF PEFT format
   (`examples/conversion/adapter/export_adapter.py`).
 
-- **RLHF is a different repo.** NeMo AutoModel does SFT/PEFT/distillation only. GRPO,
-  GSPO, DAPO, DPO, and reward modelling live in **[NeMo RL](https://github.com/NVIDIA-NeMo/RL)**,
-  which is Ray-based, ships its own NGC container (`nvcr.io/nvidia/nemo-rl`), and can
-  start from an AutoModel checkpoint directly. That is out of scope for this folder, which
-  is deliberately scoped to SFT and PEFT/LoRA.
+- **RLHF is a different repo.** NeMo AutoModel does SFT/PEFT/distillation only; GRPO, GSPO,
+  DAPO, DPO and reward modelling live in
+  **[NeMo RL](https://github.com/NVIDIA-NeMo/RL)**, which can start from an AutoModel
+  checkpoint directly.
 
 - **Parallelism is configuration, not code.** `FSDP2Manager` takes a device mesh
   (`dp_size`/`tp_size`/`pp_size`/`cp_size`), so scaling is a YAML change rather than a
@@ -869,17 +716,7 @@ commands exactly as documented there: `generated_recipe.yaml` (full SFT,
   data every assistant turn is supervised by default; set `mask_history: true` on the
   dataset block to supervise only the final turn.
 
-- **Split helper newline detail.** `split_train_val` normalizes line endings before
-  shuffling — a JSONL whose final line lacks a trailing newline would otherwise merge two
-  rows in the written split files. (Found by running the helper against the shipped
-  sample, which ends without a newline.)
-
-- **Uncertainty, stated plainly.** NeMo's LLM API has churned hard (1.0 -> 2.0 -> the org
-  split), and upstream `main` moves weekly. The recipe keys used here
-  (`model` / `distributed` / `step_scheduler` / `optimizer` / `lr_scheduler` /
-  `checkpoint` / `dataset` / `dataloader` / `peft` / `loss_fn`) were read from live
-  upstream example recipes, and `examples/llm_finetune/finetune.py` is now
-  deprecated in favour of the `automodel` CLI. If a key is rejected, diff the generated
-  YAML against a current recipe in
+- **The recipe schema moves.** If AutoModel rejects a key in the generated YAML, diff it
+  against a current recipe in
   [`examples/llm_finetune/`](https://github.com/NVIDIA-NeMo/Automodel/tree/main/examples/llm_finetune)
-  rather than guessing — that directory is the authoritative reference.
+  rather than guessing.

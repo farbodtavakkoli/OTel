@@ -1,51 +1,28 @@
 # Environment for train_embedding_pylate.py (PyLate ColBERT late-interaction fine-tuning).
-# These are NOT preinstalled in the base training venv; install into a dedicated venv.
-#
-# NOTE: if the root filesystem is tight, put the venv outside the repo on a larger volume
-# ($DATA_DIR below is that volume):
+# Install into a DEDICATED venv: pylate hard-pins sentence-transformers==5.3.0 /
+# transformers<=5.3.0 and WILL downgrade an existing 5.7.0 / 5.5.0 install.
 #   python3 -m venv $DATA_DIR/envs/.env_pylate
 #   source $DATA_DIR/envs/.env_pylate/bin/activate
-#
-# AMD/ROCm: install the ROCm torch wheel FIRST, then this file:
 #   export PIP_CACHE_DIR=$DATA_DIR/pip_cache
+#
+# AMD/ROCm — install the ROCm torch wheel FIRST, then this file:
 #   pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
 #   pip install -r requirements_embedding_pylate.txt
-#   python -c "import torch; print(torch.__version__, torch.version.hip, torch.version.cuda)"
-#   # expected: 2.11.0+rocm7.2 7.2.26015 None
-# Verified on MI355X (gfx950) / ROCm 7.2.4: installing pylate did NOT pull a CUDA torch —
-# none of its dependencies pin torch. If it ever does, recover with:
+#   python -c "import torch; print(torch.__version__, torch.version.hip)"  # 2.11.0+rocm7.2 7.2.26015
+# If a CUDA torch ever lands on top, recover with:
 #   pip install --force-reinstall --no-deps torch==2.11.0 \
 #     --index-url https://download.pytorch.org/whl/rocm7.2
 # Do NOT install flash-attn on ROCm (CUDA-only build) — the script auto-selects "sdpa".
 #
-# NVIDIA (CUDA): drop the --index-url line above; the default PyPI torch wheels ship CUDA.
+# NVIDIA (CUDA 13) — drop the --index-url line; torch==2.11.0 resolves to +cu130 on PyPI:
+#   pip install "torch==2.11.0" numpy
 #   pip install -r requirements_embedding_pylate.txt
-# Optional CUDA-only extras: flash-attn (--attn_implementation flash_attention_2) and the
-# fused MaxSim kernels, pylate[flash-maxsim] / pylate[lik] (--scores_backend flash|lik).
-#
-# VERIFIED on NVIDIA H100 80GB / CUDA 13.0 / driver 580.173.02:
-#   export PIP_CACHE_DIR=$DATA_DIR/pip_cache
-#   pip install "torch==2.11.0" numpy          # the torch==2.11.0 pin below IS honorable on CUDA:
-#                                              #   a torch==2.11.0+cu130 wheel exists on default PyPI
-#                                              #   (NO --index-url). A bare `pip install torch` would
-#                                              #   instead give 2.13.0+cu130; either runs on driver 580.
-#   pip install -r requirements_embedding_pylate.txt
-#   python -c "import torch; print(torch.__version__, torch.version.cuda, torch.version.hip)"
-#   # expected: 2.11.0+cu130 13.0 None
-# As on MI355X, installing pylate did NOT pull/clobber torch (no dep pins it) — re-verify anyway;
-# recover if it ever does with:
-#   pip install --force-reinstall --no-deps "torch==2.11.0"   # default PyPI cu130 wheel
-# Single-GPU ColBERT training verified end to end (loss decreasing, MaxSim rank-1 correct,
-# PLAID retrieval OK, ~1.7 GiB VRAM). flash-attn NOT installed (BERT backbone; sdpa suffices).
-# See readme_embedding_pylate.md, "Platform notes — NVIDIA H100 80GB (CUDA 13.0)".
+# Optional CUDA-only extras (not required): flash-attn, pylate[flash-maxsim], pylate[lik].
 
 # Core late-interaction stack
 pylate==1.6.0
 
-# Pulled in and HARD-PINNED by pylate 1.6.0 (sentence-transformers==5.3.0,
-# transformers<=5.3.0). Listed explicitly so the versions are visible: installing pylate
-# into an existing sentence-transformers 5.7.0 / transformers 5.5.0 venv WILL downgrade
-# both. Use a dedicated venv — see readme_embedding_pylate.md, "Notes & quirks".
+# Hard-pinned by pylate 1.6.0; listed explicitly so the versions are visible.
 sentence-transformers==5.3.0
 transformers==5.3.0
 tokenizers==0.22.2
@@ -57,9 +34,9 @@ datasets==5.0.1
 safetensors==0.8.0
 
 # PyLate index/retrieval backends (pulled in by pylate; pinned for reproducibility)
-fast-plaid==1.4.6.2110        # Rust PLAID index — ships a manylinux cp312 wheel, no CUDA toolchain
-fastkmeans==0.5.0             # centroid training for the PLAID index
-usearch==2.26.0               # vector store used by the index backends
+fast-plaid==1.4.6.2110        # Rust PLAID index — prebuilt wheel, no CUDA toolchain needed
+fastkmeans==0.5.0
+usearch==2.26.0
 ninja==1.11.1.4
 ujson==5.12.0
 

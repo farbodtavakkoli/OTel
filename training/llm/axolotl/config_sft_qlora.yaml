@@ -1,6 +1,6 @@
 # Axolotl - QLoRA SFT (4-bit frozen base + LoRA adapters) on chat JSONL.
 # Launch: python3 train_llm_axolotl.py --config config_sft_qlora.yaml --num-processes 8
-# Use this only when the bf16 base does not fit; on 8x H100 plain LoRA is faster.
+# Use this only when the bf16 base does not fit; otherwise prefer config_sft_lora.yaml.
 
 ### model
 base_model: Qwen/Qwen3-32B
@@ -57,9 +57,8 @@ gradient_checkpointing_kwargs:
 attn_implementation: flash_attention_2
 
 ### distributed
-# Default here is DDP (one 4-bit replica per GPU) - simplest and known-good.
-# Sharding a 4-bit base needs the FSDP+QLoRA recipe; see
-# https://docs.axolotl.ai/docs/fsdp_qlora.html before enabling fsdp_config below.
+# Default here is DDP (one 4-bit replica per GPU). Sharding a 4-bit base needs the
+# separate upstream FSDP+QLoRA recipe - read it before enabling fsdp_config below.
 # fsdp_version: 2
 # fsdp_config:
 #   auto_wrap_policy: TRANSFORMER_BASED_WRAP

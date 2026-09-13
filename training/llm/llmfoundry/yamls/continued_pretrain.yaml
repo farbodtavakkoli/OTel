@@ -9,7 +9,7 @@
 # Run:  composer scripts/train/train.py yamls/continued_pretrain.yaml variables.data_local=./my-mds
 # Or:   python3 train_llm_llmfoundry.py --recipe pretrain --data-local ./my-mds
 #
-# Targets 8x H100 80GB. UNTESTED -- see readme_llmfoundry.md.
+# On ROCm this recipe needs the same attn_implementation: sdpa override as the SFT recipe.
 
 variables:
   global_seed: 17
@@ -62,9 +62,7 @@ eval_loader:
   drop_last: false
   num_workers: 8
 
-# Optimization. Continued pre-training uses a LOWER peak LR than the original
-# pre-training run and a much longer warmup than SFT -- you are nudging an already
-# converged model, not training from scratch.
+# Continued pre-training needs a lower peak LR and a much longer warmup than SFT.
 scheduler:
   name: cosine_with_warmup
   t_warmup: 100ba
@@ -88,7 +86,7 @@ max_duration: 2000ba          # token-denominated is often clearer: e.g. 5_000_0
 eval_interval: 500ba
 eval_first: false
 eval_subset_num_batches: -1
-global_train_batch_size: 512  # across ALL ranks
+global_train_batch_size: 512  # across all ranks
 
 # System
 seed: ${variables.global_seed}

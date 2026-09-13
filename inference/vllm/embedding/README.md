@@ -8,30 +8,16 @@ plus a few documents and prints the vector dimensions and the query↔document c
 similarities.
 
 Use this when you want **one serving stack for all three workloads** (LLM, embedding,
-reranker) instead of running a dedicated embedding server. vLLM's `--runner pooling` mode
-turns any supported encoder/decoder into an embedding endpoint, so the same binary, the
-same flags, the same metrics, and the same OpenAI client code cover the whole fleet.
-
-If embeddings are *all* you serve, a dedicated stack (TEI, sentence-transformers) is
-lighter — see the sibling `training/embedding/sentence_transformers/` folder for the Transformers-side
-baseline. The reason to pick vLLM here is uniformity, not raw embedding speed.
+reranker) instead of running a dedicated embedding server. vLLM's `--runner pooling` mode is
+what exposes `/v1/embeddings`. If embeddings are *all* you serve, a dedicated stack (TEI,
+sentence-transformers) is lighter — see `training/embedding/sentence_transformers/`.
 
 ## Install
 
-**There is no ROCm vLLM wheel — this is the single most important fact in this folder.**
-Verified against the pinned versions below:
-
-- PyPI `vllm==0.27.1` publishes exactly two binary wheels
-  (`manylinux_2_28_x86_64`, `manylinux_2_28_aarch64`), both **CUDA-only**. Its
-  `requires_dist` hard-depends on `flashinfer-python==0.6.16.post3`,
-  `nvidia-cudnn-frontend`, `nvidia-cutlass-dsl[cu13]==4.6.0` and `torch==2.13.0` (the CUDA
-  build). Installing it on a ROCm host gives you a non-functional engine.
-- `https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2/` publishes `torch`, `torchaudio`,
-  `apex`, `jaxlib` and `tensorflow_rocm` wheels — **no `vllm` wheel**.
-- Building vLLM from source for `gfx950` works but is an hours-long compile.
-
-So the pip/venv route that would normally be preferred is genuinely unavailable, and the
-verified route is a **container**. The validated runs used
+**There is no ROCm vLLM wheel.** PyPI `vllm` publishes CUDA-only wheels that hard-depend on
+CUDA torch, and `repo.radeon.com` publishes none, so on ROCm the pip/venv route is
+unavailable (a gfx950 source build works but takes hours) and the route that works is a
+**container**. Known-working image:
 `rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2`, which ships a
 working ROCm vLLM:
 
@@ -51,17 +37,16 @@ docker run -d --name vllm_bringup \
   rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2 sleep infinity
 ```
 
-Two gotchas in that command, both learned the hard way:
+Two things to note in that command:
 
 - The image has **no `render` group**, so the canonical `--group-add render` fails with
   `unable to find group render`. Pass the host's **numeric** GIDs instead (typically
   `video`=44, `render`=993) — that is what the `getent` substitutions above do.
-- Pinning GPUs by **render node** (`renderD128` = the first GPU, `renderD136` = the second)
-  rather than by `HIP_VISIBLE_DEVICES` means `torch.cuda.device_count()` is `2` inside the
-  container no matter what any tool does to the environment: the container sees
-  exactly two `gfx950` devices and cannot touch any other card on the box.
+- Pinning GPUs by **render node** (`renderD128`, `renderD136` — match them to your own
+  cards with `ls /dev/dri`) rather than by `HIP_VISIBLE_DEVICES` means the container sees
+  exactly those two `gfx950` devices and cannot touch any other card on the box.
 
-Verified versions inside that image:
+Versions inside that image:
 
 | Component | Version |
 |---|---|
@@ -77,7 +62,7 @@ The client itself needs only `python-dotenv` (everything else it uses is stdlib)
 runs on the host outside the container:
 
 ```bash
-pip install -r requirements_embedding_vllm.txt
+pip install -r ../requirements.txt
 ```
 
 ## Environment & secrets
@@ -102,7 +87,7 @@ Never set `CUDA_VISIBLE_DEVICES=""` on ROCm — an empty string hides *every* GP
 
 ## Serve
 
-Single GPU (the verified command):
+Single GPU:
 
 ```bash
 export HF_HOME=/path/to/hf_cache HIP_VISIBLE_DEVICES=0
@@ -126,34 +111,14 @@ curl -s http://localhost:8001/v1/embeddings -H 'Content-Type: application/json' 
   -d '{"model":"embeddinggemma","input":["vLLM supports AMD ROCm.","SQLite is an embedded database."]}'
 ```
 
-## Single-GPU results
+## Single-GPU behaviour on gfx950
 
-**This works, unmodified.** `vllm serve ... --runner pooling` comes up on one MI355X
-and returns correct 768-dimension embeddings on the first attempt. No flags beyond the
-documented ones, no code changes, no ROCm-specific workarounds.
+**This works, unmodified.** `vllm serve ... --runner pooling` comes up on one MI355X and
+returns correct 768-dimension embeddings — no flags beyond the documented ones, no code
+changes, no ROCm-specific workarounds.
 
-| Measurement | Value |
-|---|---|
-| Cold start (process launch → `Application startup complete`) | **~22 s** (warm torch.compile cache) / ~38 s on the very first launch |
-| Weights load | 0.13 s |
-| Model-load VRAM | **0.61 GiB** |
-| `init engine` (profile + KV cache + warmup) | 5.36 s (compilation 3.32 s) |
-| Total process VRAM incl. preallocated pool (`rocm-smi`) | 2.38–2.68 GB |
-| Max model len | 2048 (model default) |
-| Embedding dimension | **768** |
-
-**Expected output** from `/v1/embeddings` (two inputs):
-
-```
-object   : list
-model    : embeddinggemma
-n vectors: 2
-  idx=0 dim=768 first5=[-0.12238, -0.02375, 0.01146, -0.02259, 0.02624]
-  idx=1 dim=768 first5=[-0.13934, 0.00598, 0.04491, 0.01084, 0.0202]
-usage    : {'prompt_tokens': 18, 'total_tokens': 18, 'completion_tokens': 0}
-```
-
-Semantic check — the vectors are not just well-shaped, they are *correct*:
+Semantic check — query `"Which inference engines support AMD ROCm?"` against a ROCm document
+vs a PostgreSQL one:
 
 ```
 query vs ROCm-doc      : 0.6975
@@ -161,11 +126,7 @@ query vs postgres-doc  : 0.2216
 ordering correct       : True
 ```
 
-(`"Which inference engines support AMD ROCm?"` against `"vLLM runs on AMD ROCm GPUs."`
-vs `"PostgreSQL is a relational database."` — a 0.48 margin, so the model is genuinely
-discriminating, not emitting noise.)
-
-## Multi-GPU (TP=2) results
+## Multi-GPU on gfx950 — TP is not available
 
 **TP=2 is architecturally impossible for this model, and that is a property of
 EmbeddingGemma, not of ROCm.** Attempting it fails fast at config validation:
@@ -176,16 +137,11 @@ pydantic_core._pydantic_core.ValidationError: 1 validation error for VllmConfig
   tensor parallel size (2).
 ```
 
-EmbeddingGemma-300m has **3 attention heads**. Tensor parallelism shards the head
-dimension, so TP is only legal for divisors of 3 — i.e. TP=1 or TP=3. TP=2 can never work,
-on any vendor's hardware. The same command on an NVIDIA host fails identically. This is a
-*correct* refusal by vLLM, caught before any GPU work.
+EmbeddingGemma-300m has **3 attention heads**, and tensor parallelism shards the head
+dimension, so only TP=1 or TP=3 are legal — TP=2 can never work, on either vendor.
 
-It is also pointless: the model is 0.61 GiB. There is nothing to shard on a 288 GB card.
-
-**The honest production pattern for a model this size is horizontal replication — one
-independent single-GPU server per GPU, behind a load balancer.** That is the verified
-pattern:
+**The production pattern for a model this size is horizontal replication — one
+independent single-GPU server per GPU, behind a load balancer:**
 
 ```bash
 # replica A — first GPU
@@ -197,45 +153,25 @@ HIP_VISIBLE_DEVICES=1 vllm serve google/embeddinggemma-300m --runner pooling \
   --port 8011 --served-model-name embeddinggemma &
 ```
 
-Both come up and serve concurrently. `rocm-smi` with both replicas resident — **both
-GPUs loaded, other cards untouched**:
-
-```
-device,GPU use (%),VRAM Total Memory (B),VRAM Total Used Memory (B)
-card0,0,309220868096,2377240576      <- replica A  (2.38 GB)
-card1,0,309220868096,2377240576      <- replica B  (2.38 GB)
-card2,0,309220868096,298037248       <- idle, another job's card
-```
-
-Both replicas answer the same request correctly and near-identically:
-
-```
---- port 8001 (GPU 0) ---
-  vectors=2 dim=768 cos(q,doc)=0.6965 first3=[-0.09578, -0.08054, 0.04375]
---- port 8011 (GPU 1) ---
-  vectors=2 dim=768 cos(q,doc)=0.6974 first3=[-0.09595, -0.08037, 0.044]
-```
-
-The ~1e-3 spread between replicas is ordinary non-deterministic reduction order, not a
-correctness problem. Throughput scales linearly with replica count, which is the right
-answer for a 0.61 GiB model: **replicate, don't shard.**
+Both come up and serve concurrently, each on its own card, and both answer the same request
+with cosines agreeing to ~1e-3 (ordinary reduction-order variation, not a correctness
+problem). Replicate rather than shard.
 
 ## H100 (NVIDIA)
 
 **This works unmodified.** vLLM `0.27.1` (pip / CUDA 13.0) serves
 `google/embeddinggemma-300m` on one H100 80GB with the documented `--runner pooling`
-command — correct **768-dim** vectors and correct semantic ordering on the first attempt,
-no code changes and no ROCm workarounds.
+command — correct **768-dim** vectors and correct semantic ordering, no code changes and no
+ROCm workarounds.
 
-### Install (pip route — the big AMD caveat does NOT apply on NVIDIA)
+### Install (pip route — no container needed)
 
-The "no ROCm vLLM wheel, container-only" fact above is AMD-specific. On **NVIDIA the pip
-wheel is native**. One shared venv at the stack root (`inference/vllm/.env_vllm`) serves
-all three leaves:
+On **NVIDIA the pip wheel is native**. One shared venv at the stack root
+(`inference/vllm/.env_vllm`) serves all three leaves:
 
 ```bash
 python3 -m venv .env_vllm && source .env_vllm/bin/activate
-pip install torch numpy      # -> torch 2.13.0+cu130 (native CUDA 13)
+pip install torch numpy      # -> the current CUDA 13 build (plain PyPI)
 pip install vllm             # -> vllm 0.27.1; torch stays 2.13.0+cu130
 pip install python-dotenv
 ```
@@ -245,7 +181,7 @@ pip install python-dotenv
 | vLLM | `0.27.1` (pip wheel, CUDA) |
 | torch | `2.13.0+cu130` |
 | transformers | `5.15.1` |
-| driver / CUDA | 580.173.02 / 13.0, H100 80GB HBM3 |
+| CUDA | 13.0, H100 80GB HBM3 |
 
 ### Serve (the H100 command — identical to ROCm minus the HIP var)
 
@@ -265,8 +201,6 @@ python embed_vllm.py --port 8500 --model embeddinggemma
 ### Expected output (H100)
 
 ```
-[default_loader.py:430] Loading weights took 8.58 seconds
-[gpu_model_runner.py:5405] Model loading took 0.61 GiB memory and 14.77 seconds
 [core.py:414] Resolved pooling config: pooling_type=MEAN(...), supported_tasks=('embed', 'token_embed')
 [api_server.py:678] Supported tasks: ['token_embed', 'embed']
 Route: /v1/embeddings, Methods: POST
@@ -285,26 +219,22 @@ query       : Which inference engines support AMD ROCm?
   cos=+0.2008  PostgreSQL is a relational database management system.
 ```
 
-**Correct 768-dim vectors, correct ordering** (0.7106 vs 0.2008 → 0.51 margin). These match
-the MI355X run to ~1e-3 on both the leading dims (`-0.09578, -0.08054, 0.04375, …` there)
-and the cosines (0.7105 / 0.2011 there) — ordinary cross-hardware reduction-order drift,
-not a correctness problem. **Model-load VRAM 0.61 GiB matches MI355X exactly.**
+**Correct 768-dim vectors, correct ordering** — the ROCm document must outscore the
+PostgreSQL one.
 
-### GPU residency check (sampled while serving)
+### GPU residency check
 
 ```bash
 nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory --format=csv,noheader
 nvidia-smi --query-gpu=index,memory.used --format=csv,noheader
 ```
 
-Expect ~2.0 GB resident on the single selected GPU (0.61 GiB weights + preallocated pool).
-No other card is touched.
+Only the selected GPU is touched.
 
 ### Quirks (H100)
 
-- One **benign** `Operation not permitted` warning while setting blob permissions on the
-  CIFS-mounted HF cache — the weights were already cached and loaded fine (`downloading
-  weights: 1.4 s` is metadata only). Non-fatal.
+- A **benign** `Operation not permitted` warning can appear while setting blob permissions
+  on a network-mounted (CIFS/NFS) HF cache — non-fatal, the cached weights still load.
 - vLLM suggests `pip install orjson` "to make the v1/embeddings API fast" — optional; the
   request still returns correct vectors without it.
 - No AITER, no `quark_online_quant`, no GELU-approximation warning — those are all ROCm-only.
@@ -313,20 +243,13 @@ No other card is touched.
 
 Same as ROCm: **TP=2 is impossible for this model** (3 attention heads, not divisible by 2)
 — an identical, correct refusal on NVIDIA. The right multi-GPU pattern is **N independent
-single-GPU replicas** (one `vllm serve ... --port 85xx` per free GPU); the H100 notes here
-are single-GPU only.
-
-### H100 summary
-
-vLLM 0.27.1 (pip / cu130) serves EmbeddingGemma-300m unmodified on one H100:
-correct 768-dim embeddings, correct semantic ordering, 0.61 GiB weights, ~2.0 GB resident.
-The "Native" rating holds on NVIDIA, and the pip route is available here (unlike ROCm).
+single-GPU replicas** (one `vllm serve ... --port 85xx` per GPU).
 
 ## Arguments / flags
 
-Serve-side flags used here:
+Serve-side flags:
 
-| Flag | Value used | Meaning |
+| Flag | Value | Meaning |
 |---|---|---|
 | `--runner pooling` | required | Switches vLLM from generation to pooling/embedding mode; this is what exposes `/v1/embeddings` |
 | `--host` | `0.0.0.0` | Bind address |
@@ -373,16 +296,14 @@ query       : Which inference engines support AMD ROCm?
 Redirect server logs to a data volume, e.g. `$OUTPUT_DIR/inference_embedding_vllm/`.
 Nothing large is written into the repo.
 
-## Hardware support & evidence
+## Hardware support
 
-- **AMD: tested and working.** 1×  and 2× (as replicas) AMD Instinct MI355X (`gfx950`,
+- **AMD, working.** 1× and 2× (as replicas) AMD Instinct MI355X (`gfx950`,
   288 GB), host ROCm 7.2.4, container ROCm 7.0.2, vLLM `0.20.2rc1.dev253`, torch
   `2.9.1.dev+rocm7.0.2`. Correct 768-dim embeddings with correct semantic ordering.
-- **NVIDIA: tested and working** via the pip wheel — see the H100 section above. The same
+- **NVIDIA, working** via the pip wheel — see the H100 section above. The same
   `vllm serve` command also applies with `vllm/vllm-openai:latest`.
-- vLLM is **Native** for EmbeddingGemma on both vendors, and on ROCm/gfx950 that is
-  **confirmed** — with one correction: the *install* story on AMD is container-only, so any
-  "use the ROCm wheel or container" phrasing overstates what actually exists.
+- On AMD the *install* route is container-only — there is no ROCm vLLM wheel.
 
 ## Notes & quirks
 
@@ -392,27 +313,16 @@ Nothing large is written into the repo.
   registered on the same process; that is normal for a pooling runner and does not mean
   the embedding model is a reranker.
 - **AITER JIT-builds on first launch.** The first `vllm serve` on this image prints
-  `[aiter] start build [module_aiter_core]` and stalls for a while compiling. Subsequent
-  launches reuse the build cache — this is why cold start drops from ~38 s to ~22 s.
+  `[aiter] start build [module_aiter_core]` and stalls while compiling; later launches reuse
+  the build cache.
 - **The `quark_online_quant` plugin fails to import** on every launch with a traceback.
   It is non-fatal and unrelated to this workload; the server starts normally. Do not
   chase it.
 - **A ROCm-specific GELU warning is expected:** `[ROCm] PyTorch's native GELU with tanh
   approximation is unstable with torch.compile ... fallback to 'none' approximation.`
-  vLLM handles it automatically; embedding quality was unaffected (cosine margin 0.48).
-- **Default `--gpu-memory-utilization 0.9` looks alarming in `rocm-smi`.** vLLM
-  preallocates its pool, so a 0.61 GiB model can show hundreds of GB "used". Use
+  vLLM handles it automatically and embedding quality is unaffected.
+- **Default `--gpu-memory-utilization 0.9` inflates the VRAM figure in `rocm-smi`.** vLLM
+  preallocates its pool, so a small model can show hundreds of GB "used". Use
   `--gpu-memory-utilization` to bound it when co-locating servers.
 - **Do not set `CUDA_VISIBLE_DEVICES=""` on ROCm** — an empty string hides all GPUs
   rather than none.
-
-## Summary
-
-**vLLM serves EmbeddingGemma on MI355X/gfx950 with no changes.** The
-"Native" rating holds: correct 768-dim embeddings, correct semantic ordering (0.6975 vs
-0.2216), sub-second weight load, 0.61 GiB resident, ~22 s warm cold-start.
-
-One important correction: **TP=2 is not available for this model** (3 attention
-heads), and it should not be — for a 0.61 GiB model on 288 GB cards the right multi-GPU
-story is **N independent replicas, one per GPU**, which was verified working on both GPUs
-concurrently. The install route is also container-only on ROCm; there is no pip wheel.

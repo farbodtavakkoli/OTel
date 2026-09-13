@@ -13,68 +13,21 @@ specific prompt. Two consequences drive this whole folder:
 - **Never launch it with `--is-embedding`.** That flag is for true embedding models
   (see the sibling EmbeddingGemma folder); using it here mis-configures the runner.
 - **It needs the `qwen3_reranker` jinja chat template**, shipped here as
-  `qwen3_reranker.jinja` (fetched verbatim from `sgl-project/sglang` tag `v0.5.17`,
-  `examples/chat_template/qwen3_reranker.jinja`), which renders the
-  Instruct/Query/Document prompt the model was trained on.
+  `qwen3_reranker.jinja`, which renders the Instruct/Query/Document prompt the model was
+  trained on.
 
 Use this folder when SGLang already serves your generation traffic and you want reranking
-in the same engine. On **AMD gfx950 it does not currently serve from a pip install** — see
-the platform summary below; use the container route, the sentence-transformers `CrossEncoder`,
-or the vLLM reranker route instead.
+in the same engine. On **AMD gfx950 it does not serve from a pip install** — use the
+container route below, the sentence-transformers `CrossEncoder`, or the vLLM reranker route.
 
-> **Tested topology:** 2×AMD Instinct MI355X (gfx950, 288GB), ROCm 7.2.4, Ubuntu,
-> Python 3.12.3, two GPUs on a single node.
+## H100 (NVIDIA) — the pip route
 
-## Platform summary — AMD MI355X (gfx950)
+**On NVIDIA the pip route works** — `sgl_kernel` ships as a CUDA wheel, so
+`pip install "sglang[all]"` serves `/v1/rerank` directly, **no container**. The reranker
+configuration rules are unchanged: no `--is-embedding`, the `qwen3_reranker.jinja` template,
+`--disable-radix-cache`. The commands below are single-GPU.
 
-**This path works on ROCm/gfx950 via the vendor container; the pip route stays blocked.**
-`Qwen/Qwen3-Reranker-0.6B` produces real, correctly-ordered relevance scores from
-`POST /v1/rerank` on MI355X inside `lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819`.
-The reranker configuration this folder documents (no `--is-embedding`, jinja template,
-`--disable-radix-cache`) is confirmed correct — it was accepted by SGLang at TP=1 and TP=2
-under pip, and it *serves* under the container. See "Container route" below.
-
-| Question | Answer |
-|---|---|
-| Does SGLang accept the reranker config? | **Yes** — template loaded, `is_embedding=False`, radix cache disabled |
-| Do weights load on gfx950? | **Yes** — 1.21 GB in 0.45 s; TP=2 shards to 0.61 GB/rank |
-| Does TP=2 bring-up work? | **Yes** — 2 ranks, `AiterCustomAllreduce (AMD default)` |
-| Does a forward pass run **in the container**? | **Yes** — `/v1/rerank` 200 OK in 0.14 s, 3 scored pairs |
-| Real rerank scores produced? | **Yes, in the container** — 0.7773 / 0.1403 / 0.000024, correctly ordered |
-| Does a forward pass run **from pip**? | **No** — dies at `sgl_kernel.rotary_embedding` |
-| Root cause of the pip failure | `sgl_kernel` + `aiter` have **no ROCm wheel**; SGLang on HIP imports both. The container ships both prebuilt |
-
-Supported ROCm route: `lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819` — ~89.9 GB on
-disk, and it serves; see "Container route" immediately below.
-
----
-
-# H100 (NVIDIA) — the pip route serves
-
-**On H100 the pip route works — the ROCm pip failure this folder documents is gone.**
-The root cause on MI355X was that `sgl_kernel` + `aiter` have no ROCm wheel; on NVIDIA
-`sgl_kernel` ships as a CUDA wheel, so `pip install "sglang[all]"` serves `/v1/rerank` directly —
-**no container.** The reranker configuration rules this folder established (no `--is-embedding`,
-the `qwen3_reranker.jinja` template, `--disable-radix-cache`) are unchanged and still correct.
-
-> **Tested topology:** 1×NVIDIA H100 80GB HBM3, a single GPU (single-GPU smoke test),
-> cc(9,0), CUDA 13.0, driver 580.173.02, Python 3.12.3. Multi-GPU is not covered here.
-
-## H100 platform summary
-
-**This path works on H100 via the pip route.** `Qwen/Qwen3-Reranker-0.6B` loads as `Qwen3ForCausalLM`
-(`is_generation: true`), the jinja template renders the yes/no judging prompt, and `/v1/rerank`
-returns correctly-ordered relevance scores with a decisive 3-tier spread.
-
-| Question | Answer (H100) |
-|---|---|
-| Does the pip route serve `/v1/rerank`? | **Yes** — `pip install "sglang[all]"`, no container; `import sgl_kernel` succeeds |
-| Arch / mode | **`Qwen3ForCausalLM`**, `is_generation: true` (from `/get_model_info`) — the "no `--is-embedding`" rule holds |
-| Jinja template loaded? | **Yes** — "Loading chat template from argument: ./qwen3_reranker.jinja" |
-| Real scores, correct order? | **Yes** — 0.7773 / 0.1480 / 0.000033, correctly ranked (~23,500× margin rel-vs-irrel) |
-| Single-GPU residency? | **Yes** — `sglang::scheduler` holds ~26 GB on the one selected GPU |
-
-## H100 install (pip route)
+### H100 install (pip route)
 
 Same shared venv as the LLM/embedding leaves (full block in `llm/README.md` H100 section):
 
@@ -86,13 +39,13 @@ export OUTPUT_DIR=/path/to/outputs      # server logs and run artifacts
 
 ```bash
 python3 -m venv .env_sglang && source .env_sglang/bin/activate
-pip install -U pip && pip install torch numpy            # torch 2.13.0+cu130
+pip install -U pip && pip install torch numpy            # the current CUDA 13 build
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 pip install "sglang[all]"                                 # sglang 0.5.18, sglang-kernel 0.4.6.post1, flashinfer 0.6.17
 python -c "import sgl_kernel; print('sgl_kernel OK')"     # OK — impossible on ROCm
 ```
 
-## H100 serve — single GPU
+### H100 serve — single GPU
 
 Same flags as the ROCm container command, minus the HIP env: **no `--is-embedding`**, the folder's
 jinja template, `--disable-radix-cache`.
@@ -114,8 +67,6 @@ container bind-mount, so the `/work/...` path the ROCm section uses does not app
 
 ```
 Loading chat template from argument: ./qwen3_reranker.jinja
-Load weight end. elapsed=24.78 s, type=Qwen3ForCausalLM, avail mem=77.29 GB, mem usage=1.18 GB.
-max_total_num_tokens=208651, chunked_prefill_size=8192, max_prefill_tokens=16384, max_running_requests=2608, context_len=40960, available_gpu_mem=53.50 GB
 The server is fired up and ready to roll!
 ```
 
@@ -125,13 +76,13 @@ The server is fired up and ready to roll!
 {"model_type": "qwen3", "is_generation": true, "architectures": ["Qwen3ForCausalLM"]}
 ```
 
-## H100 client / smoke command
+### H100 client / smoke command
 
 ```bash
 python inference_reranker_sglang.py --port 8600
 ```
 
-**Expected output — ordering correct, spread decisive:**
+**Expected output** (correct ordering):
 
 ```
 [health] server ready after 1.0s
@@ -141,45 +92,34 @@ python inference_reranker_sglang.py --port 8600
 [rank 3] score=0.000033  PostgreSQL is a relational database.
 ```
 
-The directly-relevant doc scores **0.7773**; the topically-related-but-non-answering ROCm
-sentence lands mid-pack at **0.1480**; the irrelevant PostgreSQL sentence is driven to
-**0.000033** — a ~23,500× margin. This three-tier signature matches the MI355X container almost
-exactly (0.7773 / 0.1403 / 0.000024 there): **the RANKING is identical and the scores agree to
-~3 decimals**, so the yes/no-logit reranking is hardware-portable pip↔container / NVIDIA↔AMD.
+The relevant document must rank first and the database sentence last.
 
-## H100 GPU residency check (sampled while serving)
+### H100 GPU residency check
 
 ```bash
 nvidia-smi --query-compute-apps=pid,process_name,used_memory,gpu_uuid --format=csv,noheader
 ```
 
-Only the card named by `CUDA_VISIBLE_DEVICES` is touched; `sglang::scheduler` holds ~26 GB on it.
-(That 26 GB is the `--mem-fraction-static 0.3` KV pool; the 0.6B weights are 1.18 GB — this
-reranker is throughput-bound over short pairs, so scale by replicas, not TP.)
+Only the card named by `CUDA_VISIBLE_DEVICES` is touched. The VRAM it holds is the
+`--mem-fraction-static 0.3` KV pool, not real demand.
 
-## H100 quirks / notes
+### H100 quirks / notes
 
 - Same benign `torchcodec`/`libavutil` startup traceback as the other leaves — ignore it.
-- `torch 2.13.0+cu130` is **not** clobbered by `pip install "sglang[all]"` (re-verified).
 - **`--disable-radix-cache` is still correct** — every rerank pair is a distinct query+document
   prompt with no shared prefix, so prefix caching only wastes memory.
-- **TP=2 remains pointless for 0.6B** — scale with independent single-GPU replicas (one
-  `CUDA_VISIBLE_DEVICES` each), not tensor parallelism.
+- Scale with independent single-GPU replicas (one `CUDA_VISIBLE_DEVICES` each), not `--tp`.
 
 ## Container route — `lmsysorg/sglang-rocm`
 
-**This is the route that works on gfx950.** Everything below this heading was validated on
-2×MI355X. The pip analysis further down is retained and still accurate — it explains *why* the
-container is required.
+**This is the route that works on gfx950.**
 
-Image: `lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819` — **89.9 GB on disk**. Inside it:
-`sglang 0.5.17.dev20260819+g574274660f`, `torch 2.9.1+rocm7.2.0.git7e1940d4`, HIP `7.2.26015`,
-and **`import sgl_kernel` succeeds** — the exact import that kills the pip route at
-`sgl_kernel.rotary_embedding`.
+Image: `lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819` — **89.9 GB on disk** (allow
+>150 GB free on the filesystem holding it).
 
 The container is started once and reused (see [`../embedding/README.md`](../embedding/README.md)
-for the full `docker run`); `renderD144`/`renderD152` map the two target GPUs to
-`cuda:0`/`cuda:1` inside.
+for the full `docker run`); the two `--device /dev/dri/renderD*` nodes you pass map the target
+GPUs to `cuda:0`/`cuda:1` inside.
 
 ### Serve — single GPU
 
@@ -198,23 +138,20 @@ docker exec -d sglang_bringup bash -lc \
 **Expected output** (`rerank_single.log`):
 
 ```
-max_total_num_tokens=325376, chunked_prefill_size=16384, max_prefill_tokens=16384, max_running_requests=4067, context_len=40960, available_gpu_mem=97.73 GB
 INFO:     Uvicorn running on http://0.0.0.0:8102 (Press CTRL+C to quit)
 The server is fired up and ready to roll!
 ```
 
-**`GET /get_model_info` proves the "no `--is-embedding`" rule is right:**
+**`GET /get_model_info` confirms the "no `--is-embedding`" rule:**
 
 ```json
 {"model_path": "Qwen/Qwen3-Reranker-0.6B", "is_generation": true,
  "model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"]}
 ```
 
-`is_generation: true` and the model's `embedding` block reports `"enabled": false`,
-`"family": "none"`. The reranker is served as a **causal LM**: `/v1/rerank` renders each
-(query, document) pair through `qwen3_reranker.jinja` into the yes/no judging prompt and
-converts the `yes` logit into a relevance score. Adding `--is-embedding` would switch the
-model into a pooling encoder, destroy the LM head the score is read from, and break `/v1/rerank`.
+`/v1/rerank` renders each (query, document) pair through `qwen3_reranker.jinja` and reads the
+`yes` logit as the score. Adding `--is-embedding` would switch the model into a pooling
+encoder, destroy the LM head the score comes from, and break `/v1/rerank`.
 
 ### Client / smoke command
 
@@ -233,19 +170,11 @@ docker exec -w /work/inference/sglang/reranker sglang_bringup \
 [rank 3] score=0.000024  PostgreSQL is a relational database.
 ```
 
-**Ordering is correct and the separation is decisive.** The directly relevant document scores
-**0.7773**; the topically-related-but-non-answering ROCm sentence lands mid-pack at **0.1403**;
-the irrelevant PostgreSQL sentence is driven to **0.000024** — a ~32,000× margin over the
-relevant doc. This three-tier spread is the signature of a working cross-encoder and is far
-sharper than the bi-encoder cosine separation in the embedding folder, which is exactly why a
-reranker is worth the extra pass over top-k retrieval results.
+The relevant document must rank first, the unrelated database sentence last.
 
 ### Two concurrent single-GPU replicas (instead of TP=2)
 
-**TP=2 is pointless for a 0.6B model** — 1.21 GB of weights sharded to ~0.61 GB per rank leaves
-both MI355X nearly idle while adding an all-reduce per layer per forward pass; the collective
-costs more than the matmuls it splits. Rerankers are throughput-bound over many short pairs, so
-the right scaling axis is replicas. One server per GPU:
+For a 0.6B reranker scale with replicas, not tensor parallelism — one server per GPU:
 
 ```bash
 # replica A -> first GPU, port 8102   (command above)
@@ -259,54 +188,30 @@ docker exec -d sglang_bringup bash -lc \
      > $OUTPUT_DIR/inference_reranker_sglang/rerank_rep_b.log 2>&1"
 ```
 
-Both replicas hit concurrently:
-
-```
-=== REPLICA A (8102, GPU 0) ===                    === REPLICA B (8112, GPU 1) ===
-[latency] 0.03s | pairs=3                          [latency] 0.08s | pairs=3
-[rank 1] score=0.777300  vLLM and SGLang both...   [rank 1] score=0.777300  vLLM and SGLang both...
-[rank 2] score=0.140336  ROCm is AMD's open...     [rank 2] score=0.140336  ROCm is AMD's open...
-[rank 3] score=0.000024  PostgreSQL is a rel...    [rank 3] score=0.000024  PostgreSQL is a rel...
-```
-
-`rocm-smi --showmemuse` sampled *during* the concurrent run — **both GPUs loaded**:
-
-```
-GPU[0]		: GPU Memory Allocated (VRAM%): 66
-GPU[1]		: GPU Memory Allocated (VRAM%): 66
-```
-
-(66% = this reranker's `--mem-fraction-static 0.3` on top of an embedding replica's 0.5 pool
-still resident on the same two GPUs; the reranker alone is ~15%.)
-
-Scores are **bit-identical across the two GPUs** (0.777300 / 0.140336 / 0.000024 on both), so a
-replica pool can be load-balanced without rank-dependent score drift — important for a reranker,
-where inconsistent scores across replicas would reshuffle result ordering between requests.
+Hit both replicas concurrently (ports 8102 and 8112); the scores are identical across the two
+GPUs, so a replica pool can be load-balanced without score drift reshuffling result ordering.
 
 ### Container-route quirks
 
 - **`--chat-template` takes a container-visible path.** `/work` is the bind-mounted repo, so
   `/work/inference/sglang/reranker/qwen3_reranker.jinja` resolves. A host path will not.
 - **`--disable-radix-cache` is correct here.** Every rerank pair is a distinct
-  query+document prompt with essentially no shared prefix, so prefix caching only burns memory
-  and bookkeeping. The server confirms `disable_radix_cache=True`.
+  query+document prompt with essentially no shared prefix, so prefix caching only wastes memory.
 - **AITER JIT probes a compiler flag and fails loudly at startup — this is benign:**
   ```
   clang (LLVM option parsing): Unknown command line argument '-amdgpu-coerce-illegal-types=1'.
   [aiter] -mllvm -amdgpu-coerce-illegal-types=1 is not supported by hipcc.
   ```
-  AITER probes for the flag, sees ROCm 7.2's clang reject it, drops it and rebuilds without it.
-  Startup continues normally. Do not chase this error — it is a feature probe, not a failure.
-- **First launch takes ~2 minutes**, dominated by AITER JIT-compiling kernels into
-  `/root/.aiter/build/`. Subsequent launches in the same container are much faster. Destroying
-  the container throws that cache away, which is a further reason to keep one long-lived.
+  AITER drops the flag and rebuilds without it; startup continues. Do not chase this error.
+- **AITER JIT-compiles kernels into `/root/.aiter/build/` on first launch.** Keep one
+  long-lived container so that cache is reused.
 - `Ignore import error when loading sglang.srt.models.inkling: No module named 'cutlass'` —
   benign, a CUDA-only model class failing to register.
 
 ## Install
 
-Python 3.12; `requirements_sglang_reranker.txt` is the tested set. Same stack as the other
-two SGLang folders, so one venv can be shared.
+Python 3.12; the shared [`../requirements.txt`](../requirements.txt) is the pinned set. Same
+stack as the other two SGLang leaves, so one venv can be shared.
 
 ### AMD / ROCm
 
@@ -316,13 +221,13 @@ source .env_sglang/bin/activate
 pip install -U pip
 pip install torch==2.11.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm7.2
 pip install --no-deps sglang==0.5.17
-pip install -r requirements_sglang_reranker.txt
+pip install -r ../requirements.txt
 python -c "import torch; print(torch.__version__, torch.version.hip)"   # 2.11.0+rocm7.2 7.2.26015
 ```
 
-`--no-deps` is mandatory: sglang 0.5.17 declares `cuda-python`, `flashinfer_python[cu13]`,
-`flash-attn-4`, `sglang-kernel==0.4.5` and PyPI `torch==2.11.0` (CUDA build) as **base**
-dependencies, so a plain install replaces ROCm torch with a CUDA wheel. Recovery:
+`--no-deps` is mandatory: sglang 0.5.17 declares CUDA packages and the PyPI CUDA
+`torch==2.11.0` as **base** dependencies, so a plain install replaces ROCm torch with a CUDA
+wheel. Recovery:
 
 ```bash
 pip install --force-reinstall --no-deps torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
@@ -331,28 +236,13 @@ pip install --force-reinstall --no-deps torch==2.11.0 --index-url https://downlo
 Never `pip install flash-attn` (CUDA-only). Never `pip install aiter` — that PyPI name is
 an unrelated async-iterator library, not AMD's AITER.
 
-The three SGLang leaves share one identical ~16 GB environment: build a single `.env_sglang`
-at the software root (`inference/sglang/`) and activate it from `llm/`, `embedding/` and
-`reranker/` rather than duplicating it per leaf. Create a real venv here instead if you want
-independent pins.
+The three SGLang leaves share one identical environment: build a single `.env_sglang` at the
+software root (`inference/sglang/`) and activate it from `llm/`, `embedding/` and `reranker/`.
 
-**Client verified independently of the engine.** Since no SGLang server can serve on this
-build, `inference_reranker_sglang.py` can be exercised against a minimal OpenAI-compatible
-stub to confirm the client half is correct (health wait → POST → score parsing → ranking):
+This venv cannot serve on ROCm (`aiter` and `sgl_kernel` have no ROCm wheel), so use it only
+for the client; serve from the container.
 
-```
-[health] server ready after 0.0s
-[latency] 0.00s | pairs=3 | query='Which inference engines support AMD ROCm?'
-[rank 1] score=1.000000  vLLM and SGLang both support AMD ROCm GPUs.
-```
-
-Those scores come from the stub, **not** from SGLang or Qwen3-Reranker.
-
-A fail-loud import shim for the missing native packages (`aiter`, `sgl_kernel`) is used to
-locate exactly where the ROCm path stops; it raises on any real call and cannot serve
-traffic. Full description in [`../llm/README.md`](../llm/README.md).
-
-### NVIDIA / CUDA (upstream route — see the H100 section above for the validated variant)
+### NVIDIA / CUDA (see the H100 section above for the full variant)
 
 ```bash
 pip install --upgrade pip && pip install uv
@@ -396,8 +286,8 @@ python -m sglang.launch_server \
 
 Note what is **absent**: no `--is-embedding` (wrong for a decoder-only yes/no reranker) and
 no `--attention-backend` (on ROCm SGLang auto-selects `aiter`; `flashinfer` is NVIDIA-only).
-`--disable-radix-cache` matches the upstream reranker recipe — prefix reuse across unrelated
-query/document pairs is not useful here.
+`--disable-radix-cache` is right here — prefix reuse across unrelated query/document pairs is
+not useful.
 
 ### Launch — multi-GPU, TP=2
 
@@ -428,71 +318,13 @@ Expected on a working build — the database sentence must rank last:
 [rank 3] score=0.0xxxxx  PostgreSQL is a relational database.
 ```
 
-## Single-GPU results (measured, gfx950)
+## Where the ROCm pip route stops
 
-```
-Attention backend not specified. Use aiter backend by default.
-    server_args=... is_embedding=False, disable_radix_cache=True,
-    chat_template='.../qwen3_reranker.jinja', attention_backend='aiter'
-Load weight end. elapsed=0.45 s, type=Qwen3ForCausalLM, avail mem=286.05 GB, mem usage=1.21 GB.
-KV Cache is allocated. dtype: torch.bfloat16, #tokens: 1131687, K size: 60.44 GB, V size: 60.44 GB
-Scheduler hit an exception ...
-Exception: Capture cuda graph failed:
-  ROCm shim: sgl_kernel.rotary_embedding was really called - needs a native ROCm build
-```
-
-| Metric | Value |
-|---|---|
-| Cold start to failure | **20 s** (server never reaches `/health`) |
-| Model-load VRAM | **1.21 GB** (Qwen3-Reranker-0.6B, bf16) |
-| Weight-load time | 0.45 s |
-| KV cache allocated | 121 GB (1,131,687 tokens @ `mem-fraction-static 0.5`) |
-| Runner mode | `is_embedding=False` — correct decoder-only reranker path |
-| Chat template | Loaded from `qwen3_reranker.jinja` without error |
-| Endpoint reachable | **No** |
-| Real rerank scores | **None** — no forward pass completes |
-
-The configuration in question was therefore validated as far as the engine
-allows: SGLang accepted the reranker **without** `--is-embedding`, took the jinja template,
-and set up a causal-LM runner with radix caching off. Only the kernel call failed.
-
-## Multi-GPU (TP=2) results (measured, gfx950)
-
-```
-[TP0] [AR] Using AiterCustomAllreduce (AMD default)
-[TP1] [AR] Using AiterCustomAllreduce (AMD default)
-[TP0] Load weight end. elapsed=0.33 s, type=Qwen3ForCausalLM, avail mem=285.65 GB, mem usage=0.61 GB.
-[TP1] Load weight end. elapsed=0.33 s, type=Qwen3ForCausalLM, avail mem=285.65 GB, mem usage=0.61 GB.
-Exception: Capture cuda graph failed:
-  ROCm shim: sgl_kernel.rotary_embedding was really called - needs a native ROCm build
-```
-
-**Tensor-parallel sharding demonstrably works up to the kernel boundary:** per-rank weight
-memory is **0.61 GB at TP=2 versus 1.21 GB at TP=1 — exactly half**, on both ranks, with
-RCCL 2.27.7 forming the group and AMD's `AiterCustomAllreduce` selected by default. Cold
-start to failure: 24 s. A matching `rocm-smi` sample from the sibling embedding TP=2 run
-shows both cards holding memory at the same time:
-
-```
-card0,309220868096,1550635008 | card1,309220868096,1550630912    # ~1.44 GiB each, 288 GiB cards
-```
-
-**Is TP=2 worth it for a 0.6B reranker? No.** Sharding a 1.2 GB model across two 288 GB
-cards buys nothing and adds an all-reduce per forward pass. In production run **two
-independent single-GPU replicas** behind a load balancer and shard the *document set*, not
-the model:
-
-```bash
-HIP_VISIBLE_DEVICES=0 CUDA_VISIBLE_DEVICES=0 python -m sglang.launch_server \
-  --model-path Qwen/Qwen3-Reranker-0.6B --disable-radix-cache \
-  --chat-template qwen3_reranker.jinja --port 8102 &
-HIP_VISIBLE_DEVICES=1 CUDA_VISIBLE_DEVICES=1 python -m sglang.launch_server \
-  --model-path Qwen/Qwen3-Reranker-0.6B --disable-radix-cache \
-  --chat-template qwen3_reranker.jinja --port 8112 &
-```
-
-No replica can serve on the pip build, so this pattern is only demonstrable on the container
-route above (where it is shown working with two concurrent replicas).
+Under pip on gfx950 the engine accepts the reranker configuration in full, loads the weights
+and allocates the KV pool, then dies in CUDA-graph capture at `sgl_kernel.rotary_embedding`,
+which has no ROCm build; the endpoint never reaches `/health`. TP=2 hits the same wall. For
+production scaling run two independent single-GPU replicas (see the container route above),
+not TP.
 
 ## Arguments
 
@@ -510,57 +342,41 @@ Client (`inference_reranker_sglang.py`):
 | `--wait` | `600` | Seconds to wait for `/health` |
 | `--timeout` | `120` | Per-request timeout |
 
-Server flags that mattered:
+Server flags that matter:
 
-| Flag | Value used | Why |
+| Flag | Value | Why |
 |---|---|---|
 | `--model-path` | `Qwen/Qwen3-Reranker-0.6B` | Decoder-only yes/no reranker |
 | `--chat-template` | `qwen3_reranker.jinja` | **Required** — renders the Instruct/Query/Document prompt |
 | `--disable-radix-cache` | on | Upstream reranker recipe; prefix reuse is useless across pairs |
 | `--trust-remote-code` | on | Follows the upstream command |
 | `--is-embedding` | **never** | Wrong for this model — it is not an embedding model |
-| `--tp` | `1` / `2` | 1 is correct in production; 2 tested only to exercise multi-GPU |
+| `--tp` | `1` | Correct for a 0.6B model; scale with replicas, not TP |
 | `--attention-backend` | *unset* | **Leave unset on ROCm** — SGLang selects `aiter` |
 
 ## Output
 
-No artifacts are written by the server. Validation logs land wherever you redirect them, e.g.
-`$OUTPUT_DIR/inference_reranker_sglang/` (`rerank_tp1.log`, `rerank_tp2.log`).
-Weights live in `$HF_HOME`. The client prints latency and ranked
-scores to stdout only.
+No artifacts are written by the server. Logs land wherever you redirect them, e.g.
+`$OUTPUT_DIR/inference_reranker_sglang/`. Weights live in `$HF_HOME`. The client prints
+latency and ranked scores to stdout only.
 
-## Hardware support & evidence
+## Hardware support
 
 | | NVIDIA | AMD |
 |---|---|---|
-| Status | **Works** — H100 80GB, CUDA 13.0 (see the H100 section above) | **pip route blocked** — 2×MI355X (gfx950), ROCm 7.2.4; container route works |
-| Upstream position | Native rerank support documented | Supported stack; exact target needs validation (this folder) |
+| Status | **Works** — H100 80GB, CUDA 13.0, pip route (see the H100 section above) | **pip route blocked** — MI355X (gfx950), ROCm 7.2.4; container route works |
 | Install | `uv pip install sglang` | pip route unusable; needs `lmsysorg/sglang-rocm` or a hipcc source build |
-| Runner | decoder-only yes/no scoring | same — `is_embedding=False` confirmed on gfx950 |
-
-Evidence:
-
-- `sglang` 0.5.17 PyPI metadata lists CUDA-only packages as **base** dependencies; no
-  `srt_hip` extra exists. `sglang-kernel` 0.4.5 ships only CUDA wheels
-  (`manylinux2014_x86_64` 383 MB, `aarch64` 37 MB).
-- `sglang/srt/layers/rotary_embedding/base.py:69-75,116-117` — under `if _is_hip:` SGLang
-  imports `sgl_kernel` directly, so a real AITER build alone cannot substitute for it.
-  AITER is opt-in besides: `_use_aiter = get_bool_env_var("SGLANG_USE_AITER") and _is_hip`.
-- `repo.radeon.com/rocm/manylinux/rocm-rel-7.2/` publishes no `aiter` or `sglang` wheel.
-- `lmsysorg/sglang-rocm` publishes exact daily tags for this GPU family, e.g.
-  `v0.5.17-rocm720-mi35x-20260819` (23.4 GB compressed).
-- `qwen3_reranker.jinja` fetched from the upstream `v0.5.17` tag and accepted by the server.
-- The run logs quoted above (TP=1 and TP=2 weight loads, allreduce selection, fail frame).
+| Runner | decoder-only yes/no scoring | same — `is_embedding=False` on gfx950 |
 
 ## Notes / quirks
 
-- **`--is-embedding` remains the classic trap.** This folder
-  respects it; SGLang started a causal-LM runner (`is_embedding=False`) as intended.
+- **Do not pass `--is-embedding`.** Leave it off; SGLang then starts a causal-LM
+  runner (`is_embedding=False`), which is what `/v1/rerank` needs.
 - **Template provenance matters.** `qwen3_reranker.jinja` renders the exact
   system + `<Instruct>/<Query>/<Document>` prompt whose `yes`/`no` logits define the score.
   A different template silently changes the scores rather than erroring.
-- **KV cache is huge by default** — 121 GB on a 288 GB card for a 0.6B model. Set
-  `--mem-fraction-static` or `--max-total-tokens` explicitly on a shared box.
+- **KV cache is large by default** even for a 0.6B model. Set `--mem-fraction-static` or
+  `--max-total-tokens` explicitly on a shared box.
 - `Failed to import amdsmi` on every launch — harmless; install `amdsmi` for AMD telemetry.
 - `Ignoring corrupted tree cache file ... Permission denied` — shared HF cache owned by
   another user; cosmetic.
@@ -568,13 +384,7 @@ Evidence:
 - **Ports** — 8102 is the SGLang reranker slot; 8100/8101 belong to sibling folders.
 - Re-export `HIP_VISIBLE_DEVICES` **and** `CUDA_VISIBLE_DEVICES` after activating the venv;
   never set `CUDA_VISIBLE_DEVICES` empty on ROCm.
-
-## Follow-ups
-
-1. The fullest AMD docker flag set for `lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819`
-   is `--device /dev/kfd`, `--device /dev/dri/renderD144`, `--device /dev/dri/renderD152`,
-   `--group-add video`, `--group-add render`, `--ipc=host`, `--cap-add=SYS_PTRACE`,
-   `--security-opt seccomp=unconfined`, `--shm-size 64G`. Allow >150 GB free on the
-   filesystem holding the image.
-2. Then verify scoring correctness against the sentence-transformers `CrossEncoder`
-   baseline on the same pairs, and measure rerank pairs/sec and p50/p95 across two replicas.
+- **Fullest AMD container flag set**, if the minimal one hits a permission or memory error:
+  `--device /dev/kfd --device /dev/dri/renderD<a> --device /dev/dri/renderD<b> --group-add
+  video --group-add render --ipc=host --cap-add=SYS_PTRACE --security-opt seccomp=unconfined
+  --shm-size 64G`.

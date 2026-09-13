@@ -13,22 +13,17 @@ OpenAI-compatible server).
 lots of CPU RAM and a modern server CPU. For a **dense** model, or anything that fits in
 VRAM, use [`../vllm/llm/`](../vllm/llm/) or [`../sglang/llm/`](../sglang/llm/) instead.
 
-## Verified on both vendors — with opposite outcomes
-
-This stack is the repo's clearest case of an outcome that is *hardware-dependent by
-design*. Full evidence for both platforms lives in [`llm/README.md`](llm/README.md).
+## Per-vendor outcome
 
 | | NVIDIA H100 | AMD MI355X |
 |---|---|---|
-| Route | prebuilt PyPI wheels (`kt-kernel` + `sglang-kt`), no build | **source build** of kt-kernel with `CPUINFER_USE_ROCM=1` (PyPI wheel is CUDA-only — verified) |
-| CPU kernel tier | **AMX** (Xeon 8480C Sapphire Rapids) | **AVX512-BF16** (EPYC 9575F — no AMX on Zen 5, by design) |
-| Serving | ✅ `sglang-kt` serves `Qwen/Qwen3-30B-A3B` (128 experts): coherent output, ~23–50 tok/s, experts in CPU DRAM (~72 GB RSS) with only **16.41 GB** on GPU | ❌ **blocked** — `sglang-kt` 0.7.0 hard-pins `cuda-python`, `flashinfer`, `sgl-kernel` (CUDA-only wheels); metadata requirements, so a container does not route around them |
-| Direct Python API | not exercised | ✅ hybrid proven: 48 MoE layers on CPU → **4.09 GB** VRAM vs 64.62 GB all-GPU (15.8×), 17.44 tok/s, output **character-identical** to the all-GPU baseline |
-| Outcome | **works on its designed workload** — use for MoE models too big for 80 GB | kernel library is genuinely ROCm-portable, but no serving layer — and 288 GB/card removes the VRAM-scarcity premise for this repo's targets |
+| Route | prebuilt PyPI wheels (`kt-kernel` + `sglang-kt`), no build | **source build** of kt-kernel with `CPUINFER_USE_ROCM=1` (the PyPI wheel is CUDA-only) |
+| CPU kernel tier | **AMX** | **AVX512-BF16** (no AMX on Zen 5) |
+| Serving | ✅ `sglang-kt` serves an MoE checkpoint with experts in CPU DRAM | ❌ **blocked** — `sglang-kt` 0.7.0 hard-pins `cuda-python`, `flashinfer`, `sgl-kernel` (CUDA-only wheels), so a container does not route around them |
+| Direct Python API | not exercised | ✅ hybrid works — MoE layers on CPU, output identical to the all-GPU baseline |
 
-Bottom line: **the kernel library ports across vendors; the serving layer is CUDA-first.**
-On NVIDIA this is a working niche tool; on AMD it is a well-evidenced
-"runs, but use vLLM/SGLang instead".
+**The kernel library ports across vendors; the serving layer is CUDA-first.** On AMD, use
+[`../vllm/llm/`](../vllm/llm/) or [`../sglang/llm/`](../sglang/llm/) for serving.
 
 ## Scope — why only an `llm/` leaf
 
@@ -43,7 +38,7 @@ models and has no embedding or reranker serving path — like
 export DATA_DIR=/path/to/data          # source checkouts and scratch space
 ```
 
-### NVIDIA (verified on H100 — the serving route)
+### NVIDIA (the serving route)
 
 ```bash
 python3 -m venv .env_ktransformers && source .env_ktransformers/bin/activate
@@ -53,12 +48,12 @@ pip install sglang-kt                     # 0.7.0 — kvcache-ai SGLang fork (NO
 pip install nvidia-cudnn-cu12==9.16.0.29  # sglang-kt guards against a torch-2.9.1/cuDNN<9.15 bug
 ```
 
-Notes for the H100 route: unset any host proxy first (a proxy typically 403s
+Notes for the NVIDIA route: unset any host proxy first (a proxy typically 403s
 pypi.nvidia.com / HF), and expect `kt-kernel`/`sglang-kt` to pull CUDA `torch 2.9.1+cu128`
-(fine on a cu130/driver-580 host). Serve on a **distinct port** (e.g. 8380 or 38612), never
+(fine on a cu130 host). Serve on a **distinct port** (e.g. 8380 or 38612), never
 SGLang's default.
 
-### AMD (verified on MI355X — kernel library only; source build mandatory)
+### AMD (kernel library only; source build mandatory)
 
 ```bash
 python3 -m venv .env_ktransformers && source .env_ktransformers/bin/activate
@@ -86,19 +81,13 @@ to CPU-only, which is why the source build is mandatory. Build detail, evidence,
 
 ## Hardware support
 
-- **NVIDIA H100 (CUDA 13.0): verified** — full serving path, AMX expert offload
-  demonstrated and used. kt-kernel GPU support: compute capability 8.0+ (Ampere/Ada/
-  Hopper); Volta/Turing and older are not supported.
-- **AMD MI355X (gfx950, ROCm 7.2.4): verified** — kt-kernel builds from source, is
-  genuinely HIP-linked, validates numerically, and runs the hybrid via the direct API;
-  the ROCm role is host-callback plumbing (no device kernels compiled), so there is
-  nothing gfx950-specific to break. Serving is blocked upstream (`sglang-kt` CUDA pins).
-- **Other hardware (upstream claims — not verified here):** Intel AMX CPUs (the flagship
-  tier), Intel Arc XPU, AMD Zen4+ CPUs via BLIS, universal CPUs via the llamafile/GGUF
-  backend, and an Ascend NPU tutorial for the older ktransformers architecture.
+- **NVIDIA H100 (CUDA 13)**: full serving path works. kt-kernel requires compute
+  capability 8.0+ (Ampere/Ada/Hopper); Volta/Turing and older are not supported.
+- **AMD MI355X (gfx950, ROCm 7.2)**: kt-kernel builds from source and runs the hybrid via
+  the direct Python API. Serving is blocked upstream by `sglang-kt`'s CUDA pins.
 
 ## Leaves
 
 | Leaf | Status |
 |---|---|
-| [`llm/`](llm/README.md) | H100: **serving works** on the designed MoE workload (dense 27B FP8 is a documented caveat — offload inert, use vLLM/SGLang). MI355X: **kernel library works** (hybrid proven via direct API); serving blocked upstream; premise moot on 288 GB cards. |
+| [`llm/`](llm/README.md) | H100: **serving works** on MoE checkpoints (for a dense model the offload is inert — use vLLM/SGLang). MI355X: **kernel library works** via the direct API; serving blocked upstream. |

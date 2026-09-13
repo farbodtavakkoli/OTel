@@ -1,6 +1,6 @@
 # MI355X (ROCm 7.2) 8-GPU variant of config_sft_lora_smoke_mi355x.yaml.
-# Same model / template / method as the verified 1-GPU smoke; only the data slice,
-# batch geometry, step count and checkpoint policy differ. See readme_llamafactory.md
+# Same model / template / method as the 1-GPU smoke; only the data slice, batch geometry,
+# step count and checkpoint policy differ. See readme_llamafactory.md
 # section 2, "8-GPU run (8x MI355X, ROCm 7.2.4)".
 # Parallelism: plain torchrun DDP (no deepspeed:) — llamafactory-cli auto-torchruns
 # when get_device_count() > 1.
@@ -9,7 +9,7 @@
 #     --config config_sft_lora_smoke_mi355x_8gpu.yaml --num-gpus 8
 
 ### model
-model_name_or_path: Qwen/Qwen3-0.6B   # same stand-in the 1-GPU smoke used
+model_name_or_path: Qwen/Qwen3-0.6B   # same stand-in the 1-GPU smoke uses
 trust_remote_code: true
 flash_attn: sdpa                # ROCm: no flash-attn wheel — fa2 must fall back to sdpa
 
@@ -28,8 +28,7 @@ lora_target: all
 #   awk '{print}' data/OTel_LLM_sample_10.jsonl > /tmp/one.jsonl
 #   for i in $(seq 256); do cat /tmp/one.jsonl; done > data/otel_chat_sft_x256.jsonl
 # (awk guarantees the trailing newline the shipped sample lacks, so rows are not glued.)
-# The 10-row sample cannot feed 8 ranks x batch 4 for 20 steps; this is a pipeline
-# proof, not a learning result.
+# The 10-row sample cannot feed 8 ranks x batch 4 for 20 steps.
 dataset: otel_chat_sft_x256
 dataset_dir: ./data
 template: qwen3_nothink
@@ -39,7 +38,7 @@ preprocessing_num_workers: 8
 dataloader_num_workers: 2
 packing: false
 
-### output — NO checkpoints (disk hygiene); no load_best_model_at_end anywhere
+### output — no checkpoints (disk hygiene); no load_best_model_at_end anywhere
 output_dir: ./outputs/sft_lora_smoke_mi355x_8gpu
 logging_steps: 1
 save_strategy: "no"

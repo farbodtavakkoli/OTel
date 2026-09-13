@@ -1,21 +1,11 @@
-# LLM Foundry -- 8x MI355X (ROCm 7.2) FSDP SFT smoke config.
+# LLM Foundry -- 8-GPU FSDP SFT smoke config (worked example on MI355X / ROCm 7.2).
 #
-# This is the 1-GPU recipe (yamls/finetune_chat_sft.yaml) with the ROCm changes from
-# readme_llmfoundry.md 8a baked in, plus a batch geometry that divides by 8 ranks.
-# The 1-GPU YAML is deliberately left untouched (it keeps the NVIDIA defaults).
+# The 1-GPU recipe (yamls/finetune_chat_sft.yaml) with the ROCm attention override and a
+# batch geometry that divides by 8 ranks. global_train_batch_size must divide by the rank
+# count or Foundry aborts in config validation. See readme section 5 "Multi-GPU (FSDP)".
 #
-# Differences vs finetune_chat_sft.yaml -- see 8a "8-GPU run":
-#   - attn_implementation: sdpa      (flash_attention_2 has no ROCm build here)
-#   - init_device: mixed             (KEPT -- valid now that FSDP is real at 8 ranks)
-#   - global_train_batch_size: 32    (divisible by 8; 4/rank)
-#   - device_train_microbatch_size: 1 -> grad accum 4
-#   - max_duration: 20ba, eval disabled (smoke run)
-#   - no save_folder / no hf_checkpointer (nothing large lands on disk)
-#   - data_local points at a replicated 1280-row copy of the shipped 10-row sample
-#     (the 10-row sample cannot feed 8 ranks at global batch 32 with drop_last).
-#     Pipeline proof, NOT a learning result.
-#
-# Data prep (once, from this folder) -- replicate the shipped sample 128x into the
+# Data prep (once, from this folder) -- the shipped 10-row sample cannot feed 8 ranks at
+# global batch 32 with drop_last, so replicate it 128x into the
 # directory data_local points at, or set --data-local to your own dataset dir:
 #   mkdir -p outputs/llmfoundry_gpu8/data
 #   for i in $(seq 128); do cat data/OTel_LLM_sample_10.jsonl; done \

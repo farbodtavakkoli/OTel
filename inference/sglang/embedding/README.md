@@ -8,71 +8,17 @@ endpoint with **SGLang** (`python -m sglang.launch_server --is-embedding`), and 
 vector dimension and cosine scores.
 
 Use this folder when you already run SGLang for generation and want one serving stack for
-embeddings too. On **AMD gfx950 the split is: a pip install does NOT serve, the vendor
-container DOES** — both were tested. See "Container route — `lmsysorg/sglang-rocm`"
-for the working recipe (`/v1/embeddings` 200 OK, dim=768, correct cosine
-ordering); the pip analysis below explains why the wheel route cannot work. If you want an
-embedding endpoint without pulling a ~90 GB image, the Transformers or vLLM folder is
-lighter.
+embeddings too. On **AMD gfx950 a pip install does not serve; the vendor container does** —
+see "Container route — `lmsysorg/sglang-rocm`". If you want an embedding endpoint without
+pulling a ~90 GB image, the Transformers or vLLM folder is lighter.
 
-This path is worth validating before production use:
-SGLang's EmbeddingGemma cookbook explicitly lists an **NVIDIA CUDA GPU as a prerequisite**;
-the generic embedding docs list the model as supported but give no ROCm recipe. This folder
-is that validation, run on gfx950.
+## H100 (NVIDIA) — the pip route
 
-> **Tested topology:** 2×AMD Instinct MI355X (gfx950, 288GB), ROCm 7.2.4, Ubuntu,
-> Python 3.12.3, two GPUs on a single node.
+**On NVIDIA the pip route works** — the `aiter`/`sgl_kernel` kernels ship as CUDA wheels, so
+a plain `pip install "sglang[all]"` serves `/v1/embeddings` with **no container**. The
+commands below are single-GPU.
 
-## Platform summary — AMD MI355X (gfx950)
-
-**This path works on ROCm/gfx950 via the vendor container; the pip route stays blocked.**
-EmbeddingGemma-300m serves real 768-dim vectors from SGLang on MI355X inside
-`lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819`. The NVIDIA-only
-caveat applies to the **pip** install only; it is not a hardware or model-support limit.
-See "Container route — `lmsysorg/sglang-rocm`" for the exact commands and output.
-
-| Question | Answer |
-|---|---|
-| Does SGLang recognise EmbeddingGemma at all? | **Yes** — loads as `type=EmbeddingGemmaModel` with `is_embedding=True` |
-| Do weights load on gfx950? | **Yes** — 0.63 GB, 0.38 s, pool allocated |
-| Does a forward pass run **in the container**? | **Yes** — `/v1/embeddings` 200 OK, dim=768, correct cosine ordering |
-| Does a forward pass run **from pip**? | **No** — dies in AMD's own attention kernel path: `aiter.mha_batch_prefill_func` |
-| Is TP=2 meaningful for a 300M model? | **No** — see "Multi-GPU"; two single-GPU replicas is the right pattern, and both replicas were run concurrently |
-| Root cause of the pip failure | `aiter` and `sgl_kernel` have **no ROCm wheel** on PyPI; SGLang on HIP imports both. The container ships both prebuilt |
-
-Not a model-support gap: SGLang has a dedicated `EmbeddingGemmaModel` implementation and it
-initialised correctly on gfx950. The gap is packaging — identical to the LLM and reranker
-folders. The supported ROCm route is `lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819`
-— ~89.9 GB on disk, and it works; see "Container route" below.
-
----
-
-# H100 (NVIDIA) — the pip route serves
-
-**On H100 the pip route works — the exact failure this folder documents on ROCm is
-gone.** EmbeddingGemma-300m died on MI355X inside AMD's own attention kernel
-(`aiter.mha_batch_prefill_func`) because `aiter`/`sgl_kernel` have no ROCm wheel. On NVIDIA those
-kernels ship as CUDA wheels, the forward pass completes, and `/v1/embeddings` returns real
-768-dim vectors from a plain `pip install "sglang[all]"` — **no container.**
-
-> **Tested topology:** 1×NVIDIA H100 80GB HBM3, a single GPU (single-GPU smoke test),
-> cc(9,0), CUDA 13.0, driver 580.173.02, Python 3.12.3. Multi-GPU is not covered here.
-
-## H100 platform summary
-
-**This path works on H100 via the pip route.** `type=EmbeddingGemmaModel` loads (0.59 GB), the CUDA
-prefill runs, and `/v1/embeddings` returns dim-768 vectors with correct cosine ordering. The
-NVIDIA-only cookbook prerequisite is satisfied by the pip route itself here.
-
-| Question | Answer (H100) |
-|---|---|
-| Does the pip route serve embeddings? | **Yes** — `pip install "sglang[all]"`, no container; `import sgl_kernel` succeeds |
-| Arch resolved | **`EmbeddingGemmaModel`** — same dedicated class as MI355X, now with a completed forward pass |
-| Does the forward pass complete? | **Yes** — `/v1/embeddings` 200, dim **768**, latency 0.02 s (vs ROCm pip: died in `aiter.mha_batch_prefill_func`) |
-| Cosine ordering correct? | **Yes** — rel **+0.7931** > irrel **+0.2750** (gap 0.52, wider than the container's 0.066) |
-| Single-GPU residency? | **Yes** — `sglang::scheduler` holds ~2.5 GB on the one selected GPU |
-
-## H100 install (pip route)
+### H100 install (pip route)
 
 Identical shared venv as the LLM leaf (see `llm/README.md` H100 section for the full block):
 
@@ -84,13 +30,13 @@ export OUTPUT_DIR=/path/to/outputs      # server logs and run artifacts
 
 ```bash
 python3 -m venv .env_sglang && source .env_sglang/bin/activate
-pip install -U pip && pip install torch numpy            # torch 2.13.0+cu130
+pip install -U pip && pip install torch numpy            # the current CUDA 13 build
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 pip install "sglang[all]"                                 # sglang 0.5.18, sglang-kernel 0.4.6.post1, flashinfer 0.6.17
 python -c "import sgl_kernel; print('sgl_kernel OK')"     # OK — impossible on ROCm
 ```
 
-## H100 serve — single GPU
+### H100 serve — single GPU
 
 ```bash
 source .env_sglang/bin/activate
@@ -112,12 +58,10 @@ Plain `CUDA_VISIBLE_DEVICES`; no `HIP_VISIBLE_DEVICES`.
 
 ```
 EmbeddingGemma detected: disabling radix cache and chunked prefill; using breakable CUDA graph for CUDA prefill.
-Load weight end. elapsed=24.47 s, type=EmbeddingGemmaModel, avail mem=77.88 GB, mem usage=0.59 GB.
-KV Cache skipped (no-op pool). Logical #tokens: 1686301, physical K/V size: ~24.0 KB placeholder
 The server is fired up and ready to roll!
 ```
 
-## H100 client / smoke command
+### H100 client / smoke command
 
 ```bash
 python inference_embedding_sglang.py --port 8600
@@ -133,44 +77,35 @@ python inference_embedding_sglang.py --port 8600
 [cosine] +0.2750  <- SQLite is an embedded database.
 ```
 
-**Cosine sanity passes:** query *"Which inference engines support AMD ROCm?"* scores the relevant
-doc **+0.7931** well above the irrelevant one **+0.2750** — a 0.52 gap, notably wider than the
-MI355X container's 0.066, since the H100 pip build runs the CUDA prefill path end-to-end.
-Dimension is **768** (EmbeddingGemma native), server reports mean pooling + normalize.
+The relevant document must score above the irrelevant one, and `dim` must be **768**
+(EmbeddingGemma's native width).
 
-## H100 GPU residency check (sampled while serving)
+### H100 GPU residency check
 
 ```bash
 nvidia-smi --query-compute-apps=pid,process_name,used_memory,gpu_uuid --format=csv,noheader
 ```
 
-Only the card named by `CUDA_VISIBLE_DEVICES` is touched; `sglang::scheduler` holds ~2.5 GB on
-it. (That VRAM is the `--mem-fraction-static 0.5` pool, not real demand — a 300M model needs far
-less; lower it to pack more replicas per card.)
+Only the card named by `CUDA_VISIBLE_DEVICES` is touched. The VRAM it holds is the
+`--mem-fraction-static 0.5` pool, not real demand — lower it to pack more replicas per card.
 
-## H100 quirks / notes
+### H100 quirks / notes
 
 - Same benign `torchcodec`/`libavutil` startup traceback as the LLM leaf — ignore it.
-- `torch 2.13.0+cu130` is **not** clobbered by `pip install "sglang[all]"` (re-verified).
-- **TP=2 is still pointless for a 300M model** (as on MI355X) — scale with independent
-  single-GPU replicas behind a load balancer, not tensor parallelism. A multi-GPU pass would
-  just launch N replicas on N free cards (one `CUDA_VISIBLE_DEVICES` each), no `--tp`.
+- Scale with independent single-GPU replicas (one `CUDA_VISIBLE_DEVICES` each), not `--tp`.
 
 ## Container route — `lmsysorg/sglang-rocm`
 
-**This is the route that works on gfx950.** Everything below this heading was validated on
-2×MI355X. The pip analysis in the rest of this readme is retained and still accurate — it
-explains *why* the container is needed.
+**This is the route that works on gfx950.**
 
-Image: `lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819` — **89.9 GB on disk** (`docker images`).
-Inside it: `sglang 0.5.17.dev20260819+g574274660f`, `torch 2.9.1+rocm7.2.0.git7e1940d4`,
-HIP `7.2.26015-fc0010cf6a`, and — the decisive difference — **`import sgl_kernel` succeeds**.
+Image: `lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819` — **89.9 GB on disk** (allow
+>150 GB free on the filesystem holding it).
 
 ### Start the container
 
 ```bash
 docker run -d --name sglang_bringup \
-  --device /dev/kfd --device /dev/dri/renderD144 --device /dev/dri/renderD152 \
+  --device /dev/kfd --device /dev/dri/renderD128 --device /dev/dri/renderD129 \
   --group-add video --ipc=host --shm-size 16g \
   --security-opt seccomp=unconfined --cap-add SYS_PTRACE \
   -e HF_HOME="$HF_HOME" -e HF_HUB_OFFLINE=1 \
@@ -181,10 +116,11 @@ docker run -d --name sglang_bringup \
   lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819 sleep infinity
 ```
 
-`renderD144`/`renderD152` are the render nodes of the two target GPUs (match them to your own
-cards). Only those two nodes are passed in, so inside the container they appear as `cuda:0` and
-`cuda:1` — `HIP_VISIBLE_DEVICES=0` in the container means the first passed-in GPU. Weights and
-logs stay on the mounted volumes, never on `/`.
+The `renderD*` entries are the render nodes of the two target GPUs — match them to your own
+cards (`ls /dev/dri`). Only those two nodes are passed in, so inside the container they appear
+as `cuda:0` and `cuda:1` — `HIP_VISIBLE_DEVICES=0` in the container means the first passed-in
+GPU. Weights and logs stay on the mounted volumes, never on `/`. If the minimal flag set hits
+a permission or memory error, add `--group-add render --cap-add=SYS_PTRACE --shm-size 64G`.
 
 Sanity check:
 
@@ -192,7 +128,6 @@ Sanity check:
 docker exec sglang_bringup python3 -c \
   "import torch, sgl_kernel; from importlib.metadata import version; \
    print(version('sglang'), torch.__version__, torch.version.hip, torch.cuda.device_count())"
-# 0.5.17.dev20260819+g574274660f 2.9.1+rocm7.2.0.git7e1940d4 7.2.26015-fc0010cf6a 2
 ```
 
 ### Serve — single GPU
@@ -208,19 +143,11 @@ docker exec -d sglang_bringup bash -lc \
 **Expected output** (`embed_rep_a.log`):
 
 ```
-Freezing GC in Scheduler process. gen0: 371->0, gen1: 962->0, gen2: 1324724->0
-Prefill batch, #new-seq: 3, #new-token: 28, #cached-token: 0, token usage: 0.00, cuda graph: False, input throughput (token/s): 27.83
 INFO:     "POST /v1/embeddings HTTP/1.1" 200 OK
 ```
 
-`GET /get_model_info` confirms the server really is in embedding mode on the right family:
-
-```json
-{"model_path":"google/embeddinggemma-300m","is_generation":false,"model_type":"gemma3_text",
- "architectures":["Gemma3TextModel"],
- "embedding":{"family":"embeddinggemma","task":"embed","execution":"encoder_only",
-              "attention":"bidirectional","pooling":"mean","normalize":true,"enabled":true}}
-```
+`GET /get_model_info` confirms the server is in embedding mode (`"is_generation":false`,
+`"task":"embed"`).
 
 ### Client / smoke command
 
@@ -239,19 +166,13 @@ docker exec -w /work/inference/sglang/embedding sglang_bringup \
 [cosine] +0.8061  <- SQLite is an embedded database.
 ```
 
-**Cosine sanity check passes:** query *"Which inference engines support AMD ROCm?"* scores the
-relevant document **+0.8720** above the irrelevant one **+0.8061**. Dimension is **768**, which
-is EmbeddingGemma's native width, and the server reports `normalize:true` with mean pooling.
-The absolute gap is narrow (0.066) because the client sends raw text; EmbeddingGemma is trained
-with `task:`-style prompt prefixes (`task: search result | query: …`) and the separation widens
-considerably when those are used. Ordering — the thing under test — is correct either way.
+The relevant document must rank above the irrelevant one; the absolute gap is narrow when the
+client sends raw text, but the ordering is what matters.
 
 ### Two concurrent single-GPU replicas (instead of TP=2)
 
-**TP=2 is pointless for a 300M model** — 0.63 GB of weights split across two MI355X leaves each
-GPU almost empty while adding an all-reduce on every forward pass, so it is strictly slower than
-one GPU. Throughput on a model this size comes from *replicas*, not tensor parallelism. The
-tested pattern is one independent server per GPU behind a load balancer:
+For a 300M model scale with replicas, not tensor parallelism — one independent server per GPU
+behind a load balancer:
 
 ```bash
 # replica A -> first GPU, port 8101
@@ -266,54 +187,34 @@ docker exec -d sglang_bringup bash -lc \
      --host 0.0.0.0 --port 8111 > $OUTPUT_DIR/inference_embedding_sglang/embed_rep_b.log 2>&1"
 ```
 
-Both replicas hit concurrently:
-
-```
-=== REPLICA A (port 8101, GPU 0) ===            === REPLICA B (port 8111, GPU 1) ===
-[health] server ready after 1.0s                [health] server ready after 1.0s
-[latency] 0.03s | n_vectors=3 dim=768           [latency] 0.03s | n_vectors=3 dim=768
-[cosine] +0.8720  <- vLLM supports AMD ROCm.    [cosine] +0.8720  <- vLLM supports AMD ROCm.
-[cosine] +0.8061  <- SQLite is an embedded db.  [cosine] +0.8061  <- SQLite is an embedded db.
-```
-
-`rocm-smi --showmemuse` sampled *during* the concurrent run — **both GPUs loaded**:
-
-```
-GPU[2]		: GPU Memory Allocated (VRAM%): 51
-GPU[3]		: GPU Memory Allocated (VRAM%): 51
-```
-
-Both replicas returned **bit-identical vectors** (same `vector0 head`, same cosines to 4 dp),
-which confirms the two GPUs are numerically consistent — a replica pool is safe to load-balance
-across without clients seeing drift. 51% VRAM each is `--mem-fraction-static 0.5`, not real
-demand; a 300M model needs far less, so lower it to pack more replicas per GPU.
+Hit both concurrently (`--port 8101` and `--port 8111`); the replicas return identical
+vectors, so a pool is safe to load-balance across. Each holds the
+`--mem-fraction-static 0.5` pool rather than real demand — lower it to pack more replicas per
+GPU.
 
 ### Container-route quirks
 
-- **`sleep infinity` + `docker exec -d`**, not `docker run` per server. Model load is ~15 s and
-  the AITER JIT warm-up is one-off per container; keeping one long-lived container makes the
-  second and later launches noticeably cheaper.
+- **`sleep infinity` + `docker exec -d`**, not `docker run` per server — the AITER JIT warm-up
+  is one-off per container, so one long-lived container reuses it.
 - **`HF_HUB_OFFLINE=1`** is set in the image env, so nothing is downloaded when the models are
   already in `$HF_HOME`. Unset it if you need a fresh pull — and point `HF_HOME` at a volume
   with space first, never at `/`.
 - **AITER is the default attention backend** (`attention_backend='aiter'`) and JIT-compiles
-  kernels on first use. Expect a burst of `[aiter] import [mha_batch_prefill_...] under
-  /sgl-workspace/aiter/aiter/jit/*.so` lines, then silence.
+  kernels on first use. Expect a burst of `[aiter] import [mha_batch_prefill_...]` lines.
 - **`not found tuned config in /tmp/aiter_configs/bf16_tuned_gemm.csv, will use default
-  config! using torch solution:0`** appears for every GEMM shape. Harmless — AITER has no
-  pre-tuned entry for EmbeddingGemma's small shapes and falls back to a torch GEMM. It costs
-  performance, not correctness, and is expected for a 300M model nobody has tuned for.
+  config!`** appears for every GEMM shape — harmless; AITER falls back to a torch GEMM.
 - **`Ignore import error when loading sglang.srt.models.inkling: No module named 'cutlass'`** —
   benign, an unrelated CUDA-only model class failing to register.
 - `FastAPIDeprecationWarning: ORJSONResponse is deprecated` — cosmetic, upstream.
 
 ## Install
 
-Python 3.12; `requirements_sglang_embedding.txt` is the tested set. The stack is identical
-to the other two SGLang folders, so one venv can be shared.
+Python 3.12; the shared [`../requirements.txt`](../requirements.txt) is the pinned set. The
+stack is identical to the other two SGLang leaves, so one venv can be shared.
 
-> **Note:** the pip route below is the *blocked* one, kept for the diagnosis. For a working
-> setup use the container route above.
+> **Note:** on ROCm the pip route below does not serve — it is documented so the limitation
+> is clear and so the client scripts have an environment. For a working ROCm setup use the
+> container route above.
 
 ### AMD / ROCm
 
@@ -323,13 +224,13 @@ source .env_sglang/bin/activate
 pip install -U pip
 pip install torch==2.11.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm7.2
 pip install --no-deps sglang==0.5.17
-pip install -r requirements_sglang_embedding.txt
+pip install -r ../requirements.txt
 python -c "import torch; print(torch.__version__, torch.version.hip)"   # 2.11.0+rocm7.2 7.2.26015
 ```
 
-`--no-deps` is mandatory: sglang 0.5.17 declares `cuda-python`, `flashinfer_python[cu13]`,
-`flash-attn-4`, `sglang-kernel==0.4.5` and PyPI `torch==2.11.0` (CUDA) as **base**
-dependencies — a plain install replaces ROCm torch with a CUDA wheel. If that happens:
+`--no-deps` is mandatory: sglang 0.5.17 declares CUDA packages and the PyPI CUDA
+`torch==2.11.0` as **base** dependencies, so a plain install replaces ROCm torch with a CUDA
+wheel. If that happens:
 
 ```bash
 pip install --force-reinstall --no-deps torch==2.11.0 --index-url https://download.pytorch.org/whl/rocm7.2
@@ -338,28 +239,13 @@ pip install --force-reinstall --no-deps torch==2.11.0 --index-url https://downlo
 Never `pip install flash-attn` (CUDA-only). Never `pip install aiter` — the PyPI package of
 that name is an unrelated async-iterator library, not AMD's AITER.
 
-The three SGLang leaves share one identical ~16 GB environment: build a single `.env_sglang`
-at the software root (`inference/sglang/`) and activate it from `llm/`, `embedding/` and
-`reranker/` rather than duplicating it per leaf. Create a real venv here instead if you want
-independent pins.
+The three SGLang leaves share one identical environment: build a single `.env_sglang` at the
+software root (`inference/sglang/`) and activate it from `llm/`, `embedding/` and `reranker/`.
 
-**Client verified independently of the engine.** Since no SGLang server can serve on this
-build, `inference_embedding_sglang.py` can be exercised against a minimal OpenAI-compatible
-stub to confirm the client half is correct (health wait → POST → vector parsing → cosine):
+This venv cannot serve on ROCm (`aiter` and `sgl_kernel` have no ROCm wheel), so use it only
+for the client; serve from the container.
 
-```
-[health] server ready after 0.0s
-[latency] 0.00s | n_vectors=3 dim=768
-[cosine] +1.0000  <- vLLM supports AMD ROCm.
-```
-
-Those numbers come from the stub, **not** from SGLang or EmbeddingGemma.
-
-A fail-loud import shim for the two missing native packages (`aiter`, `sgl_kernel`) is used
-purely to locate where the ROCm path stops; it raises on any real call, so it cannot serve
-traffic. See [`../llm/README.md`](../llm/README.md) for its full description.
-
-### NVIDIA / CUDA (upstream route — see the H100 section above for the validated variant)
+### NVIDIA / CUDA (see the H100 section above for the full variant)
 
 ```bash
 pip install --upgrade pip && pip install uv
@@ -430,61 +316,13 @@ Expected on a working build:
 [cosine] +0.1xxx  <- SQLite is an embedded database.
 ```
 
-## Single-GPU results (measured, gfx950)
+## Where the ROCm pip route stops
 
-```
-Attention backend not specified. Use aiter backend by default.
-    server_args=... is_embedding=True, attention_backend='aiter', chunked_prefill_size=-1
-Load weight end. elapsed=0.38 s, type=EmbeddingGemmaModel, avail mem=286.63 GB, mem usage=0.63 GB.
-KV Cache is allocated. dtype: torch.bfloat16, #tokens: 6247850, K size: 71.50 GB, V size: 71.50 GB
-Scheduler hit an exception: ...
-RuntimeError: ROCm shim: aiter.mha_batch_prefill_func was really called - needs a native ROCm build
-```
-
-| Metric | Value |
-|---|---|
-| Cold start to failure | **30 s** (server never reaches `/health`) |
-| Model-load VRAM | **0.63 GB** (EmbeddingGemma-300m, bf16) |
-| Weight-load time | 0.38 s |
-| KV cache allocated | 143 GB (6,247,850 tokens @ `mem-fraction-static 0.5`) |
-| Architecture resolved | **`EmbeddingGemmaModel`** — a dedicated SGLang implementation |
-| Endpoint reachable | **No** |
-| Real embedding vectors / dims | **None** — no forward pass completes |
-
-Note the failing frame differs from the LLM folder: this workload dies inside **AMD's own
-attention entry point**, `aiter.mha_batch_prefill_func`, during the warm-up prefill —
-i.e. SGLang routed to the AITER ROCm fast path exactly as intended, and that path has no
-installable implementation. It is the same root cause reached by a different door.
-
-## Multi-GPU (TP=2) results (measured, gfx950)
-
-**TP=2 is pointless for a 300M-parameter embedding model** — a 0.63 GB model on a 288 GB
-card gains nothing from sharding, and each request would pay a cross-GPU all-reduce. The
-correct scale-out is **two independent single-GPU replicas** behind a load balancer (command
-above). It was run anyway to prove the multi-GPU path:
-
-```
-[TP0] Setup Custom allreduce failed with ROCm shim: aiter.dist.device_communicators
-      .custom_all_reduce.CustomAllreduce ... specify --disable-custom-all-reduce explicitly.
-[TP1] (same)
-[TP0] Scheduler hit an exception ...
-Exception: Capture cuda graph failed:
-  ROCm shim: sgl_kernel.rotary_embedding was really called - needs a native ROCm build
-```
-
-`rocm-smi` sampled every 2 s during the TP=2 launch — **both GPUs held memory
-simultaneously** (bytes used; total 309,220,868,096 B = 288 GiB per card):
-
-```
-card0,309220868096,816869376  | card1,309220868096,816869376     # ~779 MiB each
-card0,309220868096,1550635008 | card1,309220868096,1550630912    # ~1.44 GiB each
-```
-
-So the two ranks really did initialise on both GPUs, SGLang selected AMD's
-`AiterCustomAllreduce` by default, and the run then hit the same missing-kernel wall.
-Cold start to failure: 25 s. On the pip route neither a replica nor a TP rank ever serves a
-request, so **no embedding vectors are produced at any topology** — use the container route
-above.
+Under pip on gfx950 the model loads and the warm-up prefill then dies inside AMD's attention
+entry point `aiter.mha_batch_prefill_func`, which has no installable implementation (no
+`aiter` ROCm wheel on PyPI), so the endpoint never reaches `/health`. TP=2 hits the same wall
+in `sgl_kernel.rotary_embedding`, and `--disable-custom-all-reduce` does not change it. Use
+the container route above.
 
 ## Arguments
 
@@ -501,68 +339,38 @@ Client (`inference_embedding_sglang.py`):
 | `--wait` | `600` | Seconds to wait for `/health` |
 | `--timeout` | `120` | Per-request timeout |
 
-Server flags that mattered:
+Server flags that matter:
 
-| Flag | Value used | Why |
+| Flag | Value | Why |
 |---|---|---|
 | `--model-path` | `google/embeddinggemma-300m` | Gated; needs `HF_TOKEN` |
 | `--is-embedding` | on | Correct for this model (and forbidden for the Qwen3 reranker) |
-| `--tp` | `1` / `2` | 1 is correct in production; 2 tested only to exercise multi-GPU |
-| `--mem-fraction-static` | `0.5` / `0.4` | KV/static pool fraction; auto-reduced at TP>1 |
+| `--tp` | `1` | Correct for a 300M model; scale with replicas, not TP |
+| `--mem-fraction-static` | `0.5` | KV/static pool fraction; auto-reduced at TP>1 |
 | `--attention-backend` | *unset* | **Leave unset on ROCm** — SGLang selects `aiter` |
 
 ## Output
 
-No artifacts are written by the server. Validation logs land wherever you redirect them, e.g.
-`$OUTPUT_DIR/inference_embedding_sglang/` (`embed_tp1.log`, `embed_tp2.log`,
-`vram_tp2_sample.log`). Weights live in `$HF_HOME`. The client
+No artifacts are written by the server. Logs land wherever you redirect them, e.g.
+`$OUTPUT_DIR/inference_embedding_sglang/`. Weights live in `$HF_HOME`. The client
 prints dimensions, a vector head, and cosine scores to stdout only.
 
-## Hardware support & evidence
+## Hardware support
 
 | | NVIDIA | AMD |
 |---|---|---|
-| Status | **Works** — H100 80GB, CUDA 13.0 (see the H100 section above) | **pip route blocked** — 2×MI355X (gfx950), ROCm 7.2.4; container route works |
-| Upstream position | Cookbook exists; **lists an NVIDIA GPU as a prerequisite** | Generic docs list EmbeddingGemma as supported; no ROCm recipe |
+| Status | **Works** — H100 80GB, CUDA 13.0, pip route (see the H100 section above) | **pip route blocked** — MI355X (gfx950), ROCm 7.2.4; container route works |
 | Install | `uv pip install sglang` | pip route unusable; needs `lmsysorg/sglang-rocm` or a hipcc source build |
-| Model class | `EmbeddingGemmaModel` | `EmbeddingGemmaModel` — **confirmed loading on gfx950** |
-
-Evidence:
-
-- `sglang` 0.5.17 PyPI metadata lists CUDA-only packages as **base** dependencies and has no
-  `srt_hip` extra; `sglang-kernel` 0.4.5 publishes only `manylinux2014_x86_64`/`aarch64`
-  CUDA wheels.
-- `sglang/srt/layers/rotary_embedding/base.py:69-75,116-117` imports `sgl_kernel` directly
-  under `if _is_hip:` — building AITER alone cannot substitute for it.
-- `repo.radeon.com/rocm/manylinux/rocm-rel-7.2/` publishes no `aiter` or `sglang` wheel.
-- `lmsysorg/sglang-rocm` publishes exact daily tags for this GPU family, e.g.
-  `v0.5.17-rocm720-mi35x-20260819` (23.4 GB compressed).
-- The run logs quoted above (`EmbeddingGemmaModel`, `aiter` backend auto-selected,
-  `aiter.mha_batch_prefill_func` frame, dual-card `rocm-smi` sample).
+| Model class | `EmbeddingGemmaModel` | `EmbeddingGemmaModel` — loads on gfx950 |
 
 ## Notes / quirks
 
-- **The warning is confirmed, with nuance.** The NVIDIA-only cookbook
-  prerequisite is real, but the failure is *not* EmbeddingGemma-specific: it is SGLang's
-  ROCm kernel packaging, which blocks every model equally. Once the ROCm container is used,
-  this model has a first-class SGLang implementation.
 - `chunked_prefill_size` is forced to `-1` (disabled) for embedding runs — expected.
-- **KV cache is huge by default** — 143 GB on a 288 GB card even for a 300M model. Set
-  `--mem-fraction-static` or `--max-total-tokens` explicitly when sharing the box.
+- **KV cache is large by default** even for a 300M model. Set `--mem-fraction-static` or
+  `--max-total-tokens` explicitly when sharing the box.
 - `Failed to import amdsmi` on every launch — harmless; install `amdsmi` for AMD telemetry.
 - `Ignoring corrupted tree cache file ... Permission denied` — shared HF cache owned by
   another user; cosmetic, the snapshot is still found locally.
 - **Ports** — 8101 is the SGLang embedding slot; 8100/8102 belong to sibling folders.
 - Re-export `HIP_VISIBLE_DEVICES` **and** `CUDA_VISIBLE_DEVICES` after activating the venv;
   never set `CUDA_VISIBLE_DEVICES` empty on ROCm.
-
-## Follow-ups
-
-1. The fullest AMD docker flag set for `lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819`
-   is `--device /dev/kfd`, `--device /dev/dri/renderD144`, `--device /dev/dri/renderD152`,
-   `--group-add video`, `--group-add render`, `--ipc=host`, `--cap-add=SYS_PTRACE`,
-   `--security-opt seccomp=unconfined`, `--shm-size 64G`. Allow >150 GB free on the
-   filesystem holding the image.
-2. Benchmark two single-GPU replicas: embedding requests/sec, tokens/sec, p50/p95, and
-   cosine agreement against the sentence-transformers reference — the numbers to collect
-   before standardising on SGLang for embeddings on AMD.

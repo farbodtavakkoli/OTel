@@ -49,8 +49,7 @@ The progression is not simply *small model -> larger model*. It is **shared foun
 - **SFT, CPT, DPO, GRPO, PPO, OSFT, LoRA, QLoRA, and DoRA** examples.
 - A local sample, pinned requirements, runnable entry point, and detailed README in
   every recipe folder.
-- Cross-platform paths for **AMD, NVIDIA, Apple, and Intel**, with extensive MI355X and
-  H100 execution evidence and preliminary Apple and Intel coverage.
+- Cross-platform paths for **AMD, NVIDIA, Apple, and Intel**.
 - Dataset cards, model cards, and benchmark results published alongside the
   [Hugging Face releases](https://huggingface.co/farbodtavakkoli).
 
@@ -74,10 +73,11 @@ source .env_deepspeed/bin/activate
 pip install -r requirements_*.txt
 ```
 
-Each recipe folder ships exactly one `requirements_<framework>.txt`, which is what the
-wildcard resolves to. Use the exact install and launch command in the selected folder's
-README. For AMD, install the documented ROCm PyTorch wheel first. Inference environments live at the
-stack root, such as `inference/vllm/.env_vllm`, and are shared by that stack's
+Each training recipe folder ships exactly one `requirements_<framework>.txt`, which is what
+the wildcard resolves to. Use the exact install and launch command in the selected folder's
+README. For AMD, install the documented ROCm PyTorch wheel first. Inference stacks instead
+keep one `requirements.txt` and one venv at the stack root, such as
+`inference/vllm/requirements.txt` and `inference/vllm/.env_vllm`, shared by that stack's
 workloads.
 
 ### Recommended starting points
@@ -113,7 +113,7 @@ workloads.
 |   |-- tei/                  # Embedding
 |   |-- ktransformers/        # CPU-GPU hybrid MoE serving
 |   `-- tensorrtllm/          # NVIDIA LLM serving
-`-- docs/                     # Hardware platform notes (MI355X and H100)
+`-- docs/                     # Hardware platform notes (MI355X and H100) plus project coverage
 ```
 
 Training is organized by modality because each modality/framework pair has its own
@@ -143,23 +143,17 @@ the workloads beneath it.
 | KTransformers | MoE | No | No | CPU-GPU expert offload on supported systems |
 | TensorRT-LLM | Yes | No | No | NVIDIA-specific optimized serving |
 
-## Extensive Hardware Verification and Cross-Platform Support
+## Hardware Support
 
-Taken together, the repository's recipes can train models and run inference on AMD,
-NVIDIA, Apple, and Intel hardware. Verification depth differs by platform. "Verified"
-means a repository path was executed with recorded commands, environment details,
-outputs, and results, rather than being listed solely from an upstream compatibility
-claim.
+| Platform | Status |
+|---|---|
+| **AMD Instinct MI355X** (ROCm 7.2) | Training and inference. TensorRT-LLM is NVIDIA-only; the KTransformers ROCm kernel path works but its serving layer is blocked by CUDA-pinned dependencies. |
+| **NVIDIA H100** (CUDA 13) | Training and inference. `training/llm/primus` is AMD-only by design. |
+| **Apple silicon** | Selected paths via MPS, Metal, MLX, and CPU backends — confirm support in the recipe README first. |
+| **Intel hardware** | Selected paths via XPU, SYCL, AMX, and CPU backends — support varies by framework and device. |
 
-| Platform | Training and inference coverage | Verification status |
-|---|---|---|
-| **AMD Instinct MI355X** | Training and inference verified on 8 x MI355X with ROCm 7.2.4 | **Extensive.** TensorRT-LLM is NVIDIA-only. The KTransformers ROCm kernel path was tested, but its serving layer is blocked by CUDA-pinned dependencies. |
-| **NVIDIA H100** | Every applicable training folder and inference stack was exercised on H100 | **Extensive.** Training used real 1-GPU smoke runs and measured 2-GPU sharding where applicable. Any 8-GPU figure is a projection unless a folder explicitly states otherwise. `training/llm/primus` is AMD-only by design. |
-| **Apple silicon** | Selected training and inference paths through compatible MPS, Metal, MLX, and CPU backends | **Preliminary.** Apple coverage is not yet comparable to the full AMD and NVIDIA verification. Confirm support in the selected recipe before use. |
-| **Intel hardware** | Selected training and inference paths through compatible XPU, SYCL, AMX, and CPU backends | **Preliminary.** Intel coverage is not yet comparable to the full AMD and NVIDIA verification. Support varies by framework and device. |
-
-Not every framework supports every platform. Hardware mentioned only from upstream
-documentation remains labeled as unverified in the per-folder README.
+Not every framework supports every platform. Confirm the exact device and framework
+combination in the recipe README.
 
 ### Scalable training deployment with ScalarLM
 
@@ -177,12 +171,8 @@ docker pull farbodatdocker/scalarlm:mi355-v1.6
 docker pull farbodatdocker/scalarlm:h100-v1.5
 ```
 
-The ScalarLM client path has been checked on MI355X and H100. Client-side verification
-does not by itself establish a complete server deployment or performance result. Consult
-the ScalarLM recipe and image notes for the current server-side status.
-
-Note that ScalarLM ships the training code (`ml/`) from the **client** with each job, so the
-client checkout and the server image must come from the same revision. The MI355X image
+ScalarLM ships the training code (`ml/`) from the **client** with each job, so the client
+checkout and the server image must come from the same revision. The MI355X image
 runbook, acceptance gates and source-revision label are in
 [`training/llm/scalarlm/DOCKER_IMAGE_MI355.md`](training/llm/scalarlm/DOCKER_IMAGE_MI355.md).
 
@@ -285,9 +275,10 @@ embeddings = model.encode(sentences, normalize_embeddings=True)
 |---|---|
 | [`docs/mi355x_training_notes.md`](docs/mi355x_training_notes.md) | ROCm training lessons, scaling, and failure modes |
 | [`docs/mi355x_inference_notes.md`](docs/mi355x_inference_notes.md) | ROCm serving lessons and FP8 findings |
-| [`docs/h100_training_notes.md`](docs/h100_training_notes.md) | CUDA training evidence and cross-framework lessons |
-| [`docs/h100_inference_notes.md`](docs/h100_inference_notes.md) | CUDA serving evidence and TensorRT-LLM/SGLang findings |
-| Each recipe README (`readme_<framework>.md` in the recipe folder) | Exact installation, smoke and full runs, arguments, outputs, evidence, and platform status |
+| [`docs/h100_training_notes.md`](docs/h100_training_notes.md) | CUDA training lessons and the ROCm→CUDA reversals |
+| [`docs/h100_inference_notes.md`](docs/h100_inference_notes.md) | CUDA serving lessons and TensorRT-LLM/SGLang findings |
+| [`docs/OTel-2.0-blogs.md`](docs/OTel-2.0-blogs.md) · [`docs/OTel-1.0-media-coverage.md`](docs/OTel-1.0-media-coverage.md) | Organizational and independent coverage of the project |
+| Each recipe README (`readme_<framework>.md` under `training/`, `README.md` under `inference/`) | Exact installation, smoke and full runs, arguments, outputs, and platform status |
 
 ## Responsible Use and Limitations
 

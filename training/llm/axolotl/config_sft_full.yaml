@@ -1,4 +1,4 @@
-# Axolotl - FULL-parameter SFT on chat JSONL. Single node, 8x H100 80GB, ZeRO-3.
+# Axolotl - full-parameter SFT on chat JSONL. Single node, 8x H100 80GB, ZeRO-3.
 # Launch: python3 train_llm_axolotl.py --config config_sft_full.yaml --num-processes 8
 # Full FT = no `adapter:` and no `load_in_*bit:` keys at all.
 

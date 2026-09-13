@@ -1,6 +1,5 @@
 # LLaMA-Factory - QLoRA SFT (on-the-fly 4-bit quantization + LoRA) on chat JSONL.
 # Launch: python3 train_llm_llamafactory.py --config config_sft_qlora.yaml
-# Mirrors upstream examples/train_qlora/qwen3_lora_sft_otfq.yaml.
 # On 8x H100 prefer plain LoRA; use this only when the bf16 base does not fit.
 
 ### model

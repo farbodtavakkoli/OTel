@@ -1,16 +1,11 @@
 # Primus post-training config -- LoRA, Qwen3-32B, MI355X (gfx950).
-#
-# Upstream reference: TP 1, GBS 32, MBS 4, seq_length 8192 -- the largest
-# micro-batch of the four reference configs, since gfx950 has the most headroom.
 # MI350X shares this config (both are gfx950).
-#
-# VERIFY against examples/megatron_bridge/configs/MI355X/ in your Primus checkout.
 
 work_group: local
 user_name: local
 exp_name: qwen3_32b_lora_posttrain
 # REQUIRED by primus/core/launcher/parser.py::parse_meta_info -- omitting it aborts with
-# "AssertionError: Failed to find key(workspace)". Verified on MI355X, ROCm 7.2.4.
+# "AssertionError: Failed to find key(workspace)".
 workspace: ${PRIMUS_WORKSPACE:./output}
 
 modules:
@@ -33,8 +28,7 @@ modules:
       pipeline_model_parallel_size: 1
       context_parallel_size: 1
       # MUST be false when tensor_model_parallel_size is 1 -- Megatron raises
-      # "Cannot use sequence parallelism without tensor parallelism". All upstream
-      # reference configs set this false. Verified on MI355X, ROCm 7.2.4.
+      # "Cannot use sequence parallelism without tensor parallelism".
       sequence_parallel: false
 
       train_iters: 500

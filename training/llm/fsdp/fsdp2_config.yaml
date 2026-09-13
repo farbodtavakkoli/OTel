@@ -1,9 +1,6 @@
 # accelerate config for PyTorch-native FSDP2 (`fully_shard`) on a single 8-GPU node.
 # Used as: accelerate launch --config_file fsdp2_config.yaml train_llm_fsdp.py ...
-#
-# Portable across NVIDIA CUDA, AMD ROCm and Intel XPU: accelerate picks the
-# available accelerator and its collective backend (nccl / rccl / xccl); nothing
-# in this file is vendor-specific.
+# Nothing in this file is vendor-specific; accelerate picks the accelerator and backend.
 compute_environment: LOCAL_MACHINE
 debug: false
 distributed_type: FSDP

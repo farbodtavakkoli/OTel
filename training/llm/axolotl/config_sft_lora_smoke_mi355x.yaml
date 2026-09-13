@@ -1,11 +1,7 @@
 # MI355X (ROCm 7.2) smoke variant of config_sft_lora.yaml — single GPU, ~5 steps.
-# Deltas vs config_sft_lora.yaml, all required or prudent on ROCm / for a smoke run:
-#   base_model     Qwen3-8B -> Qwen3-0.6B   (same family, small; smoke only)
-#   attn_implementation flash_attention_2 -> sdpa   (flash-attn not installed on ROCm)
-#   tf32           true -> false            (tf32 asserts/raises on ROCm)
-#   sample_packing true -> false            (pointless at 10 rows / 5 steps)
-#   sequence_len 4096 -> 512, micro_batch_size 4 -> 1, grad_accum 4 -> 1
-#   val_set_size 0.02 -> 0 (10-row sample), max_steps: 5 added
+# The two ROCm-required deltas vs config_sft_lora.yaml are `attn_implementation: sdpa`
+# (flash-attn has no ROCm build) and `tf32: false` (tf32 raises on ROCm); the rest is
+# smoke-run sizing.
 # Launch: python3 train_llm_axolotl.py --config config_sft_lora_smoke_mi355x.yaml --num-processes 1
 
 ### model

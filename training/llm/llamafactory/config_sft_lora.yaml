@@ -1,7 +1,5 @@
 # LLaMA-Factory - LoRA SFT on chat JSONL. Single node, 8x H100 80GB.
 # Launch: python3 train_llm_llamafactory.py --config config_sft_lora.yaml
-# Key names follow upstream examples/train_lora/qwen3_lora_sft.yaml and the
-# hparams dataclasses in src/llamafactory/hparams/.
 
 ### model
 model_name_or_path: Qwen/Qwen3-8B
@@ -22,7 +20,7 @@ lora_target: all                # all linear modules
 # `dataset` names must exist in <dataset_dir>/dataset_info.json (see data/dataset_info.json).
 dataset: otel_chat_sft
 dataset_dir: ./data
-template: qwen3_nothink         # MUST match the model; same template at inference time
+template: qwen3_nothink         # must match the model; same template at inference time
 cutoff_len: 4096
 overwrite_cache: true
 preprocessing_num_workers: 16

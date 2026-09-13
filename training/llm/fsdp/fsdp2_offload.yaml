@@ -1,9 +1,11 @@
-# accelerate config for PyTorch-native FSDP2 (`fully_shard`) on a single 8-GPU node.
-# Used as: accelerate launch --config_file fsdp2_config.yaml train_llm_fsdp.py ...
+# accelerate config for PyTorch-native FSDP2 (`fully_shard`) — the low-HBM variant of
+# fsdp2_config.yaml: reshard_after_forward: false (~ZeRO-2) + offload_params: true.
+# Used as: accelerate launch --config_file fsdp2_offload.yaml train_llm_fsdp.py ...
 #
-# Portable across NVIDIA CUDA, AMD ROCm and Intel XPU: accelerate picks the
-# available accelerator and its collective backend (nccl / rccl / xccl); nothing
-# in this file is vendor-specific.
+# Use this when a model's forward breaks under reshard_after_forward: true, or when full
+# fine-tuning does not fit in HBM (on one 80GB card an 8B full FT OOMs in the optimizer
+# step without offload). See readme_fsdp.md "Platform notes".
+# Nothing in this file is vendor-specific; accelerate picks the accelerator and backend.
 compute_environment: LOCAL_MACHINE
 debug: false
 distributed_type: FSDP

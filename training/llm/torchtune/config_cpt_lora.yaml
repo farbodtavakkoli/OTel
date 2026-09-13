@@ -9,8 +9,7 @@
 # Launch:
 #   python train_llm_torchtune.py --nproc-per-node 8
 #
-# Upstream development wound down in 2025. This folder is a CPT example against
-# the last stable API (torchtune 0.6), not a long-term target.
+# Targets the torchtune 0.6 API.
 
 output_dir: ./outputs/torchtune_cpt_lora
 
@@ -69,9 +68,8 @@ lr_scheduler:
   _component_: torchtune.training.lr_schedulers.get_cosine_schedule_with_warmup
   num_warmup_steps: 20
 
-# NOTE: LinearCrossEntropyLoss is a post-0.6 (main-branch) API and does not exist
-# in torchtune 0.6.1 — it fails with InstantiationError on any platform.
-# CEWithChunkedOutputLoss is the 0.6.1 CE loss. (Found during MI355X testing.)
+# Do not swap in LinearCrossEntropyLoss: it is a post-0.6 API and raises
+# InstantiationError on 0.6.1. CEWithChunkedOutputLoss is the 0.6.1 CE loss.
 loss:
   _component_: torchtune.modules.loss.CEWithChunkedOutputLoss
 

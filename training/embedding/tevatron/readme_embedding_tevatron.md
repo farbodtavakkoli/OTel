@@ -12,43 +12,10 @@ It is a **retrieval-first** trainer, not a general embedding trainer: one contra
 objective (InfoNCE over `train_group_size` passages per query, optionally gathered across
 ranks), no MTEB/STS evaluation, no Matryoshka, no multi-task loss zoo.
 
-**What it adds over the sentence-transformers sibling (`../sentence_transformers`):**
-
-| Capability | `../sentence_transformers` | `training/embedding/tevatron` |
-|---|---|---|
-| GradCache-style large batches | `CachedMultipleNegativesRankingLoss` | `--grad_cache` + `--gc_q_chunk_size` / `--gc_p_chunk_size` |
-| Cross-device negative gather | `gather_across_devices=True` | automatic under DDP (`DistributedContrastiveLoss`) |
-| LoRA on a decoder-LM retriever | not wired | `--lora --lora_target_modules ...` (RepLLaMA recipe) |
-| Sharded multi-GPU corpus encoding | not provided | `driver.encode` + `--dataset_number_of_shards/--dataset_shard_index` |
-| Flat-index search → TREC run | not provided | `driver.search --save_text --save_ranking_to` |
-| Evaluation during training | IR + MTEB evaluators, best-checkpoint reload | **none** — train only |
-| Pooling choices | ST module config | `--pooling cls\|mean\|eos\|last` |
-
 Use this folder when you want the **retrieval pipeline** (train → encode a corpus in
 shards → search → run file) or a **LoRA decoder-LM retriever**. Use
 `../sentence_transformers` when you want a general-purpose embedding model with
 evaluation baked in.
-
-### GradCache vs `CachedMultipleNegativesRankingLoss` — the honest take
-
-They are the **same trick**: forward without grad in chunks, cache the representations,
-compute the loss on the full similarity matrix, then re-forward chunk-by-chunk to get the
-real gradients. sentence-transformers'
-`CachedMultipleNegativesRankingLoss` is a reimplementation of Luyu Gao's GradCache; Tevatron
-calls the original `grad_cache` package. The memory/quality behaviour is equivalent, so
-**"Tevatron gives you GradCache and the sibling folder does not" is false** for a current
-sentence-transformers install.
-
-Two differences that are real but narrow:
-
-- Tevatron's GradCache path is a **Trainer subclass** (`GradCacheTrainer` swaps
-  `training_step`), so it composes with `--lora`, DeepSpeed, and its own DDP gather without
-  a loss-class change. In sentence-transformers you swap the loss class instead.
-- Tevatron exposes **separate query and passage chunk sizes** (`--gc_q_chunk_size`,
-  `--gc_p_chunk_size`), which matters when queries are short and passages are long — the
-  cached ST loss uses one `mini_batch_size` for both.
-
-Neither is a capability gap. See **Summary** at the bottom.
 
 ## Install
 
@@ -72,7 +39,7 @@ export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
 Tevatron on PyPI (`pip install tevatron`) is **0.1.0 — the 2021 v1 package**. It has no
 `tevatron.retriever` module and no `--grad_cache` flag. Install from git.
 
-### AMD (ROCm) — the verified route
+### AMD (ROCm)
 
 Install the ROCm torch wheel **first**, then everything else, then re-check that pip did
 not swap in a CUDA wheel:
@@ -92,10 +59,9 @@ python -c "import torch; print(torch.__version__, torch.version.hip, torch.versi
 # 2.11.0+rocm7.2 7.2.26015 None      <- hip set, cuda None
 ```
 
-`--no-deps` on the Tevatron install is deliberate: its `setup.py` asks for
-`transformers>=4.10.0, datasets>=1.1.3`, which would let pip resolve the whole stack away
-from the pinned versions. Nothing else in Tevatron's dependency set is missing from
-`requirements_embedding_tevatron.txt`.
+`--no-deps` on the Tevatron install is required: its `setup.py` asks for
+`transformers>=4.10.0, datasets>=1.1.3`, which would resolve the whole stack away from the
+pinned versions.
 
 If pip ever replaces torch with the CUDA build (it can, depending on resolution order):
 
@@ -108,27 +74,32 @@ pip install --force-reinstall --no-deps torch==2.11.0 \
 `ModelArguments.attn_implementation` **defaults to `flash_attention_2`**, so you must pass
 `--attn_implementation sdpa` on every command (the launcher does this for you).
 
-### NVIDIA (CUDA) — verified on H100 (see the H100 section below)
+### NVIDIA (CUDA)
 
 Same, minus the ROCm index. On a CUDA 13 box `pip install torch==2.11.0` resolves a
 **native CUDA 13 wheel** (`2.11.0+cu130`) straight from PyPI — no `--index-url` needed:
 
 ```bash
-export PIP_CACHE_DIR=/dev/shm/pipcache
-python3 -m venv /dev/shm/.env_tevatron
-source /dev/shm/.env_tevatron/bin/activate
+export PIP_CACHE_DIR=$DATA_DIR/pip_cache
+python3 -m venv $DATA_DIR/envs/.env_tevatron
+source $DATA_DIR/envs/.env_tevatron/bin/activate
 pip install -U pip setuptools wheel
 pip install torch==2.11.0 numpy          # -> 2.11.0+cu130, nvidia-*-cu13 deps
 pip install -r requirements_embedding_tevatron.txt   # minus torch/numpy already satisfied
-pip install <local GradCache clone>      # git clone https://github.com/luyug/GradCache.git
-pip install --no-deps <local tevatron clone>   # git clone https://github.com/texttron/tevatron.git @ dd06310
+# GradCache + Tevatron: either the git+https form above, or clone and install locally
+git clone --depth 1 https://github.com/luyug/GradCache.git   && pip install ./GradCache
+git clone --depth 1 https://github.com/texttron/tevatron.git && pip install --no-deps ./tevatron
 python -c "import torch; print(torch.__version__, torch.version.cuda)"   # 2.11.0+cu130 13.0
 ```
 
-`flash_attention_2` is *usable* on H100 for decoder-LMs, but **`BAAI/bge-small-en-v1.5` is
-a BERT encoder** — transformers' FA2 path needs the `flash-attn` package and gives BERT no
-benefit, so the single-GPU smoke uses `--attn_implementation sdpa` (same as ROCm). Reserve
-`flash_attention_2` + `pip install flash-attn` for the Qwen `--pooling eos` LoRA recipe.
+Use `--attn_implementation sdpa` for the BERT backbones (transformers' FA2 path needs the
+`flash-attn` package and gives BERT nothing). Reserve `flash_attention_2` +
+`pip install flash-attn` for the Qwen `--pooling eos` LoRA recipe.
+
+A BERT backbone logs `embeddings.position_ids UNEXPECTED` at load — benign. If Hub egress
+is blocked, `google/embeddinggemma-300m` is a drop-in fallback with `--pooling mean`; with
+a populated `HF_HOME` set `HF_HUB_OFFLINE=1`. Point `HF_DATASETS_CACHE` at tmpfs
+(`/dev/shm/dscache_tevatron`) if the datasets cache lands on a slow or shared mount.
 
 ## Environment & secrets
 
@@ -148,16 +119,14 @@ export HIP_VISIBLE_DEVICES=2,3 CUDA_VISIBLE_DEVICES=2,3
 
 ## Data
 
-Tevatron's `TrainDataset` accepts two formats. Verified against the current reader
-(`src/tevatron/retriever/dataset.py`, commit `dd06310`):
+Tevatron's `TrainDataset` accepts two formats:
 
 1. **Self-contained (used here)** — `query` + inline `positive_passages` /
-   `negative_passages`, each a `{docid, text}` object with an optional `title`. The reader
-   branches on `if 'positive_passages' in group:` and needs no corpus file.
+   `negative_passages`, each a `{docid, text}` object with an optional `title`. Needs no
+   corpus file.
 2. **Corpus-referencing** — `query_id`/`query_text` + `positive_document_ids` /
    `negative_document_ids`, resolved against a separate `--corpus_path` JSONL of
-   `{docid, text}`. This is what the upstream README documents; it exists for the
-   multi-modal datasets.
+   `{docid, text}`.
 
 `convert_data.py` emits format 1 from the repo's triplet schema:
 
@@ -166,6 +135,23 @@ python convert_data.py \
   --input_file ../sentence_transformers/OTel_embedding_sample_100.jsonl \
   --output_file OTel_tevatron_sample_100.jsonl
 ```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--input_file` | `../sentence_transformers/OTel_embedding_sample_100.jsonl` | Source JSONL with `anchor` / `positive` / `negative_1..N` columns |
+| `--output_file` | `OTel_tevatron_sample_100.jsonl` | Destination JSONL in Tevatron format |
+| `--anchor_field` | `anchor` | Column holding the query text |
+| `--positive_field` | `positive` | Column holding the relevant passage |
+| `--negative_prefix` | `negative_` | Prefix of the hard-negative columns |
+| `--max_negatives` | `5` | Keep at most this many hard negatives per row |
+| `--limit` | `None` | Convert only the first N rows |
+| `--docid_prefix` | `otel` | Prefix for the generated `docid` values |
+
+Two conversion rules matter when you point it at your own data. Negatives are taken in
+**numeric** suffix order — `negative_2` before `negative_10`, not lexicographic — and empty
+ones are dropped, so a row can yield fewer than `--max_negatives` passages. A row whose
+`anchor` or `positive` is missing or blank is skipped entirely; the closing line prints the
+written and skipped counts, so check it against your source row count.
 
 Shipped sample: **`OTel_tevatron_sample_100.jsonl`** (100 rows, 296 KB) — the default
 `--dataset_path`. One row:
@@ -205,8 +191,7 @@ python train_embedding_tevatron.py --devices 2,3 \
   --output_dir $OUTPUT_DIR/train_embedding_tevatron/smoke_2gpu --overwrite
 ```
 
-GradCache — the reason this folder exists. `--batch_size` is no longer bounded by
-activation memory:
+GradCache + LoRA on a decoder LM:
 
 ```bash
 python train_embedding_tevatron.py --devices 2,3 \
@@ -233,8 +218,8 @@ tail -f train_embedding_tevatron.log
 
 ### After training: encode and search
 
-Not wrapped by the launcher — these are the upstream drivers, and they are the part
-`../sentence_transformers` has no answer for. Corpus encoding shards across GPUs:
+Not wrapped by the launcher — these are the upstream drivers. Corpus encoding shards
+across GPUs:
 
 ```bash
 # queries
@@ -322,185 +307,55 @@ There is **no evaluation output** — no IR metrics, no MTEB, no best-checkpoint
 Quality is measured by running the encode → search drivers and scoring the run file
 yourself (e.g. with `pytrec_eval`).
 
-## Hardware support & evidence
+## Hardware support
 
-- **NVIDIA:** upstream's target. **Tested** — 1× H100 80GB HBM3 (Hopper cc9.0), CUDA 13.0,
-  driver 580.173.02, Python 3.12.3, `torch==2.11.0+cu130` (native CUDA-13 PyPI wheel),
-  `transformers==5.5.0`, `datasets==4.3.0`, `accelerate==1.14.0`, `peft==0.20.0`,
-  `GradCache==0.1.0`, `faiss-cpu==1.13.0`, Tevatron at git `dd06310`. Single-GPU smoke
-  verified (see the H100 section below).
-- **Other hardware (upstream claims — not verified here):** Google **TPU** — Tevatron's
-  paper and docs claim TPU training via the JAX/Flax path (`tevax` /
-  `tevatron.driver.jax_train`, GradCache included), from the v1 era. The v2
-  `tevatron.retriever` PyTorch path used here claims nothing beyond NVIDIA/AMD.
-- **AMD:** **tested** — 1× and 2× MI355X (gfx950, 288 GB), ROCm 7.2.4, Python 3.12.3,
-  `torch==2.11.0+rocm7.2`, `transformers==5.5.0`, `datasets==4.3.0`,
-  `accelerate==1.14.0`, `peft==0.20.0`, `GradCache==0.1.0`, `faiss-cpu==1.13.0`,
-  Tevatron at git `dd06310`.
+| | NVIDIA | AMD |
+|---|---|---|
+| Verified | H100 80GB (Hopper cc 9.0), CUDA 13.0, 1 GPU | MI355X 288GB (gfx950), ROCm 7.2.4, 1 and 2 GPUs |
+| PyTorch | `torch==2.11.0` resolves to `+cu130` on plain PyPI | `torch==2.11.0` from `download.pytorch.org/whl/rocm7.2` |
+| Attention | `--attn_implementation sdpa` for BERT encoders; `flash_attention_2` is usable for decoder-LMs with `pip install flash-attn` | `--attn_implementation sdpa` only |
+| Exercised | single-GPU SFT smoke | SFT, GradCache, LoRA, and 2-GPU DDP with the cross-rank negative gather |
 
-### Platform notes — AMD Instinct MI355X (ROCm 7.2)
+**No Tevatron source changes are needed on either vendor** — the only argument changes are
+`--attn_implementation sdpa` and dropping `--overwrite_output_dir` (use the launcher's
+`--overwrite`).
 
-This path works on MI355X with two argument changes (`--attn_implementation sdpa`, and drop
-`--overwrite_output_dir`). No Tevatron source changes. GradCache, LoRA, DDP with the
-cross-rank negative gather, and the model save all behave as documented.
+### Expected output
 
-Note on the test node: GPUs 2 and 3 were **shared with a resident vLLM/SGLang tenant** holding
-~213 GiB of each 288 GB card, so the memory budget in every number below is **~74 GiB per
-GPU**, not 288 GB. That makes the OOM boundary below tighter than it would be on an idle
-card — the *shape* of the result (flat vs linear memory) is what matters.
-
-**1) Single GPU** — `BAAI/bge-small-en-v1.5`, shipped sample, `--batch_size 8
---train_group_size 6`, 13 steps:
-
-```
-{'loss': '1.093', 'grad_norm': '28', 'learning_rate': '5e-06', 'epoch': '0.1538'}
-{'loss': '0.336', 'grad_norm': '15.25', 'learning_rate': '8.182e-06', 'epoch': '0.3846'}
-{'train_runtime': '6.195', 'train_samples_per_second': '16.14', 'train_loss': '0.9597', 'epoch': '1'}
-INFO - training/embedding/tevatron - training finished; encoder written to .../launcher_1gpu
-```
-
-`model.safetensors` (66.7 MB) + `config.json` + tokenizer written; `checkpoint-13/` from
-`--save_strategy epoch`. The launcher reproduces the raw-CLI run's `train_loss` exactly.
-
-**2) Two GPUs** — same model, `torchrun --nproc_per_node=2 --master_port=29820`, 8 epochs,
-56 steps: `train_loss 0.9167`, `92.2 samples/s`, rc=0.
-
-**3) GradCache** — `Qwen/Qwen3-0.6B` + LoRA, `--pooling eos --append_eos_token`,
-`--train_group_size 8`, `--passage_max_len 192`, single GPU, 1 epoch,
-`--skip_memory_metrics False` for peak-VRAM numbers:
-
-| `--batch_size` | in-batch passages | no GradCache | with GradCache (q=8, p=16) |
-|---|---|---|---|
-| 8 | 64 | 31.27 GiB, 12.0 s | 7.65 GiB, 22.4 s |
-| 16 | 128 | 62.49 GiB, 10.4 s | 7.65 GiB, 20.7 s |
-| 32 | 256 | **OOM** (`torch.OutOfMemoryError`) | 7.65 GiB, 23.6 s |
-| 64 | 512 | **OOM** | 7.65 GiB, 24.6 s |
-| 128 | 1024 | **OOM** | 7.59 GiB, 22.4 s |
-
-This is the headline result: **without GradCache the peak scales linearly with batch and
-dies at 32; with GradCache it is flat at ~7.6 GiB from 8 all the way to 128.** GradCache
-unlocked **8× the batch size (16 → 128) at 12% of the memory**, i.e. 1024 in-batch
-passages per query instead of 128. The cost is ~2× wall-clock per step, exactly the
-expected double-forward penalty.
-
-**4) GradCache + LoRA + 2-GPU DDP together** — `--batch_size 32 --train_group_size 8`,
-30 epochs, 60 steps. Under DDP the loss is `DistributedContrastiveLoss`, so the candidate
-pool is gathered across both ranks: 32 × 2 = **64 queries and 512 passages per update**,
-every query scored against all 512.
-
-```
-{'loss': '5.35',  'grad_norm': '1.959', 'learning_rate': '4.259e-05', 'epoch': '19'}
-{'loss': '5.231', 'grad_norm': '2.39',  'learning_rate': '2.407e-05', 'epoch': '24'}
-{'loss': '5.144', 'grad_norm': '1.928', 'learning_rate': '1.852e-06', 'epoch': '30'}
-{'train_runtime': '285.9', 'train_samples_per_second': '10.49', 'train_loss': '5.541', 'epoch': '30'}
-```
-
-Monotone decreasing, `train_mem_gpu_peaked_delta` 7.65 GiB per rank.
-
-`rocm-smi` sampled every 4 s from outside the run (`GPU[2],GPU[3]` busy % and total VRAM
-used, which includes the co-tenant's ~213 GiB baseline):
-
-```
-  0,0  | vram_used_GiB 212.8 213.6     <- before launch (co-tenant only)
- 95,94 | vram_used_GiB 226.0 226.8
- 91,96 | vram_used_GiB 226.0 226.8
- 99,96 | vram_used_GiB 226.0 227.0
-  0,0  | vram_used_GiB 212.8 213.6     <- after exit
-```
-
-Both assigned GPUs sit at **91–99% busy** for the whole run; the delta over the idle
-baseline is ~13.2 GiB per card, matching the 7.65 GiB peak plus allocator reserve.
-
-### Platform notes — NVIDIA H100 80GB (CUDA 13.0)
-
-This path works on H100 with the same one argument change as ROCm (`--attn_implementation
-sdpa` for the BERT backbone). Single-GPU smoke only; multi-GPU was not exercised (the node
-was co-tenanted — see below). Ran on one GPU (`CUDA_VISIBLE_DEVICES=4`) of a shared 8×H100 node.
-
-**Install that worked** (venv on tmpfs, for a host with a tight root filesystem):
-
-```bash
-export PIP_CACHE_DIR=/dev/shm/pipcache HF_HOME=/path/to/hf_cache
-python3 -m venv /dev/shm/.env_tevatron && source /dev/shm/.env_tevatron/bin/activate
-pip install -U pip setuptools wheel
-pip install torch==2.11.0 numpy          # PyPI ships a cu130 wheel for the 2.11.0 pin — no --index-url
-pip install transformers==5.5.0 datasets==4.3.0 accelerate==1.14.0 peft==0.20.0 \
-            faiss-cpu==1.13.0 pillow==12.3.0 python-dotenv==1.2.2 tensorboard==2.21.0
-# GradCache + Tevatron: git clone each, then install from the local path
-git clone --depth 1 https://github.com/luyug/GradCache.git   && pip install ./GradCache
-git clone --depth 1 https://github.com/texttron/tevatron.git && pip install --no-deps ./tevatron   # -> dd06310
-python -c "import torch;print(torch.__version__,torch.version.cuda,torch.cuda.get_device_name(0))"
-# 2.11.0+cu130 13.0 NVIDIA H100 80GB HBM3    <- cuda set, hip None; not clobbered by the git installs
-```
-
-Key versions: torch **2.11.0+cu130** / CUDA **13.0**, transformers 5.5.0, datasets 4.3.0,
-accelerate 1.14.0, peft 0.20.0, GradCache 0.1.0, Tevatron @ dd06310, driver **580.173.02**.
-No torch-clobber occurred — the two git installs left `2.11.0+cu130` intact (re-verified).
-
-**Model:** the documented default `BAAI/bge-small-en-v1.5` was **not** in the shared cache, so
-it was downloaded once (~130 MB; egress may need an outbound proxy unset) into `HF_HOME`. It is a
-BERT encoder (33.4 M params) — the `embeddings.position_ids UNEXPECTED` load note is benign.
-`google/embeddinggemma-300m` is cached and is a drop-in fallback (`--pooling mean`) if egress
-is unavailable.
-
-**Exact smoke command** (the launcher picks plain `python` for a single GPU, so no torchrun):
-
-```bash
-export HF_HOME=/path/to/hf_cache HF_HUB_OFFLINE=1 \
-       HF_DATASETS_CACHE=/dev/shm/dscache_tevatron CUDA_VISIBLE_DEVICES=4
-python train_embedding_tevatron.py \
-  --devices 4 --model_name_or_path BAAI/bge-small-en-v1.5 \
-  --attn_implementation sdpa \
-  --batch_size 8 --train_group_size 6 --epochs 4 \
-  --output_dir $OUTPUT_DIR/tevatron/smoke_1gpu --overwrite
-```
-
-100 rows / (8 per-device × 1 GPU × 1 accum) = **13 steps/epoch × 4 = 52 optimizer steps**
-(`drop_last` keeps 96 rows). **Expected output:**
+Single GPU, `BAAI/bge-small-en-v1.5`, shipped 100-row sample, `--batch_size 8
+--train_group_size 6 --epochs 4`. `drop_last` keeps 96 rows, so 96/8 = **13 steps/epoch x 4
+= 52 optimizer steps**:
 
 ```text
 {'loss': '0.4837', 'grad_norm': '19.38', 'learning_rate': '0', 'epoch': '0.07692'}
-...
 {'loss': '0.3523', 'grad_norm': '15.56', 'learning_rate': '4.348e-07', 'epoch': '3.923'}
 {'loss': '0.0755', 'grad_norm': '5.906', 'learning_rate': '2.174e-07', 'epoch': '4'}
-{'train_runtime': '12.27', 'train_samples_per_second': '32.6', 'train_steps_per_second': '4.238', 'train_loss': '0.8935', 'epoch': '4'}
+{'train_runtime': '12.27', 'train_samples_per_second': '32.6', 'train_loss': '0.8935', 'epoch': '4'}
+INFO - training/embedding/tevatron - training finished; encoder written to ...
 ```
 
-Per-step loss is noisy on 100 rows / 8-query batches (identical behaviour to the MI355X run);
-the trend is unambiguously **decreasing** — epoch-mean loss 0.948 → 0.916 → 0.893 → 0.826,
-per-epoch min 0.350 → 0.075, final `train_loss 0.8935`, rc=0. Final encoder saved and reloads
-via `AutoModel.from_pretrained` (`model.safetensors` 66.7 MB, matching the ROCm artifact).
+Per-step loss is noisy on 100 rows with 8-query batches; read the epoch means. The final
+encoder reloads via `AutoModel.from_pretrained`; `--save_strategy epoch` also writes
+`checkpoint-*` directories.
 
-GPU residency, sampled by PID from **inside** the run (`nvidia-smi --query-compute-apps`):
+### GradCache
 
-```text
-util=14 % mem=3267 MiB | PID_on_GPU: <gpu-uuid>, <pid>, python, 3120 MiB
-util=22 % mem=3291 MiB | PID_on_GPU: <gpu-uuid>, <pid>, python, 3282 MiB
-```
+Without `--grad_cache`, activation memory scales linearly with `--batch_size`: for
+`Qwen/Qwen3-0.6B` + LoRA at `--train_group_size 8 --passage_max_len 192` it OOMs on an
+80 GB card above `--batch_size 16`. **Turn `--grad_cache` on whenever the per-device batch
+exceeds 16**; memory then stays flat regardless of batch size, at the cost of a second
+forward pass per step.
 
-The training PID sits on the target GPU's UUID at ~3.3 GB (a 33 M-param BERT on 96 rows is
-light and finishes in ~12 s, so utilisation stays modest). Co-tenant GPUs are never touched.
-Epoch checkpoints are ~191 MB each with `--save_strategy epoch`.
+### Multi-GPU
 
-**Quirks / deviations from the MI355X recipe:**
-- `torch==2.11.0` needs **no** `--index-url` on H100 — the plain PyPI wheel is already
-  `+cu130`. (The MI355X route needs `--index-url .../rocm7.2`.)
-- Same `--attn_implementation sdpa` as ROCm, but for a different reason: not a flash-attn gap,
-  just that the BERT backbone gains nothing from FA2. `flash-attn` was **not** installed.
-- Drop the ROCm `HIP_VISIBLE_DEVICES` var; plain `CUDA_VISIBLE_DEVICES=4` is enough (the
-  launcher sets both anyway). tf32: torch default `allow_tf32=False`; bf16 (`--bf16`) is on and
-  real bf16 matmul was confirmed on-GPU.
-- VRAM is 80 GB here vs 288 GB on MI355X — irrelevant at this model size (peaked ~3.3 GB); it
-  matters only for the Qwen/LoRA and GradCache recipes, where `--grad_cache` / offload apply.
-
-**Multi-GPU (not exercised on H100):** a 2- or 8-GPU pass would use `--devices 4,5` (etc.),
-which flips the launcher to `torchrun --nproc_per_node N --master_port 29644`. It was not run
-here because the node's other GPUs were held by a live production job. DDP gives the
-cross-rank in-batch-negative pool the ROCm 2-GPU run already exercised.
+Pass several devices (`--devices 0,1`) and the launcher flips to
+`torchrun --nproc_per_node N --master_port <port>`; a single device runs plain `python`.
+Under DDP the loss becomes `DistributedContrastiveLoss`, so the candidate pool is gathered
+across ranks. GradCache, LoRA and DDP compose.
 
 ## Notes
 
-- **PyPI `tevatron` is a trap.** Version 0.1.0 is the 2021 v1 package — no
+- **Do not install `tevatron` from PyPI.** Version 0.1.0 is the 2021 v1 package — no
   `tevatron.retriever`, no `--grad_cache`. Install from git.
 - **`--attn_implementation sdpa` is mandatory on ROCm.** `ModelArguments` defaults to
   `flash_attention_2` and flash-attn has no ROCm build here. The launcher's
@@ -517,10 +372,8 @@ cross-rank in-batch-negative pool the ROCm 2-GPU run already exercised.
 - **Port 29820** is the launcher default; 29500 often collides on a shared box.
 - **`destroy_process_group() was not called`** warning at the end of every multi-GPU run —
   upstream never tears the group down. Cosmetic.
-- **Loss goes *up* with batch size** in the sweep table. Expected, not a bug: a larger
-  in-batch pool makes the InfoNCE softmax harder (ln 1024 ≈ 6.9 vs ln 128 ≈ 4.9), and with
-  100 rows a bigger batch also means fewer optimizer steps. Compare losses only at equal
-  batch geometry.
+- **Loss goes *up* with batch size.** Expected, not a bug: a larger in-batch pool makes the
+  InfoNCE softmax harder. Compare losses only at equal batch geometry.
 - **`train_group_size` must fit the data.** The shipped sample has 5 negatives per query,
   so `--train_group_size 6` uses each exactly once; anything larger makes the reader sample
   negatives with replacement (`random.choices`), duplicating them inside the group.
@@ -530,38 +383,3 @@ cross-rank in-batch-negative pool the ROCm 2-GPU run already exercised.
   retrieval; it is in the requirements file for that reason.
 - **The shipped sample is a pipeline check, not a training result.** 100 rows of OTel/paper
   text produce no useful retriever.
-
-## Summary
-
-**Does it work on MI355X? Yes.** Every headline capability ran unmodified on gfx950 /
-ROCm 7.2.4 with `torch==2.11.0+rocm7.2`: training, LoRA, DDP with the cross-rank negative
-gather, model save, and — critically — **GradCache**, which is pure PyTorch autograd
-plumbing with no custom kernels and therefore has no ROCm-specific failure mode. The only
-adaptations are two CLI arguments, both handled by the launcher.
-
-**Is it worth keeping next to `../sentence_transformers`? Yes, but not for GradCache.**
-
-- **GradCache is *not* the differentiator.** sentence-transformers'
-  `CachedMultipleNegativesRankingLoss` implements the same algorithm, and the sibling
-  folder can adopt it by changing one loss class. Judged on GradCache alone, this folder
-  is **redundant** — and the honest framing is that the original premise ("Tevatron gives
-  you GradCache and the sibling doesn't") does not survive contact with a current
-  sentence-transformers install. What Tevatron adds on that axis is narrow: separate
-  query/passage chunk sizes, and GradCache living in the Trainer so it composes with LoRA
-  and DeepSpeed without touching the loss.
-- **What actually earns the folder is the retrieval pipeline.**
-  `driver.encode` with `--dataset_number_of_shards/--dataset_shard_index` (sharded
-  multi-GPU corpus encoding), `driver.search` producing a TREC run file, and the
-  LoRA-on-a-decoder-LM (RepLLaMA / Qwen3-0.6B `--pooling eos`) recipe. `../sentence_transformers`
-  has none of these — it trains and evaluates a model but never encodes a corpus at scale
-  or produces a ranking. On a 288 GB × 8 box, "encode a 10 M-passage corpus in 8 shards"
-  is exactly the thing you want and exactly the thing the other folder cannot do.
-- **Do not use it as a general embedding trainer.** No evaluation of any kind, no
-  best-checkpoint selection, no Matryoshka, no MTEB — and its transformers-5.x
-  compatibility is incidental rather than maintained (two flags already broke). For "adapt
-  an embedding model to my domain and tell me if it got better", `../sentence_transformers`
-  is the better tool and should stay the default.
-
-**Recommendation: keep**, scoped as *the dense-retrieval pipeline folder* (train → shard
-encode → search → run file, plus LLM-scale LoRA retrievers), with the README stating
-plainly that GradCache is not a reason to prefer it over the sentence-transformers sibling.

@@ -12,7 +12,7 @@ rl_beta: 0.1
 # dpo_loss_type: ["ipo"]   # same data, IPO loss instead of sigmoid DPO
 
 ### data
-# dpo_sample.jsonl is a tiny SYNTHETIC smoke sample (rejected = truncated chosen).
+# dpo_sample.jsonl is a tiny synthetic smoke sample (rejected = truncated chosen).
 # Swap in real preference data before drawing any conclusions from a run.
 datasets:
   - path: ./data/dpo_sample.jsonl

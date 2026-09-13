@@ -1,6 +1,5 @@
 # Axolotl - LoRA SFT on chat JSONL. Single node, 8x H100 80GB.
 # Launch: python3 train_llm_axolotl.py --config config_sft_lora.yaml --num-processes 8
-# Every key below is from https://docs.axolotl.ai/docs/config-reference.html
 
 ### model
 base_model: Qwen/Qwen3-8B
@@ -31,7 +30,7 @@ output_dir: ./outputs/sft-lora
 
 ### sequence handling
 sequence_len: 4096
-sample_packing: true          # multipack: block-diagonal attention, big throughput win
+sample_packing: true          # multipack: block-diagonal attention
 eval_sample_packing: false    # set false if eval errors with packing on
 pad_to_sequence_len: true
 
@@ -62,8 +61,8 @@ gradient_checkpointing_kwargs:
 attn_implementation: flash_attention_2   # use sdpa if the model's head_dim > 256
 
 ### distributed
-# LoRA fits per-GPU on H100, so plain DDP (nothing set here) or ZeRO-2 is usually fastest.
-# Run `axolotl fetch deepspeed_configs` once, then uncomment:
+# LoRA fits per-GPU, so plain DDP (nothing set here) is enough. For ZeRO-2, run
+# `axolotl fetch deepspeed_configs` once, then uncomment:
 # deepspeed: deepspeed_configs/zero2.json
 
 ### logging / checkpoints

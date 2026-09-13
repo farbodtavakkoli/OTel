@@ -9,13 +9,12 @@
 #   tune run --nnodes 1 --nproc_per_node 8 lora_finetune_distributed \
 #       --config config_cpt_lora_8gpu.yaml
 #
-# Tested on 8x MI355X / ROCm 7.2.4 — see readme_torchtune.md §7a.
-# Kept separate from config_cpt_lora.yaml (the proven 1-GPU config) on purpose.
+# Kept separate from config_cpt_lora.yaml (the 1-GPU config) on purpose.
+# See readme_torchtune.md section 7b for the distributed run.
 
 output_dir: ./outputs/torchtune_cpt_lora_8gpu
 
 model:
-  # Same model the 1-GPU smoke used (Qwen2.5-0.5B), not the untested 7B default.
   _component_: torchtune.models.qwen2_5.lora_qwen2_5_0_5b
   lora_attn_modules: ['q_proj', 'v_proj', 'output_proj']
   apply_lora_to_mlp: True
@@ -38,7 +37,7 @@ checkpointer:
   output_dir: ${output_dir}
   model_type: QWEN2
 resume_from_checkpoint: False
-# Adapter-only writes: 0.02 GiB/epoch instead of a full 0.92 GiB model copy.
+# Write the adapter only, not a full model copy each epoch.
 save_adapter_weights_only: True
 
 dataset:
@@ -63,8 +62,8 @@ lr_scheduler:
   _component_: torchtune.training.lr_schedulers.get_cosine_schedule_with_warmup
   num_warmup_steps: 5
 
-# LinearCrossEntropyLoss is a post-0.6 main-branch API and does NOT exist in
-# 0.6.1 (InstantiationError on any platform). Same fix as the 1-GPU config.
+# Do not swap in LinearCrossEntropyLoss: it is a post-0.6 API and raises
+# InstantiationError on 0.6.1.
 loss:
   _component_: torchtune.modules.loss.CEWithChunkedOutputLoss
 
@@ -75,7 +74,7 @@ gradient_accumulation_steps: 1
 clip_grad_norm: 1.0
 compile: False
 
-# ---- distributed-only knobs (ignored by the single-device recipe) ----
+# Distributed-only knobs (ignored by the single-device recipe).
 # FSDP2 (fully_shard) across the world. reshard_after_forward=True is full
 # FSDP; set False for SHARD_GRAD_OP-style behaviour (more VRAM, less comm).
 fsdp_cpu_offload: False

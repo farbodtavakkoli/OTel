@@ -1,10 +1,17 @@
-# Pinned environment for train_llm_unsloth.py — tested set (Python 3.12, CUDA 13.0, H100).
+# Pinned environment for train_llm_unsloth.py (Python 3.12).
+# Unsloth LoRA/QLoRA SFT + GRPO trainer.
 #
-# ============================== AMD / ROCm ===================================
-# torch/torchvision/triton/xformers below are CUDA-13 wheels — do NOT install this
-# file verbatim on ROCm. The following sequence was VERIFIED on MI355X (gfx950,
-# ROCm 7.2.4, Python 3.12) — see readme_unsloth.md, "Platform notes — AMD MI355X
-# (ROCm 7.2)":
+# NVIDIA / CUDA 13 — this file installs VERBATIM; the torch/triton/xformers pins below ARE
+# genuine CUDA-13 wheels:
+#   python3 -m venv .env_unsloth && source .env_unsloth/bin/activate
+#   pip install -r requirements_unsloth.txt
+#   python -c "import torch;print(torch.__version__, torch.version.cuda)"   # -> 2.11.0 13.0
+# Installing unsloth DOWNGRADES a newer torch to 2.11.0+cu130 (still +cu130), so re-verify.
+# bitsandbytes==0.50.0's stock wheel loads its CUDA binary, so --load_in_4bit (QLoRA) +
+# adamw_8bit work with no special build. flash-attn is NOT needed — Unsloth uses SDPA.
+#
+# AMD / ROCm 7.2 — do NOT install this file verbatim; the torch/torchvision/triton/xformers
+# pins are CUDA wheels. Use this sequence instead:
 #
 #   # 1) ROCm torch FIRST (brings triton-rocm 3.6.0):
 #   pip install torch==2.11.0 torchvision --index-url https://download.pytorch.org/whl/rocm7.2
@@ -22,27 +29,9 @@
 #   pip install --force-reinstall --no-deps triton-rocm==3.6.0 --index-url https://download.pytorch.org/whl/rocm7.2
 #
 # bitsandbytes==0.50.0 stock PyPI wheel bundles ROCm binaries (libbitsandbytes_rocm72.so,
-# auto-detected on gfx950) — QLoRA/adamw_8bit work without a special build. Upstream's
-# "pre-release bnb" instruction only applies to bnb <= 0.49.2 (4-bit NaN bug).
-# =============================================================================
-#
-# ============================ NVIDIA / CUDA 13 ===============================
-# VERIFIED on 1× H100 80GB (Hopper cc 9.0, driver 580.173.02, CUDA 13.0, Python 3.12)
-# — see readme_unsloth.md, "Platform notes — NVIDIA H100 80GB (CUDA 13.0)". On CUDA
-# this file installs VERBATIM — the ROCm 3-step dance above is NOT needed:
-#
-#   python3 -m venv .env_unsloth && source .env_unsloth/bin/activate
-#   pip install torch numpy                  # baseline sanity: torch 2.13.0+cu130
-#   pip install -r requirements_unsloth.txt   # resolves to the exact pins below
-#
-# The torch/triton/xformers pins below ARE genuine CUDA-13 wheels: installing unsloth
-# DOWNGRADES torch 2.13.0+cu130 -> 2.11.0+cu130 (stays +cu130 — NOT clobbered to an
-# older-CUDA / CPU / ROCm build). Always re-verify after install:
-#   python -c "import torch;print(torch.__version__, torch.version.cuda)"   # -> 2.11.0 13.0
-# bitsandbytes==0.50.0 stock wheel loads its CUDA binary on H100 — --load_in_4bit
-# (QLoRA) + adamw_8bit work with no special build. flash-attn is NOT needed: Unsloth
-# reports `Xformers=None, FA2=False` for the gemma-4 4-bit path and uses SDPA internally.
-# =============================================================================
+# auto-detected on gfx950) — QLoRA/adamw_8bit work without a special build.
+# Do NOT pip-install flash-attn on ROCm, and do NOT set HSA_OVERRIDE_GFX_VERSION on gfx950
+# (that workaround is for MI300X/gfx942).
 #
 # Core Unsloth stack
 unsloth==2026.8.9

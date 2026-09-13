@@ -21,17 +21,11 @@ image:
   pullPolicy: Always
 ```
 
-> `h100-v1.5` is the first H100 image built by `TARGET=nvidia ./build_image.sh` from the unified
-> tree (digest `sha256:be7aac2525bfa06c45adf10ac44a15cfd5b5cebd7495556d2215dae520189611`, revision
-> label recorded in the image). vLLM is compiled for `sm_90` in the Dockerfile's `vllm` stage; the merged
-> inference server runs natively. Verified on 8×H100: `ddp` and `fsdp` losses bit-identical to the
-> previous NVIDIA-only implementation, `pytorch_fsdp` within ~1.7e-5 (different reduction granularity),
-> classification at `batch_size > 1` and LoRA complete.
->
-> Earlier tags were a chain of hand-built overlays: `h100-v1.1` (base sm_90 + training fixes),
-> `h100-v1.2` (torch.distributed/NCCL collective backend), `h100-v1.3` (adapter/mode/distribution
-> fixes + `sentence_transformers` for the embedding path). They predate the amd/nvidia merge and
-> the `mpirun -> torchrun` launcher; use `h100-v1.5` for anything load-bearing.
+> `h100-v1.5` is built by `TARGET=nvidia ./build_image.sh` from the unified tree; digest
+> `sha256:be7aac2525bfa06c45adf10ac44a15cfd5b5cebd7495556d2215dae520189611` (the revision
+> label is recorded in the image). It supports `ddp`, `fsdp` and `pytorch_fsdp` training,
+> classification at `batch_size > 1`, and LoRA. Earlier `h100-*` tags predate the unified
+> tree and the `mpirun -> torchrun` launcher — use `h100-v1.5`.
 
 ### Run it directly
 
@@ -48,8 +42,8 @@ docker run -d --name scalarlm --gpus '"device=0"' --ipc host --shm-size=64g \
 
 > **`--shm-size=64g` is required for multi-rank jobs.** Docker defaults `/dev/shm` to 64 MB;
 > multi-rank MPI maps its shared-memory segments there and an 8-rank job overflows even 16 GB,
-> killing a rank with SIGBUS (which Slurm then relaunches in a loop). `docker-compose.yaml` sets
-> `shm_size: 64gb` on the `cray` anchor, but a raw `docker run` must pass the flag (FIX 5).
+> killing a rank with SIGBUS (which Slurm then relaunches in a loop). `docker-compose.yaml`
+> sets `shm_size: 64gb`, but a raw `docker run` must pass the flag.
 
 Baked-in runtime config: `ENTRYPOINT ["/opt/nvidia/nvidia_entrypoint.sh"]`,
 `CMD ["/app/cray/scripts/start_one_server.sh"]`, `WORKDIR /app/cray`.
@@ -78,20 +72,13 @@ TARGET=nvidia ./build_image.sh                 # or: TARGET=nvidia IMAGE_TAG=h10
 ```
 
 The Dockerfile uses BuildKit `RUN --mount` cache syntax, so the host needs `docker buildx` and
-`DOCKER_BUILDKIT=1`. Two NVIDIA-specific fixes live in the Dockerfile and need no action: a
-`torchrun` shim installed into the venv (on the NVIDIA base torch lives in system `dist-packages`,
-so a bare `torchrun` otherwise ran under the system interpreter and workers died at
-`import cryptography`), and an explicit `scikit-learn` install for the embedding path
-(`sentence_transformers` imports it eagerly but the megatron requirements install `--no-deps`).
+`DOCKER_BUILDKIT=1`.
 
-The rest of this section is the **legacy hand-build route** used for `h100-v1.1`–`v1.3`, kept for
-reference.
-
-The stock prebuilt `gdiamos/scalarlm-nvidia-8.0` targets **A100 / `sm_80`**; on an H100 (`sm_90`)
-its vLLM CUDA kernels fail at startup with `CUDA error: no kernel image is available for
-execution on the device`. No published gdiamos tag targets Hopper, so vLLM's custom extension
-must be recompiled for `sm_90`. The base torch already includes `sm_90`; only vLLM's `_C` extension
-is rebuilt.
+The rest of this section is the **legacy hand-build route**, still the reference for
+retargeting vLLM at another GPU architecture. The stock prebuilt
+`gdiamos/scalarlm-nvidia-8.0` targets **A100 / `sm_80`**; on an H100 (`sm_90`) its vLLM CUDA
+kernels fail at startup with `CUDA error: no kernel image is available for execution on the
+device`, so vLLM's `_C` extension must be recompiled for `sm_90`.
 
 > Prerequisites: an H100 host with Docker + nvidia-container-toolkit. If behind a proxy, unset it
 > before any registry pull/push: `unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy`.
@@ -109,7 +96,7 @@ docker exec vllm_build bash -c '
   rm -rf build *.egg-info; find .deps -name CMakeCache.txt -delete   # clear stale sm_80 cache
   export TORCH_CUDA_ARCH_LIST=9.0 VLLM_TARGET_DEVICE=cuda CMAKE_BUILD_TYPE=Release MAX_JOBS=48
   python use_existing_torch.py --prefix
-  pip install --no-build-isolation -e .'          # ~18 min
+  pip install --no-build-isolation -e .'
 docker commit vllm_build cray:h100-sm90
 docker rm -f vllm_build
 ```
@@ -125,17 +112,12 @@ docker rm -f vllm_build
 
 The collective layer is `cray_infra.training.distributed`
 (`repo/infra/cray_infra/training/distributed.py`), a pure-Python `torch.distributed`/NCCL module
-shared with the AMD build. Because it is Python, it is carried by baking `ml/`/`infra/` — no wheel
-rebuild. NCCL reduces bf16/fp16 natively, so the older C++ `mpi_allreduce` bit-pattern issue does
-not arise. It requires the torchrun environment (`RANK`/`LOCAL_RANK`/`WORLD_SIZE`), which
+shared with the AMD build — it is carried by baking `ml/`/`infra/`, no wheel rebuild. It needs
+the torchrun environment (`RANK`/`LOCAL_RANK`/`WORLD_SIZE`), which
 `repo/scripts/train_job_entrypoint.sh` sets up (`mpirun` -> one `torchrun` per node).
 
-> **Since the amd/nvidia merge:** `h100-v1.3` was built against the earlier `gpu_aware_mpi` shim
-> and the plain `mpirun -> python` launcher. Those were replaced by the module and launcher above
-> (the `gpu_aware_mpi/` directory and its `setup.py` are gone). `h100-v1.5` is the first image built
-> from the unified tree and was verified on 8×H100 — `ddp`/`fsdp` bit-identical to the previous
-> NVIDIA-only implementation. Note that `flash_attention_2` crashes in the varlen kernel on this image, which is
-> why the loader maps it to `sdpa` unconditionally.
+> `flash_attention_2` crashes in the varlen kernel on this image, so the loader maps it to
+> `sdpa` unconditionally.
 
 ### 2 — Bake in this folder's `ml/`
 
@@ -156,11 +138,11 @@ docker commit \
   --change 'ENTRYPOINT ["/opt/nvidia/nvidia_entrypoint.sh"]' \
   --change 'CMD ["/app/cray/scripts/start_one_server.sh"]' \
   --change 'WORKDIR /app/cray' \
-  mlbake farbodatdocker/scalarlm:h100-v1.1
+  mlbake <your-registry>/scalarlm:h100-local
 docker rm -f mlbake
 ```
 
-Verify: `docker inspect farbodatdocker/scalarlm:h100-v1.1` shows the entrypoint, cmd, and workdir
+Verify: `docker inspect <your-registry>/scalarlm:h100-local` shows the entrypoint, cmd, and workdir
 above, so the image starts the server with no `--entrypoint` override.
 
 ### 4 — (optional) Sign with author/maintainer/links
@@ -171,22 +153,21 @@ above, so the image starts the server with no `--entrypoint` override.
 ```bash
 BUILDDIR=$(mktemp -d)
 cat > "$BUILDDIR/Dockerfile" <<'EOF'
-FROM farbodatdocker/scalarlm:h100-v1.1
+FROM <your-registry>/scalarlm:h100-local
 LABEL org.opencontainers.image.authors="Your Name"
 LABEL maintainer="Your Name"
 LABEL org.opencontainers.image.source="https://github.com/<you>"
 EOF
-docker build -t farbodatdocker/scalarlm:h100-v1.1 "$BUILDDIR"
+docker build -t <your-registry>/scalarlm:h100-local "$BUILDDIR"
 rm -rf "$BUILDDIR"
 ```
 
 ---
 
-## Build your OWN image on top of a published one
+## Build your own image on top of a published one
 
-You don't need the full rebuild to customize — start `FROM` a published image and layer your
-changes. This is the fast path for iterating on `ml/`, pinning a model, or re-tagging under your
-own namespace.
+Start `FROM` a published image and layer your changes — the fast path for iterating on `ml/`,
+pinning a model, or re-tagging under your own namespace.
 
 ```dockerfile
 # my-scalarlm/Dockerfile
@@ -226,7 +207,6 @@ docker push <namespace>/scalarlm:<tag>
 
 - Docker Hub rejects account passwords from the CLI — create a Personal Access Token
   (hub.docker.com → Account Settings → Personal access tokens) and paste it at the password prompt.
-- The image is ~45 GB; the upload is slow but resumable — re-run the same `push` if it drops.
-  Layers shared with the base show `Mounted from …`; only new layers are `Pushed`.
+- The image is ~45 GB; the upload is resumable — re-run the same `push` if it drops.
 - If Docker runs as root on your host, prefix `login` and `push` with `sudo` consistently so they
   share the same credential store.

@@ -7,7 +7,8 @@
 # Or:   python3 train_llm_llmfoundry.py --recipe sft
 # Point variables.data_local / --data-local at your own directory for a real run.
 #
-# Targets 8x H100 80GB. UNTESTED -- see readme_llmfoundry.md.
+# For a single-GPU run see the overrides in readme_llmfoundry.md section 5
+# (init_device=cpu, a smaller global batch, and sdpa on ROCm).
 
 variables:
   global_seed: 17
@@ -62,9 +63,8 @@ train_loader:
     #                                        turn of a multi-turn conversation
     target_prompts: none
     target_responses: last
-    # Sequence packing: 'auto' profiles the dataset and picks the highest ratio with
-    # ~zero waste. Big throughput win on short examples. If you enable it for an MPT
-    # model you must also set attn_uses_sequence_id: true in config_overrides.
+    # Sequence packing. On an MPT model you must also set attn_uses_sequence_id: true
+    # in config_overrides, or attention bleeds across packed examples.
     # packing_ratio: auto
   drop_last: true
   num_workers: 8
@@ -118,7 +118,7 @@ max_duration: 3ep
 eval_interval: 1ep
 eval_first: false
 eval_subset_num_batches: -1
-global_train_batch_size: 64   # across ALL ranks; grad accumulation is derived
+global_train_batch_size: 64   # across all ranks; grad accumulation is derived
 
 # System
 seed: ${variables.global_seed}
@@ -126,7 +126,7 @@ device_eval_batch_size: 4
 device_train_microbatch_size: auto    # let Composer find the largest that fits
 precision: amp_bf16
 
-# FSDP. NOTE: this is a top-level `fsdp_config` block, not `parallelism_config` --
+# FSDP. Note: this is a top-level `fsdp_config` block, not `parallelism_config` --
 # the train script folds it into Composer's parallelism_config itself.
 fsdp_config:
   sharding_strategy: FULL_SHARD
@@ -148,8 +148,7 @@ callbacks:
   lr_monitor: {}
   memory_monitor: {}
   runtime_estimator: {}
-  # Write a ready-to-serve Hugging Face folder alongside the Composer checkpoints,
-  # so you never have to run a conversion script by hand.
+  # Writes a ready-to-serve Hugging Face folder alongside the Composer checkpoints.
   hf_checkpointer:
     save_folder: ./llmfoundry_run/hf_checkpoints
     save_interval: 1ep
@@ -161,4 +160,4 @@ callbacks:
 # Checkpointing
 save_folder: ./llmfoundry_run/checkpoints
 save_interval: 1ep
-save_num_checkpoints_to_keep: 1   # important: cleans up checkpoints on DISK
+save_num_checkpoints_to_keep: 1   # important: cleans up checkpoints on disk

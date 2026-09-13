@@ -15,42 +15,35 @@ fast, dedicated server rather than a general LLM engine. TEI gives you `POST /em
 OpenAI-compatible `POST /v1/embeddings`, batching, and Prometheus metrics, with a much
 smaller footprint than vLLM or SGLang.
 
-> **Tested topology:** 1×AMD Instinct MI355X (gfx950, 288GB), ROCm 7.2.4, Ubuntu,
-> Python 3.12.3 host / 3.10.12 in container, TEI 1.9.3. This path works — see below.
-> Upstream documents ROCm support as *experimental* and tested only on MI200/MI300, so
-> **gfx950 is beyond its documented matrix.**
+Built against **TEI 1.9.3** on **AMD MI355X (gfx950, ROCm 7.2)** via a source build and on
+**NVIDIA H100 80GB (Hopper cc 9.0, CUDA 13)** via the prebuilt `hopper-1.9` image. Upstream
+documents ROCm support as *experimental* and tested only on MI200/MI300, so gfx950 is beyond
+its documented matrix.
 
 ## Scope — why there is no LLM or reranker TEI folder
 
-This is deliberate, not an omission — see [`../README.md`](../README.md) for the full
-scope note.
-
 | Missing folder | Why |
 |---|---|
-| `inference/tei/llm` | **TEI is not a generative server.** It serves embeddings and sequence classification only; there is no token-generation path. Use `../../vllm/llm/`, `../../sglang/llm/`, `../../llamacpp/llm/`, or `../../transformers/llm/`. |
-| `inference/tei/reranker` | TEI *has* a `/rerank` API, but its supported reranker list targets **sequence-classification** architectures (XLM-RoBERTa, GTE, ModernBERT). `Qwen/Qwen3-Reranker-0.6B` is a **decoder-only yes/no** reranker and is not supported upstream (open model-support requests). Use [`../../llamacpp/reranker/`](../../llamacpp/reranker/) or [`../../vllm/reranker/`](../../vllm/reranker/). |
+| `inference/tei/llm` | **TEI is not a generative server.** Use `../../vllm/llm/`, `../../sglang/llm/`, `../../llamacpp/llm/`, or `../../transformers/llm/`. |
+| `inference/tei/reranker` | TEI's `/rerank` targets **sequence-classification** cross-encoders (XLM-RoBERTa, GTE, ModernBERT). `Qwen/Qwen3-Reranker-0.6B` is **decoder-only yes/no** scoring and is unsupported upstream. Use [`../../llamacpp/reranker/`](../../llamacpp/reranker/) or [`../../vllm/reranker/`](../../vllm/reranker/). |
 
-If you point TEI at a supported cross-encoder instead, the reranker path would be worth
-re-testing on this hardware — the ROCm backend proven below is shared by both paths.
-
-## Install (AMD / ROCm)
+## Install & run — AMD / ROCm (source build)
 
 There is **no published AMD/ROCm container tag** for TEI — `ghcr.io/huggingface/text-embeddings-inference`
-publishes CUDA tags (e.g. `cuda-1.9`), which are useless on AMD. The documented AMD
-route is a **source build of the Rust router against a ROCm PyTorch base**.
+publishes CUDA tags only. The AMD route is a **source build of the Rust router against a ROCm
+PyTorch base**.
 
-Upstream's guide starts from `rocm/pytorch:latest`. The build below instead uses
-`lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819`, which already carries ROCm 7.2
-PyTorch for gfx950 and so avoids a second large pull. Any ROCm PyTorch image with
-a matching HIP works; nothing SGLang-specific is used.
+The build below uses `lmsysorg/sglang-rocm:v0.5.17-rocm720-mi35x-20260819`, which already
+carries ROCm 7.2 PyTorch for gfx950. Any ROCm PyTorch image with a matching HIP works;
+nothing SGLang-specific is used.
 
 ```bash
 # Set these to suit your machine
 export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
 export OUTPUT_DIR=/path/to/outputs     # server logs and result artifacts
 
-# 1. Start a ROCm container with ONE GPU (e.g. physical GPU 6 -> renderD176; verify yours
-#    with `ls /dev/dri/` and `rocm-smi --showbus`).
+# 1. Start a ROCm container with ONE GPU. Find your render node with
+#    `ls /dev/dri/` and `rocm-smi --showbus`.
 docker run -d --name tei_build \
   --device /dev/kfd --device /dev/dri/renderD176 \
   --group-add video --ipc=host --shm-size 16g \
@@ -82,20 +75,8 @@ docker exec tei_build bash -lc '
 '
 ```
 
-`cargo` reported **`Finished release profile ... in 3m 44s`**, producing a 28 MB
-`target/release/text-embeddings-router`. **No source patches were needed for gfx950.**
-
-### NVIDIA equivalent (generic sketch)
-
-```bash
-docker run --rm --gpus all -p 8080:80 -v "$PWD/data":/data \
-  ghcr.io/huggingface/text-embeddings-inference:cuda-1.9 \
-  --model-id google/embeddinggemma-300m
-```
-
-> For **H100 / Hopper (cc 9.0)** the `cuda-1.9` tag above is the wrong architecture — use the
-> **`hopper-1.9`** image and `--dtype float32`. See the verified
-> **"Install & run (NVIDIA H100 / Hopper)"** section below for the exact, tested commands.
+The build produces `target/release/text-embeddings-router`. **No source patches are needed
+for gfx950.**
 
 ## Environment & secrets
 
@@ -112,7 +93,7 @@ export HF_TOKEN=...        # from dev.env; never commit it
 > TEI echoes its `Args { ... }` line at startup including a **partially-masked token**.
 > Treat `tei_serve*.log` as sensitive and keep it out of git (write it under `$OUTPUT_DIR`).
 
-## Run — single GPU
+### Run — single GPU
 
 ```bash
 docker exec -d tei_build bash -lc '
@@ -130,10 +111,10 @@ python embed_tei.py --host 127.0.0.1 --port 8301 --api both \
 
 The model card recommends BF16 or FP32 — do **not** force FP16.
 
-## Single-GPU results
+### Expected output — AMD / ROCm
 
-This path works unmodified. The ROCm backend is genuinely active — not a silent CPU
-fallback, which is the classic false pass here:
+Check first that the ROCm backend is genuinely active, not a silent CPU fallback (the
+classic false pass here):
 
 ```
 python-backend: ROCm / HIP version: 7.2.26015-fc0010cf6a
@@ -145,46 +126,31 @@ Starting HTTP server: 0.0.0.0:8301 / Ready
 
 `warmup_rocm` is the decisive line: TEI's CPU path never emits it.
 
-**Expected output** — served info and results (`tei_1gpu_meanpool.json`):
+Then the client output:
 
 ```
 version 1.9.3 | model google/embeddinggemma-300m | model_dtype bfloat16
 model_type embedding, pooling = mean | max_input_length 2048 | dim = 768
-embed latency: queries 0.0465 s, documents 0.0435 s (batch)
-per-request server timing: total ~19-27 ms, inference ~19-26 ms, tokenization ~0.13-0.23 ms
 ```
 
-Cosine similarities — semantics are correct in both directions:
-
-| Query | vLLM/ROCm doc | SGLang/ROCm doc | SQLite doc | Eiffel Tower doc |
-|---|---|---|---|---|
-| "What GPU runtimes support ROCm?" | **0.7170** | **0.6898** | 0.4175 | 0.3167 |
-| "Which database is embedded and serverless?" | 0.4506 | 0.4347 | **0.7005** | 0.3714 |
-
-Each query ranks its relevant document first by a wide margin
-(`top1_doc_index_per_query : [0, 2]`).
-
-With `--api both`, `/embed` returns 2 query + 4 document vectors at dim 768 with
-`l2_norm[q0] = 1.000000` and latency around 0.022 s / 0.041 s; the OpenAI-compatible
-`/v1/embeddings` returns the same dim at ~0.040 s. Run-to-run cosine values vary in the
+Each query should rank its relevant document first (`top1_doc_index_per_query : [0, 2]`) —
+that ordering, not the cosine magnitudes, is the sanity criterion. With `--api both`,
+`/embed` returns 2 query + 4 document vectors at dim 768 with `l2_norm[q0] = 1.000000`; the
+OpenAI-compatible `/v1/embeddings` returns the same dim. Run-to-run cosine values vary in the
 4th decimal (bf16 nondeterminism).
 
-## Install & run (NVIDIA H100 / Hopper)
+## Install & run — NVIDIA / CUDA (prebuilt image)
 
-**This path works from a prebuilt image, with no source build.** Unlike AMD, NVIDIA has a
-**published Hopper container**, so there is nothing to compile — pull and run. Verified on
-1×H100 80GB HBM3, driver 580.173.02, CUDA 13.0, Hopper cc(9,0), Python 3.12.3 host, TEI
-**1.9.3** (same router version as the MI355X build), served on port **8090** pinned to a
-single GPU.
+**No source build.** NVIDIA has a published Hopper container — pull and run.
 
-### Image route
+### Image
 
 TEI ships GPU-architecture-specific CUDA images. For H100 (Hopper, **compute capability
 9.0**) use the **Hopper** tag — the generic `cuda-*` tag targets older architectures and the
 `turing`/`89` tags target Turing/Ada:
 
 ```
-ghcr.io/huggingface/text-embeddings-inference:hopper-1.9   # digest sha256:e3009cd9… , 8.17 GB
+ghcr.io/huggingface/text-embeddings-inference:hopper-1.9
 ```
 
 Pull it with the corporate proxy **unset** (ghcr.io is proxy-blocked; `sudo docker` needed):
@@ -199,38 +165,38 @@ sudo docker pull ghcr.io/huggingface/text-embeddings-inference:hopper-1.9
 ```bash
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 HF_TOKEN=$(grep -E '^HF_TOKEN=' ../dev.env | cut -d= -f2- | tr -d '"'"'"' ')   # gated model
-sudo docker run -d --name tei_h100 \
-  --gpus '"device=7"' \            # pin ONE physical GPU; use YOUR assigned index
+sudo docker run -d --name tei_cuda \
+  --gpus '"device=0"' \            # pin ONE GPU; use your assigned index
   -p 8090:80 \                     # TEI listens on :80 in-container
   -v $HF_HOME:/data \
   -e HF_HOME=/data \               # so the router finds /data/hub (cache is at $HF_HOME/hub)
   -e HF_TOKEN="$HF_TOKEN" \
   ghcr.io/huggingface/text-embeddings-inference:hopper-1.9 \
   --model-id google/embeddinggemma-300m \
-  --dtype float32 \                # see quirk below: Hopper image rejects bfloat16
+  --dtype float32 \                # see the dtype note: the Hopper image rejects bfloat16
   --port 80
 ```
 
 > **`--dtype`: the Hopper (candle CUDA) backend accepts only `float16` or `float32`** — it
 > hard-errors on `bfloat16` (`error: invalid value 'bfloat16' for '--dtype'`), unlike the
-> ROCm source build which took `bfloat16`. The EmbeddingGemma model card recommends **BF16 or
+> ROCm source build which takes `bfloat16`. The EmbeddingGemma model card recommends **BF16 or
 > FP32 and warns against FP16**, so use **`float32`** to preserve numerical fidelity. The
 > served `/info` confirms `model_dtype: float32`.
 
 ### Client
 
-Client venv (the `.env_tei` convention fails on a CIFS/NFS share — pip bootstrap cannot
-write symlinks there; build the venv on local or tmpfs disk instead):
-
 ```bash
-python3 -m venv /tmp/tei_venv && /tmp/tei_venv/bin/pip install requests==2.34.2 python-dotenv==1.2.3
-/tmp/tei_venv/bin/python embed_tei.py --host 127.0.0.1 --port 8090 --api both \
-  --out /dev/shm/tei/tei_h100_1gpu.json
+python3 -m venv .env_tei && .env_tei/bin/pip install -r ../requirements.txt
+.env_tei/bin/python embed_tei.py --host 127.0.0.1 --port 8090 --api both \
+  --out $OUTPUT_DIR/inference_embedding_tei/tei_cuda_1gpu.json
 ```
 
-### Expected output (H100)
+> The venv convention fails on a CIFS/NFS share — pip's bootstrap cannot write symlinks
+> there. Build the venv on local or tmpfs disk instead.
 
-The candle **CUDA** backend is genuinely active — the H100 analogue of the MI355X
+### Expected output — NVIDIA / CUDA
+
+The candle **CUDA** backend is genuinely active — the analogue of ROCm's
 `warmup_rocm` line is the candle `Cuda(CudaDevice(...))` load line:
 
 ```
@@ -246,79 +212,42 @@ text_embeddings_router::http::server: Ready
 model_id : google/embeddinggemma-300m | dtype float32 | pooling mean | tei_version 1.9.3
 --- POST /embed ---           n_query_vec 2  n_doc_vec 4  dim 768  l2_norm[q0] 1.000000
 head[q0] : [-0.06663, -0.04311, -0.00338, -0.03156, 0.05392, 0.00015, -0.01757, 0.01226]
-latency_s : queries 0.035 / documents 0.021
---- POST /v1/embeddings ---   n_vectors 2  dim 768  l2_norm[0] 1.000000  latency_s 0.019
+--- POST /v1/embeddings ---   n_vectors 2  dim 768  l2_norm[0] 1.000000
 ```
 
-Cosine similarities — semantics correct in both directions (related ≫ unrelated):
+`top1_doc_index_per_query : [0, 2]` — each query ranks its relevant document first. Cosine
+magnitudes differ from the ROCm bf16 run because this one is fp32 mean-pooled; the *ordering*
+is the sanity criterion.
 
-| Query | vLLM/ROCm doc | SGLang/ROCm doc | SQLite doc | Eiffel Tower doc |
-|---|---|---|---|---|
-| "What GPU runtimes support ROCm?" | **0.5747** | **0.5376** | 0.0979 | −0.0110 |
-| "Which database is embedded and serverless?" | 0.2023 | 0.1902 | **0.5024** | 0.0830 |
+### Confirm GPU residency
 
-`top1_doc_index_per_query : [0, 2]` — each query ranks its relevant document first.
-(Cosine magnitudes differ from the MI355X bf16 run because this run is fp32 mean-pooled; the
-*ordering* is identical, which is the sanity criterion.)
-
-### GPU-residency proof (nvidia-smi by PID, sampled live)
-
-```
-$ sudo docker inspect -f '{{.State.Pid}}' tei_h100      -> <container-pid>
-$ nvidia-smi --query-gpu=index,uuid,memory.used --format=csv,noheader -i 7
-  7, GPU-<uuid>, 1847 MiB
-$ nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory --format=csv,noheader | grep GPU-<uuid>
-  GPU-<uuid>, <container-pid>, text-embeddings-router, 1838 MiB
+```bash
+sudo docker inspect -f '{{.State.Pid}}' tei_cuda            # -> <container-pid>
+nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory \
+  --format=csv,noheader | grep <the GPU's uuid>
+#   GPU-<uuid>, <container-pid>, text-embeddings-router, 1838 MiB
 ```
 
-The container's host PID (`text-embeddings-router`) should hold **~1.8 GB on the assigned
-GPU's UUID and nowhere else** — decisive on-GPU residency, not a CPU fallback. Load
-footprint is ~1.65 GB rising to ~1.85 GB after warmup. Matching by GPU UUID rather than
-index is what keeps the attribution correct on a shared node.
+The container's host PID (`text-embeddings-router`) should hold VRAM on the assigned GPU's
+UUID and nowhere else. Match by GPU UUID rather than index — that keeps the attribution
+correct on a shared node.
 
-### Multi-GPU (H100) — not covered here
+### Deviations from the ROCm route
 
-Same story as MI355X: a 300M encoder does not shard and `text-embeddings-router` has **no
-tensor-parallel flag**. The production pattern is N single-GPU replicas — one `docker run`
-per card with a distinct `--gpus '"device=N"'` and `-p 809X:80`. Only a single-GPU replica
-was measured here.
+- **No source build.** The published `hopper-1.9` image replaces the whole Rust + protoc +
+  `cargo build` step.
+- **`bfloat16` unsupported** → use `float32` (see the dtype note above).
+- **Cache mount differs.** Point `HF_HOME=/data` (cache lives at `/data/hub`); the ROCm
+  route uses `HUGGINGFACE_HUB_CACHE=/hf_cache/hub`. TEI still logs a few
+  `Downloading <config>.json` lines for tiny metadata files whose `.no_exist` markers are
+  cached, then reads `model.safetensors` (1.2 GB) from the mount.
 
-### H100 quirks (vs the MI355X route)
+## Multi-GPU
 
-- **No source build.** The published `hopper-1.9` image replaces the entire MI355X Rust +
-  protoc + `cargo build` step. Pull-and-run.
-- **`bfloat16` unsupported by the Hopper image** → use `float32` (see dtype note above).
-- **Cache mount differs.** Point `HF_HOME=/data` (cache lives at `/data/hub`); the MI355X
-  route uses `HUGGINGFACE_HUB_CACHE=/hf_cache/hub`. TEI still logs a few "Downloading
-  <config>.json" lines for tiny metadata files whose `.no_exist` markers are cached, then
-  reads `model.safetensors` (1.2 GB) from the mount.
-- **`Invalid hostname, defaulting to 0.0.0.0`** — same harmless warning as MI355X.
-- **80 GB VRAM (vs 288)** is a non-issue for a 300M encoder (~1.8 GB resident).
-
-### Platform notes (H100)
-
-**Works unmodified from the prebuilt image.** TEI 1.9.3 serves EmbeddingGemma-300m on 1×H100
-(Hopper cc 9.0) via the official `ghcr.io/huggingface/text-embeddings-inference:hopper-1.9`
-container with correct 768-dim fp32 embeddings, correct semantic ranking, ~19–35 ms/request,
-on its genuine candle CUDA backend resident on the assigned GPU. The only "changes" vs
-MI355X are packaging (NVIDIA publishes the image, so no Rust build) and `--dtype float32`
-(the Hopper image rejects bf16).
-
-## Multi-GPU results
-
-**A 300M encoder does not shard, and TEI has no tensor-parallel option** — `text-embeddings-router`
-exposes no TP flag at all. The honest production pattern is **N independent single-GPU
-replicas behind a load balancer**, one container per GPU.
-
-This folder measured **one GPU**. A second replica on the same card, started on port
-8302, served concurrently (`tei_serve2.log`, ~19.3-19.8 ms per request across 12+
-consecutive successes), which proves replica-style concurrency but is **not** a two-GPU
-measurement.
-
-**Scaling to 8 GPUs is extrapolation, clearly labelled as such:** repeat the `docker run`
-with a different `--device /dev/dri/renderD<N>` and `-p 830X:830X` per card. Nothing in the
-ROCm path is shared between replicas, so linear scaling is expected — but it was not
-measured here.
+`text-embeddings-router` has **no tensor-parallel flag**. The pattern is **N independent
+single-GPU replicas behind a load balancer**, one container per GPU: repeat the run with a
+different `--device /dev/dri/renderD<N>` (ROCm) or `--gpus '"device=N"'` (CUDA) and a distinct
+host port. Multiple replicas can also share one card.
 
 ## Arguments
 
@@ -350,17 +279,14 @@ A JSON artifact with the served `info` block, the query/document texts, `dim`, p
 latency, the full cosine matrix, and a truncated view of the raw vectors — e.g.
 `$OUTPUT_DIR/inference_embedding_tei/tei_1gpu_meanpool.json`.
 
-## Hardware support & evidence
+## Hardware support
 
 | | Status |
 |---|---|
-| NVIDIA (generic) | Official — `ghcr.io/huggingface/text-embeddings-inference:cuda-1.9`. Architecture-specific tags apply; see below for Hopper. |
-| **NVIDIA H100 (Hopper, cc 9.0), CUDA 13.0** | **Verified — works.** Requires the `hopper-1.9` image and `--dtype float32`; see "Install & run (NVIDIA H100 / Hopper)" above. |
+| NVIDIA (generic) | Official — `ghcr.io/huggingface/text-embeddings-inference:cuda-1.9`. Architecture-specific tags apply. |
+| **NVIDIA H100 (Hopper, cc 9.0), CUDA 13** | **Works.** Requires the `hopper-1.9` image and `--dtype float32`. |
 | AMD ROCm | Upstream: **experimental**, documented on MI200/MI300 only, source build required. |
-| **AMD MI355X (gfx950), ROCm 7.2.4** | **Verified — works.** Router built from source in 3m 44s with no patches; `warmup_rocm` + `ROCm / HIP version: 7.2.26015` confirm the ROCm backend; correct 768-dim embeddings at ~20 ms/request. |
-
-Upstream validates nothing newer than MI300, so gfx950 support is **de facto, not
-certified** — treat it as proven-for-this-model rather than production-blessed.
+| **AMD MI355X (gfx950), ROCm 7.2** | **Works.** Router builds from source with no patches; `warmup_rocm` confirms the ROCm backend. |
 
 ## Notes & quirks
 
@@ -368,21 +294,17 @@ certified** — treat it as proven-for-this-model rather than production-blessed
   Rust + protoc, which a ROCm PyTorch base image does not ship.
 - **`backend device: cuda` on AMD is correct**, not a misconfiguration — ROCm reuses the
   `torch.cuda` API surface. Confirm ROCm via the `warmup_rocm` line instead.
-- **`Invalid hostname, defaulting to 0.0.0.0`** — TEI rejects the container hostname; harmless.
-- **`Address already in use (os error 98)`** if a previous router still holds 8301; TEI does
-  not fail over to another port.
+- **`Invalid hostname, defaulting to 0.0.0.0`** — TEI rejects the container hostname; harmless,
+  and it appears on both backends.
+- **`Address already in use (os error 98)`** if a previous router still holds the port; TEI
+  does not fail over to another port.
 - A one-off `Server error: transport error` can appear when the Python backend restarts
   under load; the router recovers on the next request.
 - Startup echoes a partially-masked `HF_TOKEN` into the log — keep logs off git.
 
 ## Summary
 
-**Works with changes (build-from-source required).** TEI 1.9.3 serves EmbeddingGemma-300m
-on MI355X/gfx950 with correct 768-dim bf16 embeddings at ~20 ms per request, using its
-genuine ROCm backend. The "changes" are entirely packaging: no AMD image is published, so
-you must build the Rust router yourself inside a ROCm PyTorch container. Once built, no
-source modification is needed for gfx950.
-
-Not covered here: multi-GPU replica scaling (single card measured), the `/rerank` path with
-a supported cross-encoder, ONNX/candle backends, and throughput benchmarking beyond
-single-request latency.
+- **AMD/ROCm:** no published image — build the Rust router inside a ROCm PyTorch container.
+  No source modification needed for gfx950. Serves `bfloat16`.
+- **NVIDIA/CUDA:** works unmodified from the prebuilt `hopper-1.9` image. Serve
+  `--dtype float32` — the image rejects `bfloat16`.

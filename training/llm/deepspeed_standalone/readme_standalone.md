@@ -33,10 +33,12 @@ Design notes absorbed from the code:
 - **Mistral fallback** — if `AutoModelForCausalLM` rejects the checkpoint, the script
   retries with `Mistral3ForConditionalGeneration`, which some Mistral releases require.
 
-> **Tested topology:** Azure cluster, 8×H100 80GB — single-node DeepSpeed ZeRO-3.
-> Also verified on 2× and 8×AMD Instinct MI355X (ROCm 7.2) — see "AMD MI355X (ROCm 7.2)
-> — tested" below. Multi-node is possible via `accelerate`/`torchrun` rendezvous but has
-> **not** been tested here.
+> **Hardware coverage:** single-node DeepSpeed ZeRO-3 on **2× and 8× AMD Instinct
+> MI355X (gfx950, ROCm 7.2.4)** with an ~8B full fine-tune, and on **1× NVIDIA H100 80GB
+> (CUDA 13.0)** with a sub-1B full fine-tune. See
+> [AMD MI355X](#amd-mi355x-rocm-72) and [NVIDIA H100](#nvidia-h100-80gb-cuda-130) below.
+> Multi-GPU on NVIDIA and multi-node (via `accelerate`/`torchrun` rendezvous) are not
+> covered here.
 
 ## Install
 
@@ -57,6 +59,22 @@ source ~/.venv/bin/activate
 pip install -r requirements_standalone.txt
 ```
 
+**On CUDA 13 the `torch==2.11.0` pin resolves to a CUDA 13 build on PyPI**, so the plain
+install above needs no `--index-url` and no edits to the requirements file. Re-verify the
+build afterwards:
+
+```bash
+python3 -m venv .env_deepspeed_standalone && source .env_deepspeed_standalone/bin/activate
+pip install -r requirements_standalone.txt
+python -c "import torch;print(torch.__version__, torch.version.cuda)"   # 2.11.0 13.0
+```
+
+To pin the `+cu130` local version tag explicitly, install torch first with
+`pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu130`.
+
+Every other pin installs unchanged (transformers 5.5.0, trl 0.24.0, datasets 4.3.0,
+accelerate 1.14.0, deepspeed 0.19.4, bitsandbytes 0.50.0).
+
 DeepSpeed JIT-compiles its kernels against the CUDA toolkit, so export the toolkit
 paths (the script defaults `CUDA_HOME` to `/usr/local/cuda-13` if unset — a pre-set
 `CUDA_HOME` wins):
@@ -73,9 +91,14 @@ Verify the import graph:
 python -c "import torch, deepspeed, trl, transformers, datasets; print('imports OK', torch.cuda.device_count(), 'GPUs')"
 ```
 
-### AMD / ROCm — **tested** (MI355X, ROCm 7.2)
+> **`HF_DATASETS_CACHE` must point at writable storage.** If `HF_HOME` sits on a shared,
+> read-mostly model cache, `datasets` tries to write its arrow map cache under
+> `$HF_HOME/datasets/...` and dies with `PermissionError: [Errno 1] Operation not permitted`
+> at the `os.chmod` step of `Dataset.map`. Export `HF_DATASETS_CACHE` to a writable path
+> (fast local disk or tmpfs). Vendor-neutral — a mount-permission issue, not CUDA/torch.
 
-Verified end-to-end on this stack — see "AMD MI355X (ROCm 7.2) — tested" below.
+### AMD / ROCm (MI355X, ROCm 7.2)
+
 Differences from the NVIDIA install:
 
 - **PyTorch** — install from the ROCm wheel index instead of PyPI, **before** the
@@ -87,18 +110,14 @@ Differences from the NVIDIA install:
   pip install -r requirements_standalone.txt
   ```
 
-  The rocm7.2 index carries `torch-2.11.0+rocm7.2` cp312 wheels, so the CUDA pin is
-  matched exactly — no version lag in practice (an earlier revision of this README
-  claimed the ROCm wheels lag the CUDA pins; that was true of the rocm7.0 index and is
-  no longer the case).
+  The rocm7.2 index carries `torch-2.11.0+rocm7.2` cp312 wheels, so the pin is matched
+  exactly.
 - **DeepSpeed** — same `pip install deepspeed==0.19.4`; it installs as a pure-Python
-  wheel (**no** `hipcc` compile at install time) and JIT-compiles ops on demand. The
-  smoke run below needed **no** compiled ops at all.
+  wheel (**no** `hipcc` compile at install time) and JIT-compiles ops on demand.
 - **bitsandbytes** — matters here because the **default optimizer is
-  `adamw_bnb_8bit`**. **Confirmed working on MI355X (gfx950)**: the PyPI
-  `bitsandbytes==0.50.0` wheel ships ROCm binaries and the tested run below trained
-  with the default `adamw_bnb_8bit` (DeepSpeed logs an "untested optimizer" warning
-  and proceeds). `--optim adamw_torch` remains the fallback.
+  `adamw_bnb_8bit`**. The PyPI `bitsandbytes==0.50.0` wheel ships ROCm binaries and works on
+  gfx950 (DeepSpeed logs an "untested optimizer" warning and proceeds). `--optim adamw_torch`
+  is the fallback.
 - **flash-attn** — the main path doesn't use it (only the rarely-hit Mistral fallback
   requests `flash_attention_2`). Do **not** pip-install the CUDA `flash-attn` wheel on
   ROCm; on ROCm, flash-attention is a source build from the upstream repo
@@ -141,7 +160,7 @@ A 10-row sample ships in this folder as `OTel_LLM_sample_10.jsonl` and is the de
 `--train_file`. Its schema is the `messages` format plus extra metadata columns:
 `unmask`, `flow`, `source_id`, `source_repo`, `source_spec_id`, `source_version`.
 
-**The null-column trap** — in the full dataset this sample comes from,
+**Null metadata columns** — in the full dataset this sample comes from,
 `source_spec_id` and `source_version` are NULL in every row, so a naive
 `datasets`/pyarrow load infers a `null` dtype for them and can break schema-sensitive
 pipelines. This trainer is immune: `_flatten_messages` runs with
@@ -244,53 +263,31 @@ defaults (`experiments/`, `hf_cache/`) keep the same layout under the working di
 - `train_script_backup.py` — a copy of the training script for provenance.
 - TensorBoard logs (`report_to="tensorboard"`).
 
-## NVIDIA H100 80GB (CUDA 13.0) — tested
+## NVIDIA H100 80GB (CUDA 13.0)
 
-Verified on a single **NVIDIA H100 80GB HBM3** (Hopper cc 9.0), driver
-**580.173.02**, CUDA **13.0**, Ubuntu, Python 3.12.3 — **full fine-tuning of
-`LiquidAI/LFM2.5-350M` under ZeRO-3**, prompt-masked SFT (`--model_type lfm_ftaas`) on
-the shipped `OTel_LLM_sample_10.jsonl`. **Single-GPU smoke only** (one free H100 on a
-shared 8-GPU node); the multi-GPU / offload story is deferred — see "Multi-GPU / larger
-models" below.
+**This path works on H100.** No CUDA-specific *code* change is needed — the training path is
+vendor-neutral and the ROCm workarounds (comm-dtype guard, save-on-all-ranks,
+trl/transformers shim) are no-ops or apply identically on CUDA. Covered: single-GPU ZeRO-3
+full fine-tune of `LiquidAI/LFM2.5-350M`, prompt-masked SFT (`--model_type lfm_ftaas`) on the
+shipped `OTel_LLM_sample_10.jsonl`. **Multi-GPU on NVIDIA is not covered** — see the end of
+this section.
 
-> **Model choice.** The script default `LiquidAI/LFM2.5-1.2B-Instruct` was **not present
-> in the offline model cache** on this node, so the smoke used the cached
-> `LiquidAI/LFM2.5-350M`. A 350M full fine-tune fits comfortably in 80 GB (peak ~7.3 GiB
-> — see below). This is *not* the ZeRO-3 memory-pressure case the MI355X run exercised
-> (an ~8B full FT measured **up to 58% of 288 GiB ≈ 167 GiB/GPU at 2 ranks** — see the
-> MI355X table below); that would OOM on a single 80 GB H100 and is not covered here.
+The only deviations from the base recipe are operational: install the requirements as
+shipped (see [Install](#nvidia-cuda)), use a model that is actually present in your cache if the node is
+offline (the script default `LiquidAI/LFM2.5-1.2B-Instruct` may not be), and set
+`HF_DATASETS_CACHE` to writable storage on a shared node.
 
-**Install (native CUDA 13 wheel, no `--index-url`):**
-
-```bash
-cd training/llm/deepspeed_standalone
-python3 -m venv .env_deepspeed_standalone
-source .env_deepspeed_standalone/bin/activate
-pip install torch numpy                       # -> torch 2.13.0+cu130 (CUDA 13.0), numpy 2.5.2
-pip install -r requirements_standalone.txt    # minus the torch==2.11.0 pin (see note)
-python -c "import torch;print(torch.__version__, torch.version.cuda)"   # re-verify: 2.13.0 13.0
-```
-
-- **torch pin deviation.** `requirements_standalone.txt` pins `torch==2.11.0`; there is
-  **no cu130 wheel for 2.11.0**, so the verified recipe installs the current stable
-  `torch==2.13.0+cu130` first and installs the requirements **without** the torch line
-  (`grep -v '^torch==' requirements_standalone.txt`). All other pins install unchanged
-  (transformers 5.5.0, trl 0.24.0, datasets 4.3.0, accelerate 1.14.0, deepspeed 0.19.4,
-  bitsandbytes 0.50.0). Re-check torch afterward to confirm it was **not** clobbered.
-- **CUDA_HOME.** The toolkit lives at `/usr/local/cuda-13.0` (with a `/usr/local/cuda-13`
-  symlink — exactly the script's default). `nvcc` reports `release 13.0, V13.0.88`.
-  DeepSpeed JIT-compiled **no** ops for this smoke (none were needed), same as ROCm.
+- **CUDA_HOME.** The toolkit typically lives at `/usr/local/cuda-13.0` with a
+  `/usr/local/cuda-13` symlink — exactly the script's default.
 - **bitsandbytes / `adamw_bnb_8bit`.** The PyPI `bitsandbytes==0.50.0` CUDA wheel imports
-  cleanly and `AdamW8bit` is available; the validated run trains with the default
-  `adamw_bnb_8bit` (DeepSpeed logs the same "untested optimizer" warning and proceeds).
-- **flash-attn — not reversed.** The MI355X notes warn off the CUDA flash-attn wheel, but
-  the **main training path never sets `attn_implementation`** (only the rarely-hit Mistral
-  fallback requests `flash_attention_2`). There is nothing to switch back to
-  `flash_attention_2` on the LFM/most-model path, so no flash-attn install is needed;
-  the default (SDPA) attention is used, unchanged.
-- **Plain `CUDA_VISIBLE_DEVICES`.** No `HIP_VISIBLE_DEVICES` / `RAY_*` vars are used by
-  this script; on a shared node pin the run to one card with
-  `CUDA_VISIBLE_DEVICES=5` and a non-default `--main_process_port 29645`.
+  cleanly and the run trains with the default `adamw_bnb_8bit` (DeepSpeed logs the same
+  "untested optimizer" warning and proceeds).
+- **flash-attn is not needed.** The **main training path never sets `attn_implementation`**
+  — only the rarely-hit Mistral fallback requests `flash_attention_2` — so the default SDPA
+  attention is used and there is nothing to install.
+- **Plain `CUDA_VISIBLE_DEVICES`.** No `HIP_VISIBLE_DEVICES` / `RAY_*` vars are used by this
+  script; on a shared node pin the run to one card and pass a non-default
+  `--main_process_port`.
 
 **Offline-node env (for a node where hub egress is proxy-blocked, 403):**
 
@@ -318,11 +315,6 @@ accelerate launch --num_processes=1 --main_process_port=29645 \
   --max_token_length 4096 --logging_steps 1 --warmup_steps 2 --num_proc 4
 ```
 
-**Step count.** The 10-row sample splits (`--test_size 0.2`) to 8 train / 2 eval; batch
-geometry 1 × 1 × 1 = global batch 1 → **8 steps/epoch × 4 epochs = 32 optimizer steps**
-(non-trivial). The run is reproducible: repeated runs give the same `train_loss` and
-finish with exit code 0.
-
 **Expected output** (loss on rows with unmasked completions falls to ~0):
 
 ```
@@ -334,25 +326,17 @@ NCCL version 2.29.7+cuda13.2
 {'loss': '0.005925', 'grad_norm': '3.71',  'mean_token_accuracy': '1',      'epoch': '2.125'}
 {'loss': '0.0006557','grad_norm': '0.719', 'mean_token_accuracy': '1',      'epoch': '3.625'}
 {'eval_loss': '1', 'eval_mean_token_accuracy': '0.7553', 'epoch': '4'}
-{'train_runtime': '23.36', 'train_samples_per_second': '1.37', 'train_steps_per_second': '1.37', 'train_loss': '0.1811'}
 [rank=0] ... INFO: Saving final model to .../lfm_ftaas_uc524_finetuned
 [rank=0] ... INFO: Training Complete.
 ```
 
-The run should finish with exit code 0.
-
-**GPU residency check.** Sample `nvidia-smi` compute-apps filtered to the pinned GPU from
-inside the run and confirm the single training process is the only VRAM holder; memory
-climbs from ~1.2 GiB (model loaded) through ~2.3 GiB (training ramps) to a steady peak.
-
-**Peak VRAM: ~7.3 GiB** (7511 MiB) for a 350M full fine-tune under ZeRO-3 on one GPU —
-about **9%** of the 80 GB card. The full run (load → 32 steps → eval → consolidated save)
-completes in ~25 s.
+To confirm residency on a shared node, sample `nvidia-smi` compute-apps filtered to the pinned
+GPU from inside the run and check the training process is the only VRAM holder.
 
 **Saved model (this is FULL FT — a full model dir, not a LoRA adapter):**
 
 ```
-final_model/model.safetensors   708,984,464 bytes  (~709 MB = 354.5M params × 2 bytes bf16)
+final_model/model.safetensors
 final_model/{config.json, generation_config.json, tokenizer.json, tokenizer_config.json, chat_template.jinja}
 ```
 
@@ -362,15 +346,8 @@ save-on-all-ranks fix (see MI355X quirks) both work on a single rank: the log sh
 cost — a full FT writes a full model and `save_strategy="epoch"` also writes per-epoch;
 use `--no_save` for pure smoke tests.)
 
-**Quirks found on H100 (all vendor-neutral):**
+**Quirks (all vendor-neutral):**
 
-- **`HF_DATASETS_CACHE` must point at writable storage.** With `HF_HOME` on a shared
-  read-mostly model cache, `datasets` tries to write its
-  arrow map cache under `$HF_HOME/datasets/...` and dies with
-  `PermissionError: [Errno 1] Operation not permitted` at the `os.chmod` step of
-  `Dataset.map`. Fix: set `HF_DATASETS_CACHE` to a writable path (fast local/tmpfs). This
-  is a mount-permission issue, not CUDA/torch — it would bite any framework writing a
-  dataset cache to that mount.
 - **Duplicate BOS on the `lfm_ftaas` path.** The script's own sanity check fires
   `Duplicate BOS token detected!`: the `lfm_ftaas` template embeds `<|startoftext|>` and
   the LFM2.5 tokenizer also prepends its own BOS, so the sequence starts
@@ -383,40 +360,27 @@ use `--no_save` for pure smoke tests.)
   hardware. Here `eval_loss` stays finite (~0.96–1.0) because the 2-row eval split
   contains unmasked completions (the `nan` seen on the MI355X 8-rank run needs a
   fully-masked eval shard).
-- **tf32 note.** The tf32 fast-path does not auto-engage on CUDA. On
-  torch 2.13 the legacy flag reads `torch.backends.cuda.matmul.allow_tf32 == False` and
-  the new API `torch.backends.cuda.matmul.fp32_precision == 'none'` by default (cuDNN's
-  `allow_tf32` is `True`). This is **moot for this trainer**: it runs bf16 end-to-end
-  (`--mixed_precision=bf16`, `bf16=True`, DeepSpeed `bf16.enabled=True`), so fp32 matmul
-  precision does not gate the compute. A real bf16 matmul returns finite values.
 - **torch deprecation warnings** (`all_gather_into_tensor` / `reduce_scatter_tensor`
   deprecated in favour of `*_single`) fire from DeepSpeed's ZeRO-3 gather on torch 2.13 —
   warnings only, the save completes correctly.
 
-**Multi-GPU / larger models on H100 (not covered here):**
+**Multi-GPU / larger models on NVIDIA (not covered here):**
+
 - A 2/8-GPU pass needs N free GPUs. The recipe is `--num_processes=N` with the same flags
   and a distinct `--main_process_port`; assert `torch.cuda.device_count()==N` after
   activating the venv.
-- **An ~8B full FT under ZeRO-3 will OOM on a single 80 GB H100** (the MI355X datapoint
-  below is ~167 GiB/GPU at 2 ranks). On H100 that needs either ≥ ~4–8 ranks so stage-3
-  sharding brings per-GPU VRAM under 80 GB (the MI355X 8-rank run hit 33.5 GiB/GPU), or
-  `--offload_optimizer` (CPU) — neither is exercised here.
+- **An ~8B full FT under ZeRO-3 will OOM on a single 80 GB card.** Use enough ranks for
+  stage-3 sharding to bring per-GPU VRAM under 80 GB, or `--offload_optimizer` (CPU).
+  Neither is exercised here.
 
-This path works on H100 with the changes below. No CUDA-specific *code* change is needed —
-the training path is vendor-neutral and the ROCm workarounds (comm-dtype guard,
-save-on-all-ranks, trl/transformers shim) are all no-ops or apply identically on CUDA. The
-only deviations are operational: install the native `torch 2.13.0+cu130` (the `2.11.0` pin
-has no cu130 wheel) with the torch line stripped from the requirements, swap the uncached
-default model to a cached one such as `LFM2.5-350M`, and set `HF_DATASETS_CACHE` to
-writable storage on a shared/offline node. Single-GPU 350M full FT: finite decreasing loss,
-32 steps, ~7.3 GiB peak, consolidated 709 MB bf16 model saved, exit code 0.
+## AMD MI355X (ROCm 7.2)
 
-## AMD MI355X (ROCm 7.2) — tested
-
-Verified on 2×AMD Instinct MI355X (gfx950, 288GB), ROCm 7.2.4, Ubuntu,
-Python 3.12.3 — **full fine-tuning of `google/gemma-4-E4B-it` (~8B) under ZeRO-3**,
-prompt-masked SFT on the shipped 10-row sample re-rendered to `prompt`/`completion`
-rows for the `gemma-4` template.
+**This path works with changes** — but no ROCm-specific *code* change is needed; the two
+script fixes below are stack-version fixes that apply to NVIDIA as well, and the only install
+deviation is the torch index URL. Covered on MI355X (gfx950), ROCm 7.2.4, at **2 and 8
+GPUs**: a full fine-tune of `google/gemma-4-E4B-it` (~8B) under ZeRO-3, prompt-masked SFT on
+the shipped 10-row sample re-rendered to `prompt`/`completion` rows for the `gemma-4`
+template.
 
 **Install:**
 
@@ -450,9 +414,7 @@ accelerate launch --num_processes=2 --main_process_port=29630 \
 [rank=0] ... INFO: Training Complete.   # + 15GB consolidated bf16 final_model/model.safetensors
 ```
 
-`rocm-smi` mid-run shows both GPUs busy (100%/70%, ~370W, up to 58% VRAM).
-
-**Quirks found while testing (all vendor-neutral except where noted):**
+**Quirks (all vendor-neutral except where noted):**
 
 - **trl 0.24.0 × transformers 5.5.0 skew** — `SFTTrainer` pops `push_to_hub_token`
   from `TrainingArguments.to_dict()`, but transformers 5.x removed that field; the
@@ -461,7 +423,7 @@ accelerate launch --num_processes=2 --main_process_port=29630 \
   `if rank == 0:`, but the stage-3 16-bit weight gather is a *collective*: rank 0 spun
   at 100% GPU against already-exited peers. The script now calls `save_model` on all
   ranks (the Trainer still writes files only from the main process).
-- **Char pre-filter trap on tiny samples** — with `--max_token_length 1024` the
+- **Char pre-filter on tiny samples** — with `--max_token_length 1024` the
   `4×` character pre-filter drops most of the long OTel sample rows (10 → ~3);
   use `--max_token_length 4096` to keep all 10.
 - Rows whose completion is fully truncated away log `loss: 0` (all labels `-100`) —
@@ -469,16 +431,11 @@ accelerate launch --num_processes=2 --main_process_port=29630 \
 - DeepSpeed warns `You are using ZeRO with an untested optimizer` for
   `adamw_bnb_8bit` and proceeds; training and 8-bit optimizer steps work on gfx950.
 
-This path works with changes on MI355X — no ROCm-specific code changes are needed; the two
-script fixes above are stack-version fixes that apply to NVIDIA as well. Install
-deviation is only the torch index URL.
+### 8-GPU run
 
-### 8-GPU run (8× MI355X, ROCm 7.2.4)
-
-**This path works as documented.** The 2-GPU ZeRO-3 recipe scales to all 8 MI355X
-unchanged — no new flags, no RCCL tuning, no OOM, no hang, no code change to the training
-path. The only addition is a `--no_save` switch for disk hygiene (see below). Repeated runs
-give identical results, exit code 0, with all 8 ranks reaching teardown.
+The 2-GPU ZeRO-3 recipe scales to all 8 MI355X **unchanged** — no new flags, no RCCL tuning,
+no code change to the training path. The only addition is a `--no_save` switch for disk
+hygiene (see below).
 
 **Launch:**
 
@@ -502,12 +459,11 @@ accelerate launch --num_processes=8 --main_process_port=29620 \
 ```
 
 Same model as the 2-GPU run (`google/gemma-4-E4B-it`, ~8B, full fine-tune — no LoRA).
-The dataset is the shipped 10-row OTel sample re-rendered to `prompt`/`completion` and
-repeated 25× (250 rows → 200 train / 50 eval) purely so that a global batch of 8 yields
-25 optimizer steps instead of 1.
+Replicate the shipped 10-row sample (e.g. 25× → 250 rows) so a global batch of 8 yields more
+than one optimizer step.
 
-**Parallelism actually used** — read off the live `DeepSpeedEngine`, not the CLI flag
-(all 8 ranks print an identical line):
+**Check the parallelism actually used** by reading it off the live `DeepSpeedEngine`, not the
+CLI flag (all ranks print an identical line):
 
 ```
 [ZERO-PROOF] rank=0 world_size=8 zero_stage=3 partition_grads=True partition_params=True
@@ -516,11 +472,8 @@ repeated 25× (250 rows → 200 train / 50 eval) purely so that a global batch o
 [ZERO-PROOF] rank=0 local_param_elems=0 full_model_elems=7996156448 shard_ratio=0.0000
 ```
 
-ZeRO stage 3 with both parameter and gradient partitioning on, world size 8, batch
-geometry 1 × 1 × 8 = **global batch 8**, no CPU/NVMe offload (`offload_optimizer` left
-off — there is no memory pressure to justify it). `local_param_elems=0` against a
-7,996,156,448-element model is the stage-3 signature: outside a gather context the
-module holds no materialised parameters at all.
+`local_param_elems=0` against a multi-billion-element model is the stage-3 signature: outside
+a gather context the module holds no materialised parameters at all.
 
 Note: DeepSpeed 0.19.4 hard-creates its logger at `WARNING`
 (`deepspeed/utils/logging.py:61`) and `transformers/integrations/deepspeed.py:602`
@@ -528,126 +481,55 @@ resets it again, so the familiar `Creating bf16 ZeRO stage 3 optimizer` banner n
 reaches the log. Introspecting the engine (as above) is the reliable check — a run log
 that is silent about ZeRO is **not** evidence that ZeRO is off.
 
-**Expected output** — loss, throughput, clean exit:
+**Expected output** — falling loss, clean exit:
 
 ```
 {'loss': '54.25', 'grad_norm': '1983',  'mean_token_accuracy': '0.08069', 'epoch': '0.04'}
 {'loss': '44.99', 'grad_norm': '1626',  'mean_token_accuracy': '0.07015', 'epoch': '0.08'}
-{'loss': '33.87', 'grad_norm': '1255',  'mean_token_accuracy': '0.1576',  'epoch': '0.12'}
    ...
 {'loss': '0.2654','grad_norm': '14.8',  'mean_token_accuracy': '0.9827',  'epoch': '1'}
-{'train_runtime': '63.37', 'train_samples_per_second': '3.156', 'train_steps_per_second': '0.395'}
-100%|##########| 25/25 [01:03<00:00,  2.12s/it]
 [rank=0] INFO: --no_save set: skipping checkpoint and final model save.
 [rank=0] INFO: Training Complete.
 ```
 
-The run should finish with exit code 0: finite and monotonically falling loss
-(54.25 → 0.27 over 25 steps; the sample is repeated 25× so the model memorises it —
-expected for a smoke test), **~2.1 s/step**, 3.16 samples/s at global batch 8.
-
-**Checking all 8 GPUs are genuinely busy** (`rocm-smi` sampled every 20 s during the run;
-`procs: 9` = 8 ranks + launcher):
-
-```
-Device  Temp    Power     SCLK     VRAM%  GPU%
-0       44.0°C  325.0W    2390Mhz  7%     96%
-1       44.0°C  319.0W    2403Mhz  7%     100%
-2       43.0°C  329.0W    2408Mhz  7%     96%
-3       47.0°C  319.0W    2392Mhz  7%     99%
-4       46.0°C  323.0W    2400Mhz  7%     93%
-5       47.0°C  324.0W    2400Mhz  7%     95%
-6       46.0°C  325.0W    2395Mhz  7%     96%
-7       45.0°C  331.0W    2404Mhz  7%     99%
-```
-
-Every GPU should sit at 93–100 % utilisation and ~2.4 GHz across mid-run samples — no
-idle rank, no straggler.
-
-**Per-GPU VRAM: 2 ranks vs 8 ranks (the ZeRO-3 sharding datapoint)**
-
-| | 2×MI355X | 8×MI355X |
-|---|---|---|
-| `rocm-smi` peak VRAM per GPU | up to 58 % (~167 GiB) | **18 % (47–53 GiB)** |
-| `torch.cuda.max_memory_allocated` | — | **33.51 GiB** (identical on all 8 ranks) |
-| `torch.cuda.max_memory_reserved` | — | 42.46–42.82 GiB |
-| Steady-state mid-training | — | 21.7–22.5 GiB |
-
-Going 2 → 8 ranks cut peak per-GPU VRAM roughly **3×**. The allocation is near-perfectly
-even across ranks (33.51 GiB on every one), which is what correct stage-3 partitioning
-of parameters, gradients and optimizer state should look like. Headroom is enormous —
-288 GiB cards running at 18 %, so batch size, sequence length or a much larger model all
-have room; this 8B full fine-tune is nowhere near the limit of this hardware.
+Sample `rocm-smi` during the run to confirm no idle rank and no straggler: every GPU busy,
+per-GPU VRAM even across ranks (that evenness is what correct stage-3 partitioning looks
+like), and `procs` reading N+1 (N ranks plus the launcher).
 
 **What differs from the 2-GPU run:**
 
-- **New `--no_save` flag** (the only script change). `save_strategy="epoch"` was
-  hardcoded, and a 2-GPU run leaves 60–134 GB of ZeRO-3 checkpoints on disk; an
-  8-way stage-3 checkpoint of an 8B model plus the consolidated 16-bit gather is far too
-  large for a smoke test. `--no_save` sets `save_strategy="no"`, forces
+- **New `--no_save` flag** (the only script change). ZeRO-3 checkpoints of an 8B model are
+  far too large for a smoke test. `--no_save` sets `save_strategy="no"`, forces
   `load_best_model_at_end=False` (transformers rejects "load best" without saving), and
-  skips the final `save_model`. Default behaviour is unchanged. **The 8-GPU run
-  therefore did not exercise the ZeRO-3 save path** — the rank-0-only save deadlock
-  fixed for the 2-GPU run was not re-tested at 8 ranks, and if anything an 8-way gather
-  makes that collective *more* deadlock-prone. Treat saving at 8 ranks as untested.
-- **`--main_process_port 29620`** instead of 29630, to avoid colliding with other jobs.
-- **No RCCL/NCCL environment variables are needed.** RCCL 2.27.7 negotiates the 8-way
-  topology on its own; the run log shows no RCCL warnings or fallbacks.
-- **No OOM and no batch-size change.** Per-device batch stays at 1; global batch grows
-  2 → 8 simply by adding ranks.
-- **No hang anywhere** — not at init, not at the stage-3 param AllGather, not at
-  teardown. All 8 ranks print their exit line. DeepSpeed JIT-builds nothing new via
-  `hipcc`, so there is no slow first step.
-- The `communication_data_type='fp32'` ROCm guard the script applies under
-  DeepSpeed+bf16 fires exactly as it does at 2 ranks (`comm_dtype=torch.float32` above)
-  and causes no problem at 8-way.
-- **Watch out — stale GPU pin.** A venv can end up with
+  skips the final `save_model`. Default behaviour is unchanged. **The 8-GPU run therefore
+  did not exercise the ZeRO-3 save path** — treat saving at 8 ranks as untested.
+- **A distinct `--main_process_port`**, to avoid colliding with other jobs.
+- **No RCCL/NCCL environment variables are needed.**
+- **No batch-size change.** Per-device batch stays at 1; global batch grows with the ranks.
+- The `communication_data_type='fp32'` ROCm guard the script applies under DeepSpeed+bf16
+  fires exactly as it does at 2 ranks and causes no problem at 8-way.
+- **Note — stale GPU pin.** A venv can end up with
   `export CUDA_VISIBLE_DEVICES=<1-2 GPUs>` appended to `bin/activate` by an earlier
   single-GPU session. Always re-export both
   `HIP_VISIBLE_DEVICES` and `CUDA_VISIBLE_DEVICES` after sourcing the venv and assert
   `torch.cuda.device_count() == 8` before launching, or you will silently "8-GPU" train
   on two cards.
 
-**One honest wart:** `eval_loss` comes back `nan` at 8 ranks (train loss is fine). This is
-the tiny-sample truncation artifact already documented above — rows whose completion is
-truncated away have every label set to `-100`; at 2 ranks that surfaces as `loss: 0`, and
-at 8 ranks a fully-masked eval shard turns the aggregated mean into `nan`. It is a
-property of the 10-row toy dataset, not of ROCm or of 8-way ZeRO-3. Use a real eval set
-(or `--test_size 0`) for anything beyond a smoke test.
+**`eval_loss` comes back `nan` at 8 ranks** (train loss is fine) — the tiny-sample truncation
+artifact above: rows whose completion is truncated away have every label set to `-100`, and a
+fully-masked eval shard turns the aggregated mean into `nan`. Use a real eval set (or
+`--test_size 0`) for anything beyond a smoke test.
 
-## Hardware support & evidence
+## Hardware support
 
 | | NVIDIA | AMD |
 |---|---|---|
-| Status here | **Tested** — 8×H100 80GB, CUDA 13.0 | **Tested** — 2×MI355X and 8×MI355X (gfx950), ROCm 7.2.4, torch 2.11.0+rocm7.2 |
+| Status here | **Works** — 1×H100 80GB, CUDA 13.0 (multi-GPU not covered) | **Works** — 2× and 8×MI355X (gfx950), ROCm 7.2.4, torch 2.11.0+rocm7.2 |
 | PyTorch | PyPI pins in requirements | ROCm wheel index / `rocm/pytorch` images |
 | DeepSpeed ops | JIT via `nvcc` | JIT via `hipcc` |
 | 8-bit optimizer | bitsandbytes PyPI wheel | bitsandbytes PyPI wheel (ROCm build) |
 
-Verified upstream sources:
-
-- **DeepSpeed README** (github.com/deepspeedai/DeepSpeed) — lists a ROCm compiler
-  (`hipcc`) alongside `nvcc` as a supported requirement; names AMD MI100 and MI200 among
-  the GPUs it develops and tests against; runs a dedicated `amd-mi200` CI pipeline; and
-  its 2026/05 news item covers SDMA offload for ZeRO-3 collectives specifically on AMD
-  GPUs.
-- **AMD ROCm AI-ecosystem docs** (rocm.docs.amd.com, "Install PyTorch for ROCm 7.14.0")
-  — documents PyTorch 2.10–2.12 for ROCm on Python 3.11–3.14 via `rocm/pytorch` Docker
-  images and pip.
-- **PyTorch ROCm wheel index** (download.pytorch.org/whl/rocm7.0) — carries
-  `torch-2.10.0+rocm7.0` cp312 manylinux wheels.
-- **bitsandbytes installation docs** (github.com/bitsandbytes-foundation/bitsandbytes)
-  — official AMD ROCm support; PyPI wheels built for ROCm 6.4.4–7.14 covering Instinct
-  gfx90a/gfx942/gfx950 — relevant because `adamw_bnb_8bit` is this trainer's default
-  optimizer.
-- **flash-attention** (github.com/ROCm/flash-attention README) — ROCm ≥ 6.0 with
-  composable_kernel and Triton backends (MI200x–MI355x). Only relevant to the Mistral
-  fallback path here.
-
-**Other hardware (upstream claims — not verified here):** Intel Gaudi/HPU (upstream CI),
-Intel XPU (upstream CI), Intel Xeon CPU (upstream CI), Huawei Ascend NPU (contributor),
-Tecorigin SDAA (contributor) — per the DeepSpeed README's "Contributed HW support"
-accelerator table. This repo provides setup instructions for NVIDIA and AMD only.
+This repo provides setup instructions for NVIDIA and AMD only.
 
 ## Notes
 

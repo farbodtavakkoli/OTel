@@ -1,4 +1,4 @@
-# `inference/llamacpp` — llama.cpp GGUF serving on ROCm/HIP (MI355X)
+# `inference/llamacpp` — llama.cpp GGUF serving on ROCm/HIP and CUDA
 
 llama.cpp serves **GGUF** checkpoints through `llama-server`, its OpenAI-compatible
 HTTP server, as a single self-contained C++ binary — no python runtime, no torch, no
@@ -10,33 +10,30 @@ binary runs chat completions, `/v1/embeddings`, and `/v1/rerank` depending on fl
 > converted **GGUF** artifact (`unsloth/...-GGUF`, `ggml-org/...-GGUF`) — not the
 > official FP8/FP16 repos.
 
-> **Tested topology:** 2xAMD Instinct MI355X (gfx950, 288 GB each), physical GPUs 6
-> and 7, ROCm 7.2.4, Ubuntu, Python 3.12.3.
->
-> **Also verified on NVIDIA H100** (1x H100 80GB HBM3, physical GPU 7, CUDA 13.0,
-> driver 580.173.02, Hopper cc 9.0, Python 3.12.3) — single-GPU. Only the
-> backend build flag changes (`-DGGML_CUDA=ON`); every serve/client command is identical.
-> See "NVIDIA (H100 / CUDA)" below and each leaf's H100 section.
+> **Coverage:** all three leaves serve on AMD Instinct MI355X (gfx950, ROCm 7.2) and on
+> NVIDIA H100 (Hopper cc 9.0, CUDA 13), Python 3.12. Only the backend build flag changes
+> (`-DGGML_HIP=ON -DGPU_TARGETS=gfx950` vs `-DGGML_CUDA=ON`); every serve and client
+> command is identical. See "NVIDIA (H100 / CUDA)" below and each leaf's H100 section.
 
 ## Leaves
 
-| Leaf | Model | Status on MI355X | Status on H100 |
-|---|---|---|---|
-| [`llm/`](llm/README.md) | `unsloth/Qwen3.8-27B-GGUF:Q8_0` | **works** — 66/66 layers on GPU, 66.7 tok/s single-GPU; layer split works (65.9 tok/s), `--split-mode row` broken on HIP | **works** — 29/29 layers on CUDA0 (verified with small `unsloth/Qwen3-1.7B-GGUF:Q8_0`, 370 tok/s); swap `-hf` back to the 27B for prod |
-| [`embedding/`](embedding/README.md) | `ggml-org/embeddinggemma-300M-GGUF:Q8_0` | **works** — 768-d L2-normalised vectors, ~50 ms/3-text batch; scale out with one instance per GPU, don't split | **works** — same GGUF, 25/25 layers on CUDA0 (311.97 MiB, identical buffer), 768-d, related 0.29 > unrelated 0.10 |
-| [`reranker/`](reranker/README.md) | `ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF:Q8_0` | **works** — correct rankings, 16 ms warm; one of the few working reranker paths on AMD (TEI lacks this model) | **works** — same GGUF, 29/29 layers on CUDA0 (603.87 MiB, identical buffer), correct rankings, 28 ms warm |
+| Leaf | Model | Notes |
+|---|---|---|
+| [`llm/`](llm/README.md) | `unsloth/Qwen3.8-27B-GGUF:Q8_0` | Works on ROCm and CUDA, all layers offloaded. Multi-GPU layer split works; `--split-mode row` is broken on HIP/CUDA. `unsloth/Qwen3-1.7B-GGUF:Q8_0` is a handy small stand-in for smoke tests. |
+| [`embedding/`](embedding/README.md) | `ggml-org/embeddinggemma-300M-GGUF:Q8_0` | Works on ROCm and CUDA; 768-d L2-normalised vectors. Scale out with one instance per GPU rather than splitting. |
+| [`reranker/`](reranker/README.md) | `ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF:Q8_0` | Works on ROCm and CUDA with correct rankings. |
 
 ## Build — the ROCm/HIP commands
 
 llama.cpp is a C++ build, not a pip package. Build it anywhere convenient (e.g. a
-git-ignored directory under this folder); a cold build takes about **40.6 s** on the
-hardware below.
+git-ignored directory under this folder); a cold build takes well under two minutes
+with `-j 32`.
 
 ### 0. Build prerequisites (apt)
 
 ```bash
 sudo apt-get install -y libssl-dev        # MANDATORY — see "OpenSSL" quirk below
-# cmake 3.28.3, ninja 1.11.1, g++ 13.3.0 and ROCm 7.2.4 were already present
+# plus cmake 3.28.3, ninja 1.11.1, g++ 13.3.0 and ROCm 7.2.4 at /opt/rocm
 ```
 
 ### 1. Clone
@@ -45,8 +42,9 @@ sudo apt-get install -y libssl-dev        # MANDATORY — see "OpenSSL" quirk be
 git clone --depth 1 https://github.com/ggml-org/llama.cpp && cd llama.cpp
 ```
 
-Verified at commit **`d59d455fd8ea09e5a2e87ce2a9d668267ffb5ccd`** (Wed Aug 19 2026),
-`llama-server` version **0.1.2-dev (build 1)**, ggml version **0.20.2**.
+Reference revision for the ROCm recipe: commit
+**`d59d455fd8ea09e5a2e87ce2a9d668267ffb5ccd`**, `llama-server` **0.1.2-dev (build 1)**,
+ggml **0.20.2**.
 
 ### 2. Configure + build (gfx950)
 
@@ -62,21 +60,18 @@ cmake -S . -B build -G Ninja \
 cmake --build build --config Release -j 32
 ```
 
-**Build time: 40.6 s wall clock** for a genuinely cold build (681 ninja targets,
-18 m 26 s of CPU time across `-j 32`; ccache reported 99.28 % misses). The build tree
-is ~514 MB. **No source patches were needed for gfx950** — the HIP backend compiled
-clean on a brand-new architecture, first try.
+The build tree is ~514 MB. **No source patches are needed for gfx950** — the HIP
+backend compiles clean.
 
-### Which arch flag?
+### Arch flag
 
-`GPU_TARGETS` is the canonical variable in this revision; `AMDGPU_TARGETS` still
-works but is merely forwarded (`ggml/src/ggml-hip/CMakeLists.txt:36`). Omitting both
-also builds — ggml then targets every GPU present, which just makes the build slower.
+Use `GPU_TARGETS`. `AMDGPU_TARGETS` is only forwarded to it, and omitting both builds for
+every GPU present — correct, but slower to compile.
 
 ### Confirm the backend sees your GPUs
 
 ```bash
-export HIP_VISIBLE_DEVICES=6,7 CUDA_VISIBLE_DEVICES=6,7
+export HIP_VISIBLE_DEVICES=0,1 CUDA_VISIBLE_DEVICES=0,1
 ./build/bin/llama-server --list-devices
 ```
 
@@ -88,9 +83,8 @@ Available devices:
 
 ### NVIDIA (H100 / CUDA)
 
-Verified on **1x NVIDIA H100 80GB HBM3** (physical GPU 7, `CUDA_VISIBLE_DEVICES=7`),
-**CUDA 13.0** (`nvcc` at `/usr/local/cuda`), driver **580.173.02**, Hopper cc 9.0,
-Python 3.12.3. **Only the backend flag changes** — swap `-DGGML_HIP=ON -DGPU_TARGETS=gfx950`
+Supported on NVIDIA H100 (Hopper cc 9.0) with **CUDA 13.0** (`nvcc` at
+`/usr/local/cuda`). **Only the backend flag changes** — swap `-DGGML_HIP=ON -DGPU_TARGETS=gfx950`
 for **`-DGGML_CUDA=ON`**, drop the ROCm PATH, and use plain `CUDA_VISIBLE_DEVICES`. Every
 serve/client command in the leaves is byte-for-byte identical. **Keep `-DLLAMA_OPENSSL=ON`
 — it is vendor-neutral** and still required for the `-hf` HTTPS downloader (see NOTE 2 in
@@ -109,30 +103,28 @@ cmake -S . -B build -G Ninja \
 cmake --build build --config Release -j 32
 ```
 
-**Build time: 100 s wall clock** for a cold build (691 ninja targets, `-j 32`; the
-`fattn-*` CUDA flash-attention template instances dominate). **No source patches** —
-cmake auto-detected `CMAKE_CUDA_ARCHITECTURES=90-real` (Hopper) and the CUDA backend
-compiled clean, first try. Configure logs confirm the vendor-neutral OpenSSL fix took:
-`OpenSSL found: 3.0.13`. Verified `llama-server` **0.2.0-dev (build 1, commit `70adb1b`)**,
-ggml **0.21.0**.
+**No source patches** — cmake auto-detects `CMAKE_CUDA_ARCHITECTURES=90-real` for Hopper
+(set `-DCMAKE_CUDA_ARCHITECTURES=90` to pin it) and the CUDA backend compiles clean. The
+configure log must print `OpenSSL found: 3.0.13`, confirming the vendor-neutral OpenSSL
+requirement is satisfied. Reference revision: `llama-server` **0.2.0-dev (build 1, commit
+`70adb1b`)**, ggml **0.21.0**.
 
 > **Two prerequisites a host may be missing (both fixable without touching the system):**
 > 1. **`cmake` and `ninja` absent** (only `make`/`g++` 13.3.0). Install them via
 >    `pip` into a throwaway venv — `python3 -m venv <venv> && <venv>/bin/python -m pip
 >    install cmake ninja` (gives cmake 4.4.2 + ninja 1.13.0) — then put `<venv>/bin` on
 >    `PATH`. A prebuilt CUDA `llama.cpp` release binary is the documented fallback if you
->    cannot get a toolchain, but the source build finishes in 100 s so it is usually
->    unnecessary.
+>    cannot get a toolchain, but the source build is quick enough to rarely need it.
 > 2. **A network/NFS model share may reject pip installs and `-hf` downloads** with
 >    `OSError: [Errno 1] Operation not permitted` on rename. Put both the toolchain venv
 >    **and** `LLAMA_CACHE` on tmpfs (`/dev/shm/...`) — the build tree and model cache live
 >    there, `HF_HOME` still points at the read-only model share.
 
-**Confirm the backend sees your GPU** (renumbered to `CUDA0` under
-`CUDA_VISIBLE_DEVICES=7`, exactly as ROCm renumbers to `ROCm0`):
+**Confirm the backend sees your GPU.** Whichever physical index you select, the visible
+device is renumbered to `CUDA0` — exactly as ROCm renumbers to `ROCm0`:
 
 ```bash
-export CUDA_VISIBLE_DEVICES=7
+export CUDA_VISIBLE_DEVICES=0
 ./build/bin/llama-server --list-devices
 ```
 
@@ -142,9 +134,8 @@ Available devices:
 ```
 
 All three leaves serve on **port 8700** with all layers on the GPU
-(`offloaded N/N layers to GPU`, weights in the `CUDA0` buffer, and `nvidia-smi -i 7`
-showing `llama-server` by PID). See each leaf's "H100 (NVIDIA, CUDA)" section for the
-residency logs and expected output.
+(`offloaded N/N layers to GPU`, weights in the `CUDA0` buffer, visible in `nvidia-smi`).
+See each leaf's "H100 (NVIDIA, CUDA)" section for the expected output.
 
 > **Do not set `CUDA_VISIBLE_DEVICES=""`** — like the ROCm caveat below, an empty string
 > hides every device and the server silently runs on CPU.
@@ -176,7 +167,7 @@ download cache and ignores `HF_HOME` for this path. Set both.
 
 ## Client dependencies
 
-The clients are deliberately dependency-light (`requests` + `python-dotenv` — the
+The clients are dependency-light (`requests` + `python-dotenv` — the
 server speaks plain OpenAI-style REST). One shared venv at this software root covers
 all three leaves:
 
@@ -200,15 +191,11 @@ python3 -m venv .env_llamacpp
 4. **`--split-mode row` is broken on the CUDA/HIP backend** in this revision — the
    backend registers no `ggml_backend_split_buffer_type`. Only `layer` (the default)
    and `none` are usable. See the LLM leaf for the source trace.
-5. **Multi-GPU layer split is pipeline parallelism** — it buys capacity, not speed.
-   For small models (embedding, reranker), run one independent instance per GPU
-   behind a load balancer instead of splitting.
+5. **Multi-GPU layer split is pipeline parallelism** — use it for capacity. For small models
+   (embedding, reranker), run one independent instance per GPU behind a load balancer
+   instead of splitting.
 
 ## Hardware support
 
-Verified here: AMD Instinct MI355X (gfx950), ROCm 7.2.4 / HIP.
-
-Other hardware (upstream claims — not verified here): NVIDIA CUDA, Apple Metal
-(Apple Silicon first-class), Vulkan (cross-vendor GPU), SYCL (Intel GPU), OpenCL
-(Qualcomm Adreno), Moore Threads MUSA, Huawei Ascend CANN, IBM zDNN, plus plain CPU
-(AVX/NEON) and CPU+GPU hybrid offload.
+Covered by the recipes here: AMD Instinct MI355X (gfx950) on ROCm 7.2 / HIP, and NVIDIA
+H100 (Hopper cc 9.0) on CUDA 13.

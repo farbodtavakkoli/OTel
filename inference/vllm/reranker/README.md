@@ -10,26 +10,17 @@ Qwen3-Reranker is natively a **decoder-only yes/no-token scorer**: the original 
 asks the model "does this document satisfy the query?" and reads the probability mass on
 the `yes` vs `no` tokens. vLLM converts that into an efficient **sequence-classification**
 path, which is why the serve command needs the `--hf_overrides` JSON and the jinja chat
-template — they are not optional decoration, they are what performs the conversion.
+template — both are required: they are what performs the conversion.
 
 Use this stage as the precision step after a cheap recall step: embed-and-retrieve top-50
-with `inference/vllm/embedding`, then rerank down to top-5 here. HF TEI cannot serve this
-model (its reranker support targets encoder classifiers like XLM-RoBERTa/ModernBERT), so
-vLLM is the natural choice if you already run vLLM for the other two workloads.
+with `inference/vllm/embedding`, then rerank down to top-5 here.
 
 ## Install
 
-**There is no ROCm vLLM wheel.** Verified against the pinned versions below:
-
-- PyPI `vllm==0.27.1` ships two binary wheels (`manylinux_2_28_x86_64`, `aarch64`), both
-  **CUDA-only** — hard deps on `flashinfer-python`, `nvidia-cudnn-frontend`,
-  `nvidia-cutlass-dsl[cu13]`, `torch==2.13.0` (CUDA build).
-- `https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2/` has `torch`, `torchaudio`,
-  `apex`, `jaxlib`, `tensorflow_rocm` — **no `vllm`**.
-- Source build for `gfx950` works but is an hours-long compile.
-
-The preferred pip/venv route is therefore unavailable on ROCm, and the verified route is a
-**container**. The validated runs used
+**There is no ROCm vLLM wheel.** PyPI `vllm` publishes CUDA-only wheels that hard-depend on
+CUDA torch, and `repo.radeon.com` publishes none, so the pip/venv route is unavailable on
+ROCm (a gfx950 source build works but takes hours) and the route that works is a
+**container**. Known-working image:
 `rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2`:
 
 ```bash
@@ -48,16 +39,16 @@ docker run -d --name vllm_bringup \
   rocm/verl:verl-0.7.1.amd0_rocm7.0.2_ubuntu22.04_py3.12_vllm0.20.2 sleep infinity
 ```
 
-Two gotchas:
+Two things to note:
 
 - The image has **no `render` group** — the canonical `--group-add render` fails with
   `unable to find group render`. Use the host's numeric GIDs (typically `video`=44,
   `render`=993), as the `getent` substitutions above do.
-- Pinning by **render node** (`renderD128` = the first GPU, `renderD136` = the second) instead
-  of `HIP_VISIBLE_DEVICES` makes the isolation structural: `torch.cuda.device_count()==2`
-  inside the container regardless of what any tool does to the environment.
+- Pinning by **render node** (`renderD128`, `renderD136` — match them to your own cards with
+  `ls /dev/dri`) instead of `HIP_VISIBLE_DEVICES` makes the isolation structural: the
+  container sees exactly those two cards.
 
-Verified versions:
+Versions inside that image:
 
 | Component | Version |
 |---|---|
@@ -71,7 +62,7 @@ Verified versions:
 Client side (host, outside the container) needs only `python-dotenv`:
 
 ```bash
-pip install -r requirements_reranker_vllm.txt
+pip install -r ../requirements.txt
 ```
 
 ## Environment & secrets
@@ -93,7 +84,7 @@ Never set `CUDA_VISIBLE_DEVICES=""` on ROCm — it hides every GPU.
 
 ## Serve
 
-Single GPU (the verified command). `qwen3_reranker.jinja` ships in this folder, copied
+Single GPU. `qwen3_reranker.jinja` ships in this folder, copied
 verbatim from `/workspace/vllm/examples/pooling/score/template/qwen3_reranker.jinja` in
 the image, so the command is self-contained:
 
@@ -142,24 +133,12 @@ curl -s http://localhost:8002/v1/rerank -H 'Content-Type: application/json' -d '
  ]}'
 ```
 
-## Single-GPU results
+## Single-GPU behaviour on gfx950
 
 **This works, unmodified.** The documented command — `--hf_overrides` JSON plus
-jinja template — works as written on the first attempt on one MI355X.
+jinja template — works as written on one MI355X.
 
-| Measurement | Value |
-|---|---|
-| Cold start (launch → `Application startup complete`) | **~46 s** |
-| Weights load | 1.10 s |
-| Model-load VRAM | **1.12 GiB** |
-| `init engine` (profile + KV cache + warmup) | 13.50 s (compilation 9.64 s) |
-| Available KV cache | 263.12 GiB |
-| GPU KV cache size | 2,463,424 tokens |
-| Max model len | 40960 (32K+ context, as documented) |
-| Total process VRAM (`rocm-smi`, default util 0.9) | 285.8 GB |
-
-**Expected output** from `/v1/rerank` — note the **four-orders-of-magnitude** separation between
-relevant and irrelevant documents:
+**Expected output** from `/v1/rerank`:
 
 ```
 model: qwen3-reranker
@@ -170,77 +149,32 @@ model: qwen3-reranker
 usage: {'prompt_tokens': 372, 'total_tokens': 372}
 ```
 
-Both ROCm-related documents rank above both irrelevant ones, and the yes/no scoring is
-saturated in the right direction — this is the reranker behaving exactly as designed, not
-a degenerate output.
+Both ROCm-related documents must rank above both irrelevant ones.
 
-## Multi-GPU (TP=2) results
+## Multi-GPU (TP=2) on gfx950
 
 **TP=2 works.** Unlike EmbeddingGemma (3 attention heads, TP=2 rejected),
 Qwen3-Reranker-0.6B has a head count divisible by 2, so tensor parallelism is legal and
-vLLM shards it cleanly across both MI355X cards.
+vLLM shards it cleanly across both MI355X cards, on RCCL, with no extra flags. Ranking is
+identical to TP=1 (scores agree to ~1e-5).
 
-Distributed init came up on RCCL (`nccl` maps to RCCL on ROCm):
-
-```
-DP group leader: node_rank=0, node_rank_within_dp=0, master_addr=127.0.0.1, world_size=2, local_world_size=2
-(Worker pid=7969) world_size=2 rank=0 local_rank=0 distributed_init_method=tcp://127.0.0.1:48119 backend=nccl
-(Worker pid=7970) world_size=2 rank=1 local_rank=1 distributed_init_method=tcp://127.0.0.1:48119 backend=nccl
-```
-
-**The sharding is real, and the numbers prove it** — per-rank weights halve and the KV
-cache doubles:
-
-| Measurement | TP=1 | TP=2 | |
-|---|---|---|---|
-| Model-load VRAM **per GPU** | 1.12 GiB | **0.57 GiB** | ≈ halved — weights genuinely split |
-| GPU KV cache size | 2,463,424 tokens | **4,942,128 tokens** | ≈ doubled — two cards' pools |
-| Available KV cache per GPU | 263.12 GiB | 263.95 GiB | unchanged per card, as expected |
-| `init engine` | 13.50 s | 14.96 s (compilation 10.62 s) | +1.5 s for RCCL setup |
-
-`rocm-smi` with TP=2 resident — **both GPUs loaded, other cards untouched**:
-
-```
-device,VRAM Total Memory (B),VRAM Total Used Memory (B)
-card0,309220868096,286668083200     <- rank 0  (286.7 GB)
-card1,309220868096,286668226560     <- rank 1  (286.7 GB)
-card2,309220868096,298176512        <- idle, another job's card
-```
-
-Correctness held exactly across the topology change:
-
-| Document | TP=1 score | TP=2 score |
-|---|---|---|
-| vLLM supports AMD ROCm… | 0.999503 | **0.999502** |
-| SGLang also provides a ROCm build… | 0.992390 | **0.991847** |
-| PostgreSQL is a relational database… | 0.000128 | **0.000127** |
-| The Eiffel Tower is located in Paris… | 0.000027 | **0.000028** |
-
-Identical ranking, scores agreeing to ~1e-5 — the residual drift is ordinary
-non-deterministic reduction order across ranks, not a numerical problem.
-
-**Caveat, stated plainly:** TP=2 *works* but is not *useful* for a 0.6 B model on 288 GB
-cards. It halves a 1.12 GiB footprint that was never a constraint, while adding a
-cross-GPU all-reduce to every forward pass. For production, prefer **two independent
-single-GPU replicas** (as demonstrated in [`../embedding/README.md`](../embedding/README.md))
-— that doubles throughput instead of splitting one model's latency. TP=2 is documented here
-as evidence that multi-GPU serving functions on this hardware, and it does.
+At this model size prefer **two independent single-GPU replicas** (as shown in
+[`../embedding/README.md`](../embedding/README.md)) over TP.
 
 ## H100 (NVIDIA)
 
 **This works unmodified.** vLLM `0.27.1` (pip / CUDA 13.0) serves
 `Qwen/Qwen3-Reranker-0.6B` on one H100 80GB with the documented `--hf_overrides` JSON plus
-`qwen3_reranker.jinja` — both confirmed **mandatory** — correct ranking with a
-four-orders-of-magnitude relevant/irrelevant split on the first attempt, no code changes.
+`qwen3_reranker.jinja` — both **mandatory** — giving correct ranking, no code changes.
 
-### Install (pip route — the AMD "container-only" caveat does NOT apply on NVIDIA)
+### Install (pip route — no container needed)
 
-The "no ROCm vLLM wheel" fact above is AMD-specific. On **NVIDIA the pip wheel is native**.
-One shared venv at the stack root (`inference/vllm/.env_vllm`) serves all three leaves:
+On **NVIDIA the pip wheel is native**. One shared venv at the stack root
+(`inference/vllm/.env_vllm`) serves all three leaves:
 
 ```bash
 python3 -m venv .env_vllm && source .env_vllm/bin/activate
-pip install torch numpy      # -> torch 2.13.0+cu130 (native CUDA 13)
+pip install torch numpy      # -> the current CUDA 13 build (plain PyPI)
 pip install vllm             # -> vllm 0.27.1; torch stays 2.13.0+cu130
 pip install python-dotenv
 ```
@@ -250,7 +184,7 @@ pip install python-dotenv
 | vLLM | `0.27.1` (pip wheel, CUDA) |
 | torch | `2.13.0+cu130` |
 | transformers | `5.15.1` |
-| driver / CUDA | 580.173.02 / 13.0, H100 80GB HBM3 |
+| CUDA | 13.0, H100 80GB HBM3 |
 
 ### Serve (the H100 command — identical to ROCm minus the HIP var)
 
@@ -276,8 +210,6 @@ checkpoint **as a sequence classifier**:
 
 ```
 [model.py:645] Resolved architecture: Qwen3ForSequenceClassification
-[default_loader.py:430] Loading weights took 22.15 seconds
-[gpu_model_runner.py:5405] Model loading took 1.12 GiB memory and 24.64 seconds
 [api_server.py:678] Supported tasks: ['classify', 'token_classify']
 Route: /score / /v1/score / /rerank / /v1/rerank
 INFO:     Application startup complete.
@@ -295,15 +227,10 @@ rank  index  score       document
    4      3  0.000027  The Eiffel Tower is located in Paris, France.
 ```
 
-Both ROCm docs rank above both irrelevant ones with a **four-orders-of-magnitude** split —
-the reranker behaving exactly as designed. This **ranking is identical to MI355X**, with
-scores agreeing to ~1e-4 (MI355X: 0.999505 / 0.992223 / 0.000128 / 0.000028); the residual
-drift is ordinary cross-hardware reduction order. **Model-load VRAM 1.12 GiB matches MI355X
-exactly.** (Reranker score *scale* is template-driven, so the check is the RANKING, not the
-absolute value — and the ranking matches.)
+Both ROCm docs must rank above both irrelevant ones. Reranker score *scale* is
+template-driven, so the check is the ranking, not the absolute value.
 
-The scoring is genuinely **query-conditioned**, not a cached response — swapping the query
-flips the order correctly:
+Swapping the query flips the order, which confirms the scoring is query-conditioned:
 
 ```
 query : Where is the Eiffel Tower located?
@@ -312,37 +239,27 @@ query : Where is the Eiffel Tower located?
    3      0  0.000012  vLLM supports AMD ROCm and runs on MI300/MI350 Instinct GPUs.
 ```
 
-### GPU residency check (sampled while serving)
+### GPU residency check
 
 ```bash
 nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory --format=csv,noheader
 nvidia-smi --query-gpu=index,memory.used --format=csv,noheader
 ```
 
-Expect ~74.9 GB resident on the single selected GPU — this is the default
-`--gpu-memory-utilization 0.9` KV pool, **not** the weights (the true weight footprint is
-the `Model loading took 1.12 GiB` line, exactly as the MI355X section warns). No other card
-is touched.
-
-### H100 summary
-
-vLLM 0.27.1 (pip / cu130) serves Qwen3-Reranker-0.6B unmodified on one H100.
-The `--hf_overrides` + jinja requirement is confirmed genuinely mandatory; ranking is
-correct, sharply separated, and query-conditioned, matching MI355X to ~1e-4. The one AMD
-correction (install is container-only) does **not** apply on NVIDIA — the pip route works.
-TP=2 is legal for this model but not useful at 0.6 B; prefer replication. The H100 notes
-here are single-GPU only.
+Most of the resident VRAM on the selected GPU is the default `--gpu-memory-utilization 0.9`
+KV pool, **not** the weights — read `Model loading took N GiB` from the server log for the
+true weight footprint. No other card is touched.
 
 ## Arguments / flags
 
 Serve-side:
 
-| Flag | Value used | Meaning |
+| Flag | Value | Meaning |
 |---|---|---|
 | `--runner pooling` | required | Pooling/scoring mode; exposes `/v1/rerank`, `/score`, `/v1/score` |
 | `--hf_overrides` | JSON below | **Required.** Rewrites the loaded architecture — see breakdown |
 | `--chat-template` | `qwen3_reranker.jinja` | **Required.** Formats query+document into the Instruct/Query/Document prompt the model was trained on |
-| `--tensor-parallel-size` | `1` / `2` | Shards the model across GPUs; both verified |
+| `--tensor-parallel-size` | `1` / `2` | Shards the model across GPUs; both work, but prefer replication at this model size |
 | `--served-model-name` | `qwen3-reranker` | Client-facing alias |
 | `--host` / `--port` | `0.0.0.0` / `8002` | Bind address and benchmark-layout reranker port |
 | `--gpu-memory-utilization` | default `0.9` | Lower when co-locating servers on one card |
@@ -388,25 +305,21 @@ rank  index  score       document
 Redirect server logs to a data volume, e.g. `$OUTPUT_DIR/inference_reranker_vllm/`.
 Nothing large lands in the repo.
 
-## Hardware support & evidence
+## Hardware support
 
-- **AMD: tested and working, both topologies.** 1× and 2× (TP=2) AMD Instinct MI355X
+- **AMD, working in both topologies.** 1× and 2× (TP=2) AMD Instinct MI355X
   (`gfx950`, 288 GB), host ROCm 7.2.4, container ROCm 7.0.2, vLLM `0.20.2rc1.dev253`,
-  torch `2.9.1.dev+rocm7.0.2`. Correct, sharply separated relevance scores; TP=2 agrees
-  with TP=1 to ~1e-5.
-- **NVIDIA: tested and working** via the pip wheel — see the H100 section above. The same
+  torch `2.9.1.dev+rocm7.0.2`.
+- **NVIDIA, working** via the pip wheel — see the H100 section above. The same
   command also applies with `vllm/vllm-openai:latest`.
-- vLLM is **Native** for the Qwen3 reranker, and on ROCm/gfx950 that is **confirmed**.
-  The `--hf_overrides` + jinja requirement is confirmed as genuinely mandatory. The only
-  correction: the AMD *install* story is container-only.
+- On AMD the *install* route is container-only — there is no ROCm vLLM wheel.
 
 ## Notes & quirks
 
 - **Both `--hf_overrides` and `--chat-template` are mandatory.** Drop the overrides and
   the model loads as a causal LM with no `/v1/rerank` scoring head. Drop the template and
   the prompt no longer matches the Instruct/Query/Document format the model was trained
-  on, so scores degrade silently — the endpoint still answers, which makes this a
-  dangerous omission rather than a loud failure.
+  on, so scores degrade silently while the endpoint still answers.
 - **The template is shipped in this folder** (`qwen3_reranker.jinja`) so the serve command
   does not depend on a path inside the image. It emits an empty `<think></think>` block
   before the assistant turn — that is intentional for this reasoning-capable base model.
@@ -416,19 +329,8 @@ Nothing large lands in the repo.
   stalling the first startup. Later launches reuse the cache.
 - **The `quark_online_quant` plugin fails to import** on every launch with a traceback.
   Non-fatal, unrelated; the server starts normally.
-- **Default `--gpu-memory-utilization 0.9` makes `rocm-smi` read ~286 GB** for a 1.12 GiB
-  model — that is the preallocated KV pool (263 GiB of it), not the weights. Read
+- **Default `--gpu-memory-utilization 0.9` makes `rocm-smi` read most of the card** for a
+  0.6B model — that is the preallocated KV pool, not the weights. Read
   `Model loading took N GiB` from the server log for the true weight footprint.
-- **`--runner pooling`, not `--is-embedding`.** SGLang's docs warn against `--is-embedding`
-  for this model; vLLM's equivalent mistake is omitting the `--hf_overrides` conversion.
-
-## Summary
-
-**vLLM serves Qwen3-Reranker-0.6B on MI355X/gfx950 with no changes, on one GPU
-and on two.** The "Native" rating and the documented serve command both hold.
-Relevance scores separate relevant from irrelevant documents by four orders of magnitude
-(0.9995 vs 0.000027), and TP=2 reproduces TP=1 to ~1e-5 while genuinely halving per-rank
-weights (1.12 → 0.57 GiB) and doubling KV capacity.
-
-Two corrections worth recording: the ROCm install is **container-only** (no pip wheel exists),
-and while TP=2 *works*, replication is the better multi-GPU pattern at this model size.
+- **`--runner pooling`, not `--is-embedding`.** The equivalent mistake in vLLM is omitting
+  the `--hf_overrides` conversion.
