@@ -165,7 +165,7 @@ The latest available project images are:
 
 ```bash
 # AMD Instinct MI355X
-docker pull farbodatdocker/scalarlm:mi355-v1.6
+docker pull farbodatdocker/scalarlm:mi355-v1.7
 
 # NVIDIA H100
 docker pull farbodatdocker/scalarlm:h100-v1.5

@@ -166,14 +166,14 @@ and **`DOCKER_IMAGE_H100.md`** (NVIDIA).
 
 | Tag | Hardware |
 |---|---|
-| `farbodatdocker/scalarlm:mi355-v1.6` | AMD MI355X — gfx950 / ROCm 7.2.4 |
+| `farbodatdocker/scalarlm:mi355-v1.7` | AMD MI355X — gfx950 / ROCm 7.2.4 |
 | `farbodatdocker/scalarlm:h100-v1.5` | NVIDIA H100 — sm_90 / CUDA 13 |
 
 Both images are built from the same source revision by the same `repo/Dockerfile`. Build either
 with `build_image.sh`; it auto-detects the vendor, or set it explicitly:
 
 ```bash
-TARGET=amd    IMAGE_TAG=mi355-v1.6 ./build_image.sh
+TARGET=amd    IMAGE_TAG=mi355-v1.7 ./build_image.sh
 TARGET=nvidia IMAGE_TAG=h100-v1.5  ./build_image.sh
 ```
 
@@ -212,7 +212,7 @@ docker run -d --name scalarlm --init \
   -e SCALARLM_MODEL=Qwen/Qwen3-0.6B \
   -e SCALARLM_MAX_GPUS_PER_NODE=8 \
   -v "$PWD/models:/root/.cache/huggingface" \
-  farbodatdocker/scalarlm:mi355-v1.6
+  farbodatdocker/scalarlm:mi355-v1.7
 ```
 
 AMD notes: `--device=/dev/kfd --device=/dev/dri` replaces `--gpus`; `--shm-size=64g` is required
@@ -236,7 +236,7 @@ All settings travel in `train_args`, which the server materializes into the job 
 | Layer | AMD MI355X / ROCm | NVIDIA H100 / CUDA |
 |---|---|---|
 | Client (`train.py` / `inference.py`) | pure Python, hardware-agnostic | same |
-| Server image | `mi355-v1.6`, built from this repo | `h100-v1.5`, built from this repo |
+| Server image | `mi355-v1.7`, built from this repo | `h100-v1.5`, built from this repo |
 | Collectives | RCCL via `torch.distributed` | NCCL via `torch.distributed` |
 
 This folder is a **client** — training hardware is the server deployment's concern, and the client

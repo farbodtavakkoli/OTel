@@ -8,7 +8,8 @@ Build / run / customize / publish runbook for the **MI355X (gfx950, CDNA 4)** se
 
 | Tag | Hardware | Notes |
 |---|---|---|
-| `farbodatdocker/scalarlm:mi355-v1.6` | AMD MI355X, gfx950 / ROCm 7.2.4 | current — built from the same unified Dockerfile revision as `h100-v1.5` |
+| `farbodatdocker/scalarlm:mi355-v1.7` | AMD MI355X, gfx950 / ROCm 7.2.4 | current |
+| `farbodatdocker/scalarlm:mi355-v1.6` | AMD MI355X, gfx950 / ROCm 7.2.4 | previous current tag |
 | `farbodatdocker/scalarlm:mi355-v1.5` | AMD MI355X, gfx950 / ROCm 7.2.4 | first image built from the unified AMD + NVIDIA tree |
 | `farbodatdocker/scalarlm:mi355-v1.0` | AMD MI355X, gfx950 / ROCm 7.2.4 | first published tag (pre-fix history, see version records) |
 | `farbodatdocker/scalarlm:h100-v1.5` | NVIDIA H100, sm_90 | see the NVIDIA doc |
@@ -21,7 +22,7 @@ There is deliberately **one MI355X tag**, so the tag name alone does not tell yo
 The source revision is recorded inside the image instead, as an OCI label:
 
 ```bash
-docker inspect farbodatdocker/scalarlm:mi355-v1.6 \
+docker inspect farbodatdocker/scalarlm:mi355-v1.7 \
   --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
 ```
 
@@ -46,7 +47,7 @@ docker run -d --name scalarlm --init \
   -e SCALARLM_MODEL=Qwen/Qwen3-0.6B \
   -e SCALARLM_MAX_GPUS_PER_NODE=8 \
   -v "$PWD/models:/root/.cache/huggingface" \
-  farbodatdocker/scalarlm:mi355-v1.6
+  farbodatdocker/scalarlm:mi355-v1.7
 ```
 
 Health check:
@@ -57,7 +58,7 @@ curl -s localhost:8000/v1/health
 
 Passing a script still overrides the default, so every existing invocation keeps working:
 ```bash
-docker run ... farbodatdocker/scalarlm:mi355-v1.6 /app/cray/scripts/start_one_server.sh
+docker run ... farbodatdocker/scalarlm:mi355-v1.7 /app/cray/scripts/start_one_server.sh
 ```
 
 ### AMD flags that are not optional
@@ -81,7 +82,7 @@ image block:
 ```yaml
 image:
   repository: farbodatdocker/scalarlm
-  tag: mi355-v1.6          # AMD MI355X / gfx950; use h100-v1.5 for NVIDIA H100
+  tag: mi355-v1.7          # AMD MI355X / gfx950; use the H100 tag for NVIDIA
   pullPolicy: Always
 ```
 
@@ -128,7 +129,7 @@ cannot deliver it.
 
 ```bash
 cd training/llm/scalarlm
-./build_image.sh                          # or: IMAGE_TAG=mi355-v1.6 ./build_image.sh
+./build_image.sh                          # or: IMAGE_TAG=mi355-v1.7 ./build_image.sh
 ```
 
 `build_image.sh` does three things you must not skip if you build by hand:
@@ -188,7 +189,7 @@ Use functional evidence instead:
 
 ```bash
 docker run --rm --device=/dev/kfd --device=/dev/dri --group-add video \
-  farbodatdocker/scalarlm:mi355-v1.6 python -c "
+  farbodatdocker/scalarlm:mi355-v1.7 python -c "
 import torch
 print(torch.cuda.get_device_name(0))          # AMD Instinct MI355X
 print('gfx950' in torch.cuda.get_arch_list()) # True
@@ -210,7 +211,7 @@ LABEL org.opencontainers.image.authors="Farbod Tavakkoli"
 LABEL org.opencontainers.image.source="https://github.com/farbodtavakkoli/OTel"
 LABEL org.opencontainers.image.revision="$(git rev-parse HEAD)"
 EOF
-docker build -t farbodatdocker/scalarlm:mi355-v1.6 "$BUILDDIR"
+docker build -t farbodatdocker/scalarlm:mi355-v1.7 "$BUILDDIR"
 rm -rf "$BUILDDIR"
 ```
 
@@ -218,7 +219,7 @@ rm -rf "$BUILDDIR"
 records the revision you actually built from. Confirm it landed:
 
 ```bash
-docker inspect farbodatdocker/scalarlm:mi355-v1.6 \
+docker inspect farbodatdocker/scalarlm:mi355-v1.7 \
   --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
 ```
 
@@ -255,7 +256,7 @@ changes take effect on the next run.
 An overlay only reaches `ml/`:
 
 ```dockerfile
-FROM farbodatdocker/scalarlm:mi355-v1.6
+FROM farbodatdocker/scalarlm:mi355-v1.7
 COPY ml/ /app/cray/ml/          # changes the DEFAULT for clients that have no ml/
 ```
 
@@ -286,10 +287,16 @@ by the tag:
 
 | Tag | Digest | `org.opencontainers.image.revision` |
 |---|---|---|
+| `mi355-v1.7` | `sha256:0f9ebeee1f8871b280f421ec915ea5f66cbeeaa74b6db38b8a9ab1793846961e` | `b9f27453b38839f4287a8e8e01cc323402085763` |
 | `mi355-v1.6` | `sha256:ee40edab891cd3208dd1a122d0d6472d698e955a9bd7e064bff624164e86bfa4` | `6bc7d82a3a8a0185b88a3741e51272a92fd5d40e` |
 | `mi355-v1.5` | `sha256:37c536eb4b2fe9be6866b9139904caa29a99fa7c859ebcc49f6482a3aef51220` | `218d2f9d31161e371205e61793ade4a140f87c7d` |
 | `mi355-v1.2` | `sha256:2614b47eb78d8d2c79fa21e3fb3fd061f2b4a23d7f555556883d70b6e5327c59` | `b693ffa412c7650f23ec418384ec08c872eb1481` |
 | `mi355-v1.1` | `sha256:53e3184c6d41ee2bbafc5c8107560ecd8090e0c6b27f7b4b4e57ec7e9029946e` | `a9da8f7cd3c89ad2ebd1b744654298c38a4af592` |
+
+`mi355-v1.7` bakes the same training recipe as `mi355-v1.6` with all Python docstrings removed,
+and corrects `org.opencontainers.image.source`, which earlier images pointed at an unrelated
+repository. Nothing in the training or serving path changed: the in-image unit suite gives the
+same result on both tags.
 
 ### Reproducible training fingerprints
 
@@ -342,7 +349,7 @@ crossed (§3) — check which one the client uploaded before debugging anything 
 ```bash
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 docker login -u farbodatdocker          # paste a Personal Access Token, not the password
-docker push farbodatdocker/scalarlm:mi355-v1.6
+docker push farbodatdocker/scalarlm:mi355-v1.7
 ```
 
 One tag; the source revision travels inside the image as a label (§1). The push is resumable —
