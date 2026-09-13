@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 
 def _create_nara_model(model, device, job_config, nara_cfg, train_lm_head):
-    """NaRA prototype adapter creation — the PEFT path's contract with NaRALinear layers."""
     from adapters.nara_prototype import (
         NaRAConfig,
         inject_nara,
@@ -61,7 +60,6 @@ def _create_nara_model(model, device, job_config, nara_cfg, train_lm_head):
 
 
 def _nara_config(job_config):
-    """Return the NaRA sub-config when NaRA is enabled for this diffusion job, else None."""
     diffusion = job_config.get("diffusion") or {}
     nara = diffusion.nara if hasattr(diffusion, "nara") else diffusion.get("nara")
     if nara is None:

@@ -1,4 +1,3 @@
-"""EmbeddingGemma reference embedding inference (sentence-transformers) — see README.md."""
 import argparse
 import json, os, time
 
@@ -25,7 +24,6 @@ DEFAULT_DOCUMENTS = [
 
 
 def parse_args():
-    """Parse the CLI arguments."""
     parser = argparse.ArgumentParser(description="EmbeddingGemma reference embedding inference")
     parser.add_argument("--model", type=str, default="google/embeddinggemma-300m", help="Embedding model id or path")
     parser.add_argument("--queries_file", type=str, default=None, help="JSON/JSONL file of query strings; omit for the built-in set")
@@ -47,7 +45,6 @@ def parse_args():
 
 
 def read_texts(path: str, fallback: list[str]) -> list[str]:
-    """Read a JSON list or a JSONL/plain-text file of strings; fall back to the built-in set."""
     if path is None:
         return list(fallback)
     with open(path) as f:
@@ -58,7 +55,6 @@ def read_texts(path: str, fallback: list[str]) -> list[str]:
 
 
 def resolve_devices(spec: str) -> list[str]:
-    """Turn the --devices string into a device list, validating against the visible GPU count."""
     devices = [d.strip() for d in spec.split(",") if d.strip()]
     n = torch.cuda.device_count()
     for d in devices:
@@ -68,7 +64,6 @@ def resolve_devices(spec: str) -> list[str]:
 
 
 def load_model(args):
-    """Load the SentenceTransformer, selecting sdpa on ROCm since flash-attn is a CUDA-only build."""
     attn = args.attn_impl or ("sdpa" if torch.version.hip else "eager")
     model = SentenceTransformer(
         args.model,
@@ -81,7 +76,6 @@ def load_model(args):
 
 
 def encode_all(model, queries, documents, args, devices):
-    """Encode queries and documents with the model's prompt templates; multi-device uses a process pool."""
     kwargs = {"batch_size": args.batch_size, "normalize_embeddings": args.normalize,
               "truncate_dim": args.truncate_dim, "convert_to_numpy": True}
     if len(devices) > 1:
@@ -92,14 +86,12 @@ def encode_all(model, queries, documents, args, devices):
 
 
 def cosine(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Cosine-similarity matrix between two batches of row vectors."""
     a = a / np.linalg.norm(a, axis=1, keepdims=True)
     b = b / np.linalg.norm(b, axis=1, keepdims=True)
     return a @ b.T
 
 
 def vram_mib() -> list[float]:
-    """Per-visible-GPU allocated VRAM in MiB, as torch sees it."""
     return [round(torch.cuda.memory_allocated(i) / 2**20, 1) for i in range(torch.cuda.device_count())]
 
 

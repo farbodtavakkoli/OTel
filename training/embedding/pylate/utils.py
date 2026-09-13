@@ -1,5 +1,3 @@
-"""Helpers for train_embedding_pylate.py — config resolution, data, model/loss build, late-interaction proof."""
-
 import json
 import logging
 import os
@@ -14,7 +12,6 @@ LOGGER = logging.getLogger("training/embedding/pylate")
 
 
 def setup_logging(output_dir, is_main):
-    """Log to stdout and to run.log under the output dir; non-main ranks stay quiet."""
     handlers = [logging.StreamHandler()]
     if is_main:
         os.makedirs(output_dir, exist_ok=True)
@@ -29,7 +26,6 @@ def setup_logging(output_dir, is_main):
 
 
 def set_seed(seed):
-    """Seed python/numpy/torch so every rank splits the data identically."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -37,31 +33,26 @@ def set_seed(seed):
 
 
 def is_rocm():
-    """True when the installed torch is a ROCm/HIP build."""
     return torch.version.hip is not None
 
 
 def resolve_attn_implementation(requested):
-    """Pick the attention kernel; flash_attention_2 is CUDA-only, so ROCm falls back to sdpa."""
     if requested != "auto":
         return requested
     return "sdpa" if is_rocm() else "flash_attention_2"
 
 
 def resolve_tf32(requested):
-    """tf32 is an NVIDIA Ampere+ feature; enabling it on a ROCm build raises."""
     return bool(requested) and torch.version.cuda is not None
 
 
 def resolve_scores_backend(requested):
-    """PyLate's flash/lik MaxSim kernels are CUDA-only; force the torch backend on ROCm."""
     if requested != "auto":
         return requested
     return "torch" if is_rocm() else "auto"
 
 
 def resolve_cfg(defaults, registry, model_name, args_cli):
-    """Merge defaults <- registry entry <- non-None CLI overrides."""
     cfg = dict(defaults)
     cfg.update(registry.get(model_name, {}))
     for key, value in vars(args_cli).items():
@@ -71,13 +62,11 @@ def resolve_cfg(defaults, registry, model_name, args_cli):
 
 
 def read_jsonl(path):
-    """Read a JSONL file into a list of dicts."""
     with open(path) as handle:
         return [json.loads(line) for line in handle if line.strip()]
 
 
 def document_columns(rows):
-    """Return the document column names (positive first, then any negatives) in a stable order."""
     keys = [key for key in rows[0] if key != "query"]
     positives = [key for key in keys if key.startswith("positive")]
     negatives = sorted(key for key in keys if key.startswith("negative"))
@@ -85,7 +74,6 @@ def document_columns(rows):
 
 
 def load_triplets(train_file, sample_fraction, eval_fraction, n_negatives, seed):
-    """Load the PyLate triplet JSONL and split it into train/eval Datasets."""
     rows = read_jsonl(train_file)
     columns = document_columns(rows)
     negatives = [key for key in columns if key.startswith("negative")][:n_negatives]
@@ -106,7 +94,6 @@ def load_triplets(train_file, sample_fraction, eval_fraction, n_negatives, seed)
 
 
 def build_model(cfg, attn_implementation, dtype):
-    """Build a PyLate ColBERT model from a base encoder or an existing ColBERT checkpoint."""
     model_kwargs = {"attn_implementation": attn_implementation}
     if dtype != "float32":
         model_kwargs["dtype"] = getattr(torch, dtype)
@@ -126,7 +113,6 @@ def build_model(cfg, attn_implementation, dtype):
 
 
 def build_loss(loss_name, model, temperature, gather_across_devices, score_mini_batch_size):
-    """Build the late-interaction training objective."""
     if loss_name == "contrastive":
         return losses.Contrastive(
             model=model, temperature=temperature,
@@ -144,7 +130,6 @@ def build_loss(loss_name, model, temperature, gather_across_devices, score_mini_
 
 
 def build_evaluator(eval_dataset, columns, batch_size):
-    """ColBERT triplet accuracy evaluator over the held-out split."""
     from pylate.evaluation import ColBERTTripletEvaluator
 
     negatives = [key for key in columns if key.startswith("negative")]
@@ -161,7 +146,6 @@ def build_evaluator(eval_dataset, columns, batch_size):
 
 
 def pad_multi_vector(embeddings):
-    """Pad a ragged list of [n_tokens, dim] arrays into a [n, max_tokens, dim] tensor plus its mask."""
     tensors = [torch.as_tensor(np.asarray(e), dtype=torch.float32) for e in embeddings]
     max_tokens = max(tensor.shape[0] for tensor in tensors)
     padded = torch.zeros(len(tensors), max_tokens, tensors[0].shape[1])
@@ -173,7 +157,6 @@ def pad_multi_vector(embeddings):
 
 
 def encode_multi_vector(model, texts, is_query, batch_size):
-    """Encode texts and return one variable-length [n_tokens, dim] array per text."""
     embeddings = model.encode(sentences=texts, batch_size=batch_size, is_query=is_query, show_progress_bar=False)
     if not isinstance(embeddings, list):
         embeddings = [embeddings]
@@ -181,7 +164,6 @@ def encode_multi_vector(model, texts, is_query, batch_size):
 
 
 def late_interaction_report(model, query, documents, batch_size, logger):
-    """Prove the model is genuinely multi-vector: per-token shapes plus a MaxSim ranking."""
     query_embeddings = encode_multi_vector(model, [query], is_query=True, batch_size=batch_size)
     document_embeddings = encode_multi_vector(model, documents, is_query=False, batch_size=batch_size)
 
@@ -210,7 +192,6 @@ def late_interaction_report(model, query, documents, batch_size, logger):
 
 
 def rerank_report(model, query, documents, batch_size, logger):
-    """Run PyLate's rerank() over the same documents — the reranking use case, no index needed."""
     query_embeddings = encode_multi_vector(model, [query], is_query=True, batch_size=batch_size)
     document_embeddings = encode_multi_vector(model, documents, is_query=False, batch_size=batch_size)
     reranked = rank.rerank(
@@ -224,7 +205,6 @@ def rerank_report(model, query, documents, batch_size, logger):
 
 
 def index_report(model, query, documents, index_folder, index_name, batch_size, device, logger):
-    """Build a PLAID index over the documents and retrieve — end-to-end late-interaction retrieval."""
     document_ids = [str(i) for i in range(len(documents))]
     document_embeddings = encode_multi_vector(model, documents, is_query=False, batch_size=batch_size)
     index = indexes.PLAID(index_folder=index_folder, index_name=index_name, override=True)

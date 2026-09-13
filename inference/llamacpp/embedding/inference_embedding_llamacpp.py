@@ -1,4 +1,3 @@
-"""OpenAI-compatible client for a llama.cpp llama-server embedding endpoint — see README.md."""
 import argparse
 import json
 import math
@@ -18,7 +17,6 @@ DEFAULT_TEXTS = [
 
 
 def parse_args():
-    """Parse the CLI arguments."""
     parser = argparse.ArgumentParser(description="llama.cpp embedding smoke client")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="llama-server host")
     parser.add_argument("--port", type=int, default=8201, help="llama-server port")
@@ -32,7 +30,6 @@ def parse_args():
 
 
 def wait_for_health(base_url: str, retries: int):
-    """Block until /health reports the model is loaded, or raise."""
     for attempt in range(retries):
         try:
             r = requests.get(f"{base_url}/health", timeout=5)
@@ -45,7 +42,6 @@ def wait_for_health(base_url: str, retries: int):
 
 
 def embed(base_url: str, model: str, texts, timeout: int):
-    """POST one embeddings request and return the parsed response plus latency."""
     started = time.time()
     r = requests.post(f"{base_url}/v1/embeddings", json={"model": model, "input": texts}, timeout=timeout)
     r.raise_for_status()
@@ -53,7 +49,6 @@ def embed(base_url: str, model: str, texts, timeout: int):
 
 
 def cosine(a, b):
-    """Cosine similarity between two equal-length vectors."""
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))

@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""Offline NaRA memorize eval for DiffusionGemma.
-
-    python nara_offline_eval.py --checkpoint <path> [--model ID] [--prompt TEXT]
-        [--golden TEXT] [--mode decode|probe|sweep|decode-greedy|tail-probe|
-        gen-vs-tf|decode-recompute] [--seed N] [--dtype bf16|fp32]
-"""
 import argparse, sys, time, difflib, json, random
 
 sys.path.insert(0, "/app/cray/ml")
@@ -14,7 +8,6 @@ import torch
 
 
 def block_scores(sample: str, golden: str, prompt: str = ""):
-    """Longest contiguous match + total matched chars between golden and sample."""
     if prompt and sample.startswith(prompt):
         sample = sample[len(prompt):].lstrip()
     sm = difflib.SequenceMatcher(None, golden, sample, autojunk=False)
@@ -37,7 +30,6 @@ def load_base(model_id, dtype=torch.bfloat16):
 
 
 def inject_and_load(model, ckpt_path):
-    """Inject NaRA into the modules the checkpoint adapted and load lora + mapper weights."""
     from adapters.nara_prototype import inject_nara, NaRAConfig, find_nara_context
 
     sd = torch.load(ckpt_path, map_location="cpu")["model_state_dict"]
@@ -70,7 +62,6 @@ def inject_and_load(model, ckpt_path):
 
 
 def make_mapper_hook(model, ctx, eps):
-    """Wrap _denoising_step so the shared mapper sees the current noise level."""
     orig = model._denoising_step
     steps_seen = {"n": 0, "t_first": None, "t_last": None}
 
@@ -116,7 +107,6 @@ def decode(model, tok, prompt, seed, gen_kwargs):
 
 
 def get_vocab_size(model, tok):
-    """Full embedding vocab - the corruption sampler's upper bound."""
     cfg = getattr(model, "config", None)
     for path in (("text_config", "vocab_size"), ("vocab_size",)):
         obj = cfg
@@ -130,14 +120,12 @@ def get_vocab_size(model, tok):
 
 
 def needs_mm_token(model):
-    """True when the config has a vision_config, meaning the encoder wants mm_token_type_ids."""
     cfg = getattr(model, "config", None)
     tc = getattr(cfg, "text_config", cfg)
     return getattr(cfg, "vision_config", None) is not None or getattr(tc, "vision_config", None) is not None
 
 
 def build_golden_canvas(tok, golden, canvas_length, anchor):
-    """Build the golden output canvas as the training loader does."""
     pad_id = tok.pad_token_id
     if pad_id is None:
         pad_id = tok.eos_token_id
@@ -160,7 +148,6 @@ def build_golden_canvas(tok, golden, canvas_length, anchor):
 
 
 def forward_canvas_logits(model, enc, decoder_input_ids, needs_mm, sc_logits=None):
-    """One teacher-forced denoising pass through the joint model.forward."""
     kw = dict(
         input_ids=enc.input_ids,
         attention_mask=enc.attention_mask,
@@ -177,14 +164,12 @@ def forward_canvas_logits(model, enc, decoder_input_ids, needs_mm, sc_logits=Non
 
 
 def build_ks(n):
-    """Corruption-count sweep from 0 (clean copy) to n (generate-from-prompt-only)."""
     cand = {0, 1, 2, 3, n // 8, n // 4, n // 2, (3 * n) // 4, n - 1, n}
     return sorted(k for k in cand if 0 <= k <= n)
 
 
 def probe_variant(model, enc, clean_canvas, canvas_labels, corruptible, ks, vocab,
                   needs_mm, eps, draws, seed, ctx, stage):
-    """Reconstruction accuracy at corrupted positions vs the golden, swept over corruption count k."""
     device = enc.input_ids.device
     n = len(corruptible)
     if ctx is not None:
@@ -332,7 +317,6 @@ def run_decode(args, model, tok):
 
 
 def run_sweep(args, model, tok):
-    """Load once, sweep max_denoising_steps, and score the iterative decode for LORA and NARA."""
     gcfg = model.generation_config
     default_steps = getattr(gcfg, "max_denoising_steps", None)
     steps_list = [int(s) for s in args.sweep_steps.split(",")]
@@ -395,7 +379,6 @@ def run_sweep(args, model, tok):
 
 
 def patch_greedy_full_commit():
-    """Monkeypatch EntropyBoundSampler into a greedy full-commit decoder; returns restore()."""
     from transformers.models.diffusion_gemma import generation_diffusion_gemma as GEN
     EBS = GEN.EntropyBoundSampler
     orig_accept, orig_renoise = EBS.accept_canvas, EBS.renoise_canvas
@@ -415,7 +398,6 @@ def patch_greedy_full_commit():
 
 
 def decode_greedy(model, tok, prompt, seed, gcfg, anchor, canvas_length, bos_id, vocab):
-    """Greedy full-commit decode seeding the canvas via generate()'s decoder_input_ids hook."""
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
@@ -433,7 +415,6 @@ def decode_greedy(model, tok, prompt, seed, gcfg, anchor, canvas_length, bos_id,
 
 
 def build_padtail_canvas(tok, golden, canvas_length, bos_id, vocab, seed):
-    """Training-shaped canvas: BOS anchor, random answer region, clean pad tail."""
     pad_id = tok.pad_token_id if tok.pad_token_id is not None else 0
     ans = tok(" " + golden, add_special_tokens=False)["input_ids"]  # training tokenized " "+output
     n = len(ans)
@@ -446,7 +427,6 @@ def build_padtail_canvas(tok, golden, canvas_length, bos_id, vocab, seed):
 
 
 def decode_greedy_seeded(model, tok, prompt, start_canvas, gcfg, steps):
-    """Greedy full-commit decode from an explicit starting canvas."""
     enc = tok(prompt, return_tensors="pt").to(model.device)
     saved = gcfg.max_denoising_steps
     if steps > 0:
@@ -465,7 +445,6 @@ def decode_greedy_seeded(model, tok, prompt, start_canvas, gcfg, steps):
 
 
 def run_greedy(args, model, tok):
-    """Score a greedy full-commit decode across canvas variants x adapter mode."""
     G = len(args.golden)
     canvas_length = model.config.canvas_length
     bos_id = getattr(tok, "bos_token_id", None)
@@ -544,7 +523,6 @@ def run_greedy(args, model, tok):
 
 
 def run_tail_probe(args, model, tok):
-    """Isolate the clean-tail vs random-tail axis, teacher-forced (no sampler)."""
     device = model.device
     vocab = get_vocab_size(model, tok)
     needs_mm = needs_mm_token(model)
@@ -612,7 +590,6 @@ def run_tail_probe(args, model, tok):
 
 
 def run_gen_vs_tf(args, model, tok):
-    """Localize the generate()-vs-teacher-forced gap on step 1."""
     device = model.device
     enc = tok(args.prompt, return_tensors="pt").to(device)
     needs_mm = needs_mm_token(model)
@@ -698,7 +675,6 @@ def run_gen_vs_tf(args, model, tok):
 
 
 def run_decode_recompute(args, model, tok):
-    """Decode via the joint recompute forward instead of generate()'s KV-cache path."""
     device = model.device
     vocab = get_vocab_size(model, tok)
     needs_mm = needs_mm_token(model)

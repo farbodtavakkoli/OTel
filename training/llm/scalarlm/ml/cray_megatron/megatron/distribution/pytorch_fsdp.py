@@ -1,5 +1,3 @@
-"""PyTorch FSDP2 (``fully_shard``) as an alternative distribution strategy."""
-
 import logging
 
 import torch
@@ -17,12 +15,10 @@ _MIN_TRANSFORMER_BLOCKS = 4
 
 
 def _mesh_device_type():
-    """Device type string for init_device_mesh (ROCm GPUs report as "cuda")."""
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
 def build_hsdp_mesh():
-    """Return (mesh, replicate_size, shard_size)."""
     job_config = get_job_config()
     shard_size = int(job_config.get("hsdp_shard_size", 1) or 1)
     world_size = get_size()
@@ -45,8 +41,6 @@ def build_hsdp_mesh():
 
 
 class PyTorchFSDP(nn.Module):
-    """FSDP2 wrapper matching this tree's distribution-strategy interface."""
-
     def __init__(self, model):
         super().__init__()
         rank = get_rank()
@@ -82,14 +76,12 @@ class PyTorchFSDP(nn.Module):
     # -- construction helpers ------------------------------------------------
 
     def _transformer_stack(self, model):
-        """The first ModuleList large enough to be the transformer stack, else None."""
         for _, module in model.named_modules():
             if isinstance(module, nn.ModuleList) and len(module) > _MIN_TRANSFORMER_BLOCKS:
                 return module
         return None
 
     def _apply_fsdp(self, model):
-        """Shard each transformer block, not every module with parameters."""
         stack = self._transformer_stack(model)
         if stack is None:
             logger.warning(
@@ -109,11 +101,9 @@ class PyTorchFSDP(nn.Module):
         return self.model(*args, **kwargs)
 
     def backward_sync(self):
-        """No-op: FSDP2 reduce-scatters gradients during backward itself."""
         return None
 
     def unwrap_model(self):
-        """Full, unsharded, CPU state dict -- what checkpoint() writes (collective)."""
         from torch.distributed.checkpoint.state_dict import (
             StateDictOptions,
             get_model_state_dict,
@@ -125,7 +115,6 @@ class PyTorchFSDP(nn.Module):
         )
 
     def unwrap_optimizer(self, optimizer):
-        """Full, unsharded, CPU optimizer state - the counterpart to unwrap_model (collective)."""
         from torch.distributed.checkpoint.state_dict import (
             StateDictOptions,
             get_optimizer_state_dict,
@@ -138,7 +127,6 @@ class PyTorchFSDP(nn.Module):
         )
 
     def load_unwrapped_optimizer(self, optimizer, state_dict):
-        """Inverse of unwrap_optimizer: re-shard full optimizer state into this rank (collective)."""
         from torch.distributed.checkpoint.state_dict import (
             StateDictOptions,
             set_optimizer_state_dict,
@@ -152,7 +140,6 @@ class PyTorchFSDP(nn.Module):
         )
 
     def load_unwrapped_model(self, state_dict):
-        """Inverse of unwrap_model: re-shard a full state dict into this rank (collective)."""
         from torch.distributed.checkpoint.state_dict import (
             StateDictOptions,
             set_model_state_dict,

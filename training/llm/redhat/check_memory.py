@@ -1,4 +1,3 @@
-"""Summarize an OSFT run — peak memory, current step, duration, loss plot. Usage: python check_memory.py <ckpt_output_dir>."""
 import os
 import sys
 import json

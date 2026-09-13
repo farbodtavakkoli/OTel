@@ -1,5 +1,3 @@
-"""Ray Train (TorchTrainer) orchestration of an HF/TRL SFT fine-tune -- see readme_ray.md."""
-
 import os
 import json
 import uuid
@@ -75,7 +73,6 @@ def parse_args():
 
 
 def train_func(config):
-    """Per-worker training loop; builds everything locally so nothing large is serialized from the driver."""
     import torch
     from datasets import load_dataset
     from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed

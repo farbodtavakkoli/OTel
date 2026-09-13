@@ -1,5 +1,3 @@
-"""LLM chat/classification client for a vLLM OpenAI-compatible server — see README.md."""
-
 import argparse
 import json
 import sys
@@ -17,7 +15,6 @@ CLASSIFY_LABELS = ["billing", "network_outage", "device_setup", "other"]
 
 
 def parse_args():
-    """Parse CLI arguments; every tunable of the completion request is exposed here."""
     parser = argparse.ArgumentParser(description="Chat or prompted-classification client for a vLLM server")
     parser.add_argument("--host", type=str, default="localhost", help="Server host")
     parser.add_argument("--port", type=int, default=8000, help="Server port")
@@ -38,7 +35,6 @@ def parse_args():
 
 
 def post_json(url, payload, timeout):
-    """POST a JSON payload and return the decoded JSON response."""
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -46,7 +42,6 @@ def post_json(url, payload, timeout):
 
 
 def build_messages(args):
-    """Build the chat message list for either free generation or prompted classification."""
     if args.classify is not None:
         labels = [label.strip() for label in args.labels.split(",") if label.strip()]
         system = ("You are a strict text classifier. Reply with exactly one label from this list "

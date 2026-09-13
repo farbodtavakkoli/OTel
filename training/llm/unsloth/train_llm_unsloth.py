@@ -1,5 +1,3 @@
-"""Unsloth LoRA/QLoRA SFT + GRPO trainer for Gemma-4-31B (DDP, one replica per GPU) — see readme_unsloth.md."""
-
 # Unsloth must be imported before torch/transformers/trl — it patches them at import time.
 from unsloth import FastModel
 
@@ -139,7 +137,6 @@ def parse_args():
 
 
 def run_grpo(args, model, tokenizer, output_dir, world_size, is_main):
-    """GRPO (RL) training path — rollouts, rewards, group-relative advantages, LoRA update."""
     from datasets import load_dataset
     from trl import GRPOConfig, GRPOTrainer
     import importlib
@@ -400,7 +397,6 @@ def main():
     mlen = len(marker_ids)
 
     def _find_marker_end(ids):
-        """Index just past the LAST occurrence of the response marker, or None."""
         for i in range(len(ids) - mlen, -1, -1):
             if ids[i:i + mlen] == marker_ids:
                 return i + mlen

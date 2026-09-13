@@ -19,7 +19,6 @@ def _dist_ready() -> bool:
 
 
 def _trace_main_rank_only(msg: str) -> None:
-    """Emit a CRAY_TRAIN_DEBUG trace line identifying which barrier we are at."""
     if not is_train_debug_enabled():
         return
     if _dist_ready() and get_rank() != 0:
@@ -33,7 +32,6 @@ def is_main_rank():
 
 
 def log_if_main_rank(msg):
-    """Log once for the whole job instead of once per rank."""
     if is_main_rank():
         logger.info(msg)
 

@@ -1,11 +1,9 @@
-"""Convert the repo's anchor/positive/negative_N JSONL into PyLate's ColBERT triplet format."""
 import argparse
 import json
 import os
 
 
 def parse_args():
-    """Parse the CLI arguments."""
     parser = argparse.ArgumentParser(description="Convert triplet JSONL to PyLate ColBERT format")
     parser.add_argument("--src", type=str, default="../sentence_transformers/OTel_embedding_sample_100.jsonl",
                         help="Source JSONL with anchor/positive/negative_1..negative_N columns")
@@ -20,7 +18,6 @@ def parse_args():
 
 
 def negatives(row, n_neg, max_chars):
-    """Collect up to n_neg non-empty hard negatives from a source row."""
     out = []
     for i in range(1, n_neg + 1):
         text = row.get(f"negative_{i}")
@@ -30,7 +27,6 @@ def negatives(row, n_neg, max_chars):
 
 
 def convert_row(row, n_neg, explode, max_chars):
-    """Map one anchor/positive/negative_N row to one or more PyLate training records."""
     query = row["anchor"][:max_chars]
     positive = row["positive"][:max_chars]
     negs = negatives(row, n_neg, max_chars)

@@ -1,4 +1,3 @@
-"""Client for the Lemonade Server llama.cpp reranking endpoint — see README.md."""
 import argparse
 import json
 import os
@@ -19,7 +18,6 @@ DEFAULT_DOCUMENTS = [
 
 
 def parse_args():
-    """Parse the CLI arguments."""
     parser = argparse.ArgumentParser(description="Lemonade Server reranker smoke client")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Lemonade Server host")
     parser.add_argument("--port", type=int, default=8350, help="Lemonade Server port")
@@ -40,7 +38,6 @@ def parse_args():
 
 
 def wait_for_health(base_url: str, retries: int):
-    """Block until Lemonade Server answers /api/v1/health, or raise."""
     for _ in range(retries):
         try:
             if requests.get(f"{base_url}/api/v1/health", timeout=5).status_code == 200:
@@ -52,14 +49,12 @@ def wait_for_health(base_url: str, retries: int):
 
 
 def load_model(base_url: str, model: str, timeout: int):
-    """POST /api/v1/load so the llama.cpp subprocess is warm before timing anything."""
     r = requests.post(f"{base_url}/api/v1/load", json={"model_name": model}, timeout=timeout)
     r.raise_for_status()
     return r.json()
 
 
 def rerank(base_url: str, endpoint: str, model: str, query: str, documents, top_n, timeout: int):
-    """POST one reranking request and return the parsed response plus latency."""
     payload = {"model": model, "query": query, "documents": documents}
     if top_n:
         payload["top_n"] = top_n

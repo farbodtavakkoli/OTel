@@ -1,5 +1,3 @@
-"""Convert chat JSONL into the parquet column contract verl's RL trainers expect (schema details in readme_verl.md)."""
-
 import argparse
 import json
 import logging
@@ -15,7 +13,6 @@ logger = logging.getLogger(__name__)
 
 
 def build_rows(path, data_source, ability, split):
-    """Turn each chat record into one verl row — final assistant turn is the ground truth, the rest is the prompt."""
     rows = []
     with open(path, "r", encoding="utf-8") as fh:
         for index, line in enumerate(fh):

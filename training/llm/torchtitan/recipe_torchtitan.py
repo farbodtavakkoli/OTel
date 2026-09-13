@@ -1,5 +1,3 @@
-"""torchtitan run configs (CPT + SFT) selected via --module/--config -- see readme_torchtitan.md."""
-
 import os
 from pathlib import Path
 
@@ -24,7 +22,6 @@ _HERE = Path(__file__).resolve().parent
 
 
 def _resolve(path: str) -> str:
-    """Anchor a relative path to this folder; torchtitan runs from its own clone."""
     return path if os.path.isabs(path) else str(_HERE / path)
 
 
@@ -38,12 +35,10 @@ LOCAL_DATASET = "domain_corpus"
 
 
 def _load_local_jsonl(dataset_path: str, **kwargs):
-    """Loader for a plain local JSONL corpus, streamed like the built-in c4 loader."""
     return load_dataset("json", data_files=dataset_path, split="train", streaming=True)
 
 
 def _text_from_sample(sample) -> str:
-    """Pull a document string from one row: `text` if present, else concatenated `messages`."""
     if sample.get("text"):
         return sample["text"]
     messages = sample.get("messages") or []
@@ -56,7 +51,6 @@ def _text_from_sample(sample) -> str:
 
 
 def _process_local_text(sample) -> str:
-    """Pre-training sample processor: return the raw document text."""
     return _text_from_sample(sample)
 
 
@@ -69,7 +63,6 @@ DATASETS[LOCAL_DATASET] = DatasetConfig(
 
 
 def _chat_pair(sample):
-    """SFT sample processor: `messages` preferred, else flat prompt/response pairs."""
     messages = sample.get("messages")
     if isinstance(messages, list) and messages:
         return [
@@ -86,7 +79,6 @@ def _chat_pair(sample):
 
 
 def _base_config(model_spec, *, steps, lr, warmup_steps, seq_len, local_batch_size):
-    """Shared skeleton: bf16 mixed precision, FSDP2 over every rank, full AC."""
     return Trainer.Config(
         model_spec=model_spec,
         hf_assets_path=HF_ASSETS,
@@ -139,7 +131,6 @@ def _base_config(model_spec, *, steps, lr, warmup_steps, seq_len, local_batch_si
 
 
 def cpt_qwen3_8b() -> Trainer.Config:
-    """Continued pre-training of Qwen3-8B on a local domain corpus (8x H100)."""
     from torchtitan.models.qwen3 import model_registry
 
     config = _base_config(
@@ -155,7 +146,6 @@ def cpt_qwen3_8b() -> Trainer.Config:
 
 
 def cpt_llama3_8b() -> Trainer.Config:
-    """Continued pre-training of Llama 3.1 8B on a local domain corpus (8x H100)."""
     from torchtitan.models.llama3 import model_registry
 
     config = _base_config(
@@ -171,7 +161,6 @@ def cpt_llama3_8b() -> Trainer.Config:
 
 
 def sft_qwen3_8b() -> Trainer.Config:
-    """SFT of Qwen3-8B on a local chat dataset, prompt tokens masked."""
     from torchtitan.models.qwen3 import model_registry
 
     config = _base_config(
@@ -191,7 +180,6 @@ def sft_qwen3_8b() -> Trainer.Config:
 
 
 def cpt_qwen3_8b_smoke() -> Trainer.Config:
-    """20-step smoke test: same wiring, tiny step count, frequent logging."""
     config = cpt_qwen3_8b()
     config.training.steps = 20
     config.lr_scheduler.warmup_steps = 2
@@ -208,7 +196,6 @@ def cpt_qwen3_8b_smoke() -> Trainer.Config:
 # used to validate the folder on 2x AMD Instinct MI355X (gfx950); it is hardware-agnostic
 # and works unchanged on NVIDIA.
 def cpt_debugmodel_smoke() -> Trainer.Config:
-    """Tiny random-init FSDP2 smoke (no HF download, no checkpoints) for bring-up."""
     from torchtitan.models.qwen3 import model_registry
 
     config = _base_config(

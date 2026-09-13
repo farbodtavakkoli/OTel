@@ -1,5 +1,3 @@
-"""Merge a trained PEFT adapter into its base model and save an HF-ready checkpoint -- see readme_peft.md."""
-
 import os
 import json
 import logging
@@ -34,7 +32,6 @@ def parse_args():
 
 
 def resolve_base_model(adapter_dir, override):
-    """Take --base_model if given, else read it out of the adapter's config."""
     if override:
         return override
     config_path = os.path.join(adapter_dir, "adapter_config.json")

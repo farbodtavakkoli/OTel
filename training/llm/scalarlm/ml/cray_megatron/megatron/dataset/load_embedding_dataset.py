@@ -1,4 +1,3 @@
-
 # The causal loader's generator is schema-agnostic, so it is reused here.
 from cray_megatron.megatron.dataset.load_language_model_dataset import (
     split_dataset_by_node,
@@ -14,7 +13,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 def _reject_degenerate_batch_size():
-    """Reject batch_size < 2: CoSENT is pairwise within a batch, so one pair yields no gradient."""
     job_config = get_job_config()
     batch_size = job_config.get("batch_size", 1)
 
@@ -29,7 +27,6 @@ def _reject_degenerate_batch_size():
 
 
 def load_embedding_dataset(model, tokenizer, epoch):
-    """Load dataset for embedding model training."""
     _reject_degenerate_batch_size()
 
     hf_dataset = datasets.IterableDataset.from_generator(
@@ -61,10 +58,7 @@ def load_embedding_dataset(model, tokenizer, epoch):
 
 
 def get_tokenize_function_embedding(model, tokenizer):
-    """Tokenize function for embedding model training."""
-
     def tokenize(dataset):
-
         sentence1_tokens = tokenizer(dataset["sentence1"])
         sentence2_tokens = tokenizer(dataset["sentence2"])
 

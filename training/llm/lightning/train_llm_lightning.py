@@ -1,5 +1,3 @@
-"""Chat fine-tuning / continued pre-training of an HF causal LM with PyTorch Lightning -- see readme_lightning.md."""
-
 import os
 import json
 import logging
@@ -74,7 +72,6 @@ def parse_args():
 
 
 def build_example(messages, tokenizer, mask_prompt):
-    """Render one conversation with the chat template; mask non-assistant tokens to -100 unless mask_prompt is off."""
     # return_dict=False: transformers >= 5.x returns a BatchEncoding from
     # apply_chat_template(tokenize=True) by default; we need the flat token list.
     input_ids = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=False, return_dict=False)
@@ -93,7 +90,6 @@ def build_example(messages, tokenizer, mask_prompt):
 
 
 def load_chat_jsonl(path, tokenizer, max_seq_len, mask_prompt, max_samples=None):
-    """Read a chat JSONL, tokenize it, and drop rows that are over-length or unsupervised."""
     rows, dropped_long, dropped_empty = [], 0, 0
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
@@ -119,7 +115,6 @@ def load_chat_jsonl(path, tokenizer, max_seq_len, mask_prompt, max_samples=None)
 
 
 def make_collator(pad_token_id):
-    """Pad a batch to its longest row: input_ids with pad, labels with -100."""
     def collate(features):
         width = max(len(f["input_ids"]) for f in features)
         input_ids, labels, attention_mask = [], [], []
@@ -137,8 +132,6 @@ def make_collator(pad_token_id):
 
 
 class LitCausalLM(L.LightningModule):
-    """The whole model definition: forward, loss, optimizer, LR schedule."""
-
     def __init__(self, model_name, learning_rate, weight_decay, warmup_ratio,
                  attn_implementation, hf_token=None):
         super().__init__()
@@ -171,7 +164,6 @@ class LitCausalLM(L.LightningModule):
 
 
 def decoder_layer_classes(model):
-    """Resolve the transformer block class(es) to wrap from HF's _no_split_modules."""
     names = set(getattr(model, "_no_split_modules", None) or [])
     classes = {type(m) for m in model.modules() if type(m).__name__ in names}
     if not classes:
@@ -200,7 +192,6 @@ def build_strategy(args, model):
 
 
 def export_hf(trainer, lit_module, tokenizer, out_dir):
-    """Write a plain Hugging Face folder from the trained (possibly sharded) model."""
     if isinstance(trainer.strategy, DeepSpeedStrategy):
         logger.warning("ZeRO checkpoints are sharded; consolidate with the zero_to_fp32.py "
                        "script DeepSpeed writes into the checkpoint folder. Skipping export.")

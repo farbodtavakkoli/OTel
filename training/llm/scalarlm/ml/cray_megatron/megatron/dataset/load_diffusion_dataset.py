@@ -1,5 +1,3 @@
-"""Dataset loader for DiffusionGemma (`DiffusionGemmaForBlockDiffusion`)."""
-
 from cray_infra.util.get_job_config import get_job_config
 
 from cray_megatron.collectives.data_parallelism import (
@@ -95,7 +93,6 @@ def _get_canvas_length():
 
 
 def _anchor_enabled():
-    """Whether the canvas anchor token is requested via the diffusion job config."""
     job_config = get_job_config()
     diffusion = job_config.get("diffusion") or {}
     if hasattr(diffusion, "anchor_token"):
@@ -104,7 +101,6 @@ def _anchor_enabled():
 
 
 def _supervise_termination():
-    """Whether to supervise the full canvas instead of masking the tail with -100."""
     job_config = get_job_config()
     diffusion = job_config.get("diffusion") or {}
     if hasattr(diffusion, "supervise_termination"):
@@ -113,7 +109,6 @@ def _supervise_termination():
 
 
 def _pad_loss_weight():
-    """Relative CE weight on the supervised pad tail; 1.0 = uniform."""
     job_config = get_job_config()
     diffusion = job_config.get("diffusion") or {}
     if hasattr(diffusion, "pad_loss_weight"):
@@ -122,7 +117,6 @@ def _pad_loss_weight():
 
 
 def _resolve_anchor_id(tokenizer):
-    """Resolve the anchor token id when enabled, else None."""
     if not _anchor_enabled():
         return None
     anchor_id = anchor_token_id(tokenizer)

@@ -1,5 +1,3 @@
-"""AMD Primus post-training launcher (SFT / LoRA on ROCm) -- see readme_primus.md."""
-
 import argparse
 import logging
 import os
@@ -56,7 +54,6 @@ def parse_args():
 
 
 def resolve_config(args):
-    """Pick the shipped config for this method, or honor an explicit --config."""
     if args.config:
         return args.config
 
@@ -70,7 +67,6 @@ def resolve_config(args):
 
 
 def check_env(args):
-    """Fail early on the two things that always go wrong: no ROCm, no token."""
     if shutil.which("rocm-smi") is None:
         logger.warning("rocm-smi not found - Primus targets AMD Instinct GPUs on ROCm >= 7.0")
     else:
@@ -81,7 +77,6 @@ def check_env(args):
 
 
 def build_command(args, config):
-    """Assemble the primus-cli invocation."""
     cmd = [args.cli, args.mode]
 
     if args.mode == "container":

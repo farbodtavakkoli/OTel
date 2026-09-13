@@ -1,4 +1,3 @@
-"""Submit a batch generate/embedding job to a remote ScalarLM server — see readme_scalarlm.md."""
 import os
 import json
 import time

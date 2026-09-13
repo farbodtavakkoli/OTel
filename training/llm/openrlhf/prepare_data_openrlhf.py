@@ -1,5 +1,3 @@
-"""Convert chat JSONL into the flat prompt/answer JSONL OpenRLHF's PPO/GRPO path expects (see readme_openrlhf.md)."""
-
 import argparse
 import json
 import logging
@@ -20,7 +18,6 @@ def parse_args():
 
 
 def convert(input_path, output_path):
-    """Split each record at the final assistant turn: prior turns become prompt, its content becomes answer."""
     written = 0
     with open(input_path, "r", encoding="utf-8") as src, \
             open(output_path, "w", encoding="utf-8") as dst:

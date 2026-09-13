@@ -85,7 +85,6 @@ def split_dataset_by_node(dataset):
 
 
 def get_tokenize_function(model, tokenizer):
-
     def tokenize(dataset):
         text = [
             input_text + output_text
@@ -247,7 +246,6 @@ def get_pack_function(model, tokenizer=None):
     return pack
 
 def get_max_position_embeddings(config):
-    """Get max_position_embeddings from a config, including nested text configs."""
     if hasattr(config, 'max_position_embeddings'):
         return config.max_position_embeddings
     if hasattr(config, 'text_config') and hasattr(config.text_config, 'max_position_embeddings'):

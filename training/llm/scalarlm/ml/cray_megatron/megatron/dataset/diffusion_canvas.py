@@ -1,12 +1,9 @@
-"""Pure canvas-tokenization helpers for DiffusionGemma."""
-
 import logging
 
 logger = logging.getLogger(__name__)
 
 
 def pad_token_id(tokenizer):
-    """A valid embedding index to fill canvas padding: pad, else eos, else 0."""
     for tok in (tokenizer.pad_token_id, tokenizer.eos_token_id):
         if tok is not None:
             return tok
@@ -14,7 +11,6 @@ def pad_token_id(tokenizer):
 
 
 def anchor_token_id(tokenizer):
-    """Resolve the canvas anchor token (BOS), or ``None`` if the tokenizer has none."""
     return getattr(tokenizer, "bos_token_id", None)
 
 
@@ -27,7 +23,6 @@ def tokenize_canvas_batch(
     supervise_termination=False,
     pad_loss_weight=1.0,
 ):
-    """Tokenize ``{input, output}`` rows into DiffusionGemma canvas fields."""
     pad_id = pad_token_id(tokenizer)
     # Only append EOS when the tail is supervised; otherwise it is unsupervised noise.
     eos_id = tokenizer.eos_token_id if supervise_termination else None

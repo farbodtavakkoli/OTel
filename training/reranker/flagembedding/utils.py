@@ -1,10 +1,8 @@
-"""Helpers for train_reranker_flagembedding.py — transformers 5.x compat and argv building."""
 import os
 import torch
 
 
 def patch_transformers5_compat():
-    """Re-add the Trainer.tokenizer name FlagEmbedding still uses; transformers 5.x renamed it."""
     from transformers.trainer import Trainer
 
     if getattr(Trainer, "_flagembedding_compat", False):
@@ -13,7 +11,6 @@ def patch_transformers5_compat():
     original_init = Trainer.__init__
 
     def init(self, *args, **kwargs):
-        """Accept the removed tokenizer= kwarg that FlagEmbedding's reranker runners still pass."""
         if "tokenizer" in kwargs:
             kwargs.setdefault("processing_class", kwargs.pop("tokenizer"))
         original_init(self, *args, **kwargs)
@@ -25,7 +22,6 @@ def patch_transformers5_compat():
 
 
 def resolve_attn(requested):
-    """Pick the attention implementation; flash_attention_2 is CUDA-only, so ROCm falls back to sdpa."""
     if requested != "auto":
         return requested
     if torch.version.hip is not None:
@@ -38,17 +34,14 @@ def resolve_attn(requested):
 
 
 def resolve_path(path, base):
-    """Make a relative path absolute against the folder that holds the script."""
     return path if os.path.isabs(path) else os.path.join(base, path)
 
 
 def flag(name, value):
-    """Render one HfArgumentParser flag, dropping it when the value is None."""
     return [] if value is None else [f"--{name}", str(value)]
 
 
 def build_argv(args, base_dir):
-    """Translate the parsed CLI namespace into the argv FlagEmbedding's HfArgumentParser expects."""
     argv = [
         "--model_name_or_path", args.model_name_or_path,
         "--train_data", resolve_path(args.train_data, base_dir),
@@ -90,7 +83,6 @@ def build_argv(args, base_dir):
 
 
 def llm_argv(args):
-    """Extra flags for the decoder-only (LLM) reranker families — LoRA and attention."""
     argv = ["--model_type", "decoder", "--use_lora", str(args.use_lora),
             "--lora_rank", str(args.lora_rank), "--lora_alpha", str(args.lora_alpha),
             "--lora_dropout", str(args.lora_dropout),
@@ -108,7 +100,6 @@ def llm_argv(args):
 
 
 def gpu_banner():
-    """One line describing the visible accelerators — handy in multi-rank logs."""
     if not torch.cuda.is_available():
         return "no GPU visible"
     name = torch.cuda.get_device_name(0)

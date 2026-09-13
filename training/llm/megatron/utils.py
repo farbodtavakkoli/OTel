@@ -1,12 +1,9 @@
-"""Stdlib helpers for the Megatron preprocessing wrapper -- see readme_megatron.md."""
-
 import json
 import tempfile
 from pathlib import Path
 
 
 def flatten_chat_record(record) -> str:
-    """Concatenate every `messages[].content` into one document string."""
     if record.get("text"):
         return record["text"]
     messages = record.get("messages") or []
@@ -19,7 +16,6 @@ def flatten_chat_record(record) -> str:
 
 
 def _maybe_flatten_chat_jsonl(path: Path):
-    """Write a temp {text} JSONL from a chat JSONL; return its path, or None if already text."""
     first = None
     with path.open("r", encoding="utf-8") as fh:
         for line in fh:

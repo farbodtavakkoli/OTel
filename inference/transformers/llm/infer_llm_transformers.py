@@ -1,4 +1,3 @@
-"""LLM reference generation / prompted classification (Transformers + PyTorch) — see README.md."""
 import argparse
 import json, os, time
 
@@ -18,7 +17,6 @@ DEFAULT_PROMPTS = [
 
 
 def parse_args():
-    """Parse the CLI arguments."""
     parser = argparse.ArgumentParser(description="LLM reference generation / prompted classification")
     parser.add_argument("--model", type=str, default="Qwen/Qwen3-4B", help="Model id or path")
     parser.add_argument("--prompts_file", type=str, default=None, help="JSON/JSONL file of prompt strings; omit for the built-in set")
@@ -49,7 +47,6 @@ def parse_args():
 
 
 def read_prompts(path: str, fallback: list[str]) -> list[str]:
-    """Read a JSON list or a JSONL/plain-text file of prompts; fall back to the built-in set."""
     if path is None:
         return list(fallback)
     with open(path) as f:
@@ -60,12 +57,6 @@ def read_prompts(path: str, fallback: list[str]) -> list[str]:
 
 
 def disable_deepgemm():
-    """Mark DeepGEMM unavailable so FP8 falls back to the Triton kernel.
-
-    On ROCm the DeepGEMM probe reads libcudart.so and raises OSError, which the caller's
-    `except ImportError` does not catch; gfx950 also reports capability 9.x so the
-    Hopper gate never trips. Pre-marking it makes the probe raise ImportError instead.
-    """
     try:
         import transformers.integrations.finegrained_fp8 as fp8
         fp8._deepgemm_available = False
@@ -75,7 +66,6 @@ def disable_deepgemm():
 
 
 def load_tokenizer(model_id: str, trust_remote_code: bool):
-    """Load a tokenizer, going through AutoProcessor for multimodal checkpoints."""
     try:
         return AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code)
     except Exception:
@@ -83,14 +73,6 @@ def load_tokenizer(model_id: str, trust_remote_code: bool):
 
 
 def fix_fp8_skip_list(cfg):
-    """Drop 'mlp.gate' / 'mlp.shared_expert_gate' entries from the FP8 skip list.
-
-    Transformers prefix-matches those names against 'mlp.gate_proj', so gate_proj is left
-    as an unscaled bf16 Linear while its weight_scale_inv is discarded as UNEXPECTED. The
-    scales are ~1e-4, so the SwiGLU gate comes out ~4 orders of magnitude wrong and the
-    model emits gibberish. This dense checkpoint has no real MoE router, so the entries
-    match nothing legitimate and are safe to remove.
-    """
     quant = dict(cfg.quantization_config)
     skip = quant.get("modules_to_not_convert") or []
     keep = [m for m in skip if not (m.endswith(".mlp.gate") or m.endswith(".mlp.shared_expert_gate"))]
@@ -102,7 +84,6 @@ def fix_fp8_skip_list(cfg):
 
 
 def load_model(args):
-    """Load the model, resolving the architecture class and any FP8 quantization handling."""
     cfg = AutoConfig.from_pretrained(args.model, trust_remote_code=args.trust_remote_code)
     arch = (getattr(cfg, "architectures", None) or ["AutoModelForCausalLM"])[0]
     quant = getattr(cfg, "quantization_config", None)
@@ -131,7 +112,6 @@ def load_model(args):
 
 
 def build_inputs(tokenizer, prompt: str, system: str | None):
-    """Apply the chat template to one prompt, falling back to the raw string."""
     messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
     try:
         return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -140,7 +120,6 @@ def build_inputs(tokenizer, prompt: str, system: str | None):
 
 
 def vram_gib() -> list[float]:
-    """Per-visible-GPU allocated VRAM in GiB, as torch sees it."""
     return [round(torch.cuda.memory_allocated(i) / 2**30, 2) for i in range(torch.cuda.device_count())]
 
 

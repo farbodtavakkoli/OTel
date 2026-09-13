@@ -1,5 +1,3 @@
-"""Continued pre-training launcher for torchtune (legacy — upstream wound down 2025) -- see readme_torchtune.md."""
-
 import argparse
 import logging
 import os

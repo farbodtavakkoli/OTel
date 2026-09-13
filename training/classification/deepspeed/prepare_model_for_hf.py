@@ -1,4 +1,3 @@
-"""Rename the trained checkpoint's custom-head weights for plain HF loading — see readme_classification.md."""
 import argparse
 import torch
 import shutil
@@ -8,7 +7,6 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 
 def parse_args():
-    """Parse the CLI arguments."""
     parser = argparse.ArgumentParser(description="Prepare a trained classifier checkpoint for HF upload")
     parser.add_argument("--source", type=str, default="best_model", help="Trained checkpoint dir")
     parser.add_argument("--output", type=str, default="best_model_hf_ready", help="Output dir for the HF-ready model")
@@ -16,7 +14,6 @@ def parse_args():
 
 
 def prepare_model(source, output):
-    """Rename score.1.weight to score.weight, drop dropout params, copy configs, and verify loading."""
     print(f"Loading model from: {source}")
 
     weights_path = Path(source) / "model.safetensors"

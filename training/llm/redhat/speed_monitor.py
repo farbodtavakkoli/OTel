@@ -1,5 +1,3 @@
-"""Live speed/ETA monitor for OSFT runs — polls training_metrics_0.jsonl; usage in readme_redhat.md."""
-
 import json
 import math
 import os
@@ -11,7 +9,6 @@ METRICS_FILENAME = "training_metrics_0.jsonl"
 
 
 def count_data_samples(data_path: str) -> int:
-    """Count the examples (lines) in a JSONL file by chunked newline counting."""
     count = 0
     last_byte = b"\n"
     with open(data_path, "rb") as f:
@@ -27,7 +24,6 @@ def count_data_samples(data_path: str) -> int:
 
 
 def compute_steps_per_epoch(data_path: str, effective_batch_size: int) -> int:
-    """Return ceil(num_samples / effective_batch_size), at least 1."""
     num_samples = count_data_samples(data_path)
     if effective_batch_size <= 0:
         raise ValueError("effective_batch_size must be a positive integer")
@@ -35,7 +31,6 @@ def compute_steps_per_epoch(data_path: str, effective_batch_size: int) -> int:
 
 
 def read_metrics(metrics_path: str) -> list[dict]:
-    """Read all valid JSON lines from a live metrics file, skipping malformed ones."""
     metrics: list[dict] = []
     try:
         with open(metrics_path, "r") as f:
@@ -54,7 +49,6 @@ def read_metrics(metrics_path: str) -> list[dict]:
 
 
 def format_duration(seconds: float) -> str:
-    """Format a duration in seconds as a compact human-readable string."""
     seconds = int(max(seconds, 0))
     hours, rem = divmod(seconds, 3600)
     minutes, secs = divmod(rem, 60)
@@ -66,7 +60,6 @@ def format_duration(seconds: float) -> str:
 
 
 def compute_speed_report(metrics: list[dict], steps_per_epoch: int, num_epochs: int) -> dict | None:
-    """Build an ETA/throughput report from collected metrics, or None if no usable step yet."""
     if not metrics:
         return None
 
@@ -136,7 +129,6 @@ def compute_speed_report(metrics: list[dict], steps_per_epoch: int, num_epochs: 
 
 
 def format_report(report: dict) -> str:
-    """Render a speed report dict (from compute_speed_report) as a printable block."""
     mem = report["peak_memory_usage_GB"]
     tps = report["peak_tokens_per_second"]
     vloss = report["last_val_loss"]
@@ -162,8 +154,6 @@ def format_report(report: dict) -> str:
 
 
 class SpeedMonitor(threading.Thread):
-    """Background thread that polls the metrics file and prints ETA reports."""
-
     def __init__(self, ckpt_output_dir: str, steps_per_epoch: int, num_epochs: int,
     report_every_steps: int, poll_interval: float = 5.0):
         super().__init__(daemon=True)
@@ -176,7 +166,6 @@ class SpeedMonitor(threading.Thread):
         self._last_reported_step = 0
 
     def stop(self):
-        """Signal the monitor loop to exit."""
         self._stop_event.set()
 
     def run(self):
@@ -202,7 +191,6 @@ class SpeedMonitor(threading.Thread):
 def speed_monitor(ckpt_output_dir: str, data_path: str, effective_batch_size: int,
 num_epochs: int, report_every_steps: int,
 poll_interval: float = 5.0):
-    """Context manager running a SpeedMonitor for the with-block; always stopped/joined on exit."""
     steps_per_epoch = compute_steps_per_epoch(data_path, effective_batch_size)
     total_steps = steps_per_epoch * num_epochs
     print(

@@ -1,5 +1,3 @@
-"""Helpers for the Tevatron launcher: ROCm detection, launch-command assembly, and output-dir hygiene."""
-
 import logging
 import os
 import shutil
@@ -13,7 +11,6 @@ SEARCH_MODULE = "tevatron.retriever.driver.search"
 
 
 def torch_build():
-    """Return ('rocm'|'cuda'|'cpu', version string) for the installed torch."""
     import torch
 
     if getattr(torch.version, "hip", None):
@@ -24,7 +21,6 @@ def torch_build():
 
 
 def resolve_attn(requested):
-    """Pick the attention implementation; flash_attention_2 is a CUDA-only build."""
     build, _ = torch_build()
     if requested != "auto":
         return requested
@@ -32,7 +28,6 @@ def resolve_attn(requested):
 
 
 def visible_device_count(devices):
-    """Number of GPUs the run will use, from --devices or the ambient visibility vars."""
     if devices:
         return len([d for d in devices.split(",") if d.strip()])
     ambient = os.environ.get("HIP_VISIBLE_DEVICES") or os.environ.get("CUDA_VISIBLE_DEVICES")
@@ -44,7 +39,6 @@ def visible_device_count(devices):
 
 
 def build_env(devices):
-    """Child environment: pin the GPUs on both ROCm and CUDA variable names."""
     env = os.environ.copy()
     env.setdefault("TOKENIZERS_PARALLELISM", "false")
     if devices:
@@ -54,11 +48,6 @@ def build_env(devices):
 
 
 def prepare_output_dir(output_dir, overwrite):
-    """Clear a stale output dir.
-
-    Upstream guards this with `--overwrite_output_dir`, which transformers 5.x removed;
-    the driver would raise AttributeError on a non-empty dir instead.
-    """
     if not os.path.isdir(output_dir) or not os.listdir(output_dir):
         return
     if not overwrite:
@@ -68,17 +57,14 @@ def prepare_output_dir(output_dir, overwrite):
 
 
 def flag(name, value):
-    """Emit ['--name', str(value)] for a set value, or [] for None."""
     return [] if value is None else [f"--{name}", str(value)]
 
 
 def switch(name, value):
-    """Emit ['--name'] for a truthy store_true flag."""
     return [f"--{name}"] if value else []
 
 
 def build_train_command(args, num_gpus, attn):
-    """Assemble the python/torchrun command line for tevatron.retriever.driver.train."""
     if num_gpus > 1:
         launcher = ["torchrun", "--nproc_per_node", str(num_gpus),
                     "--master_port", str(args.master_port), "-m", TRAIN_MODULE]
@@ -137,7 +123,6 @@ def build_train_command(args, num_gpus, attn):
 
 
 def summarize(args, cmd, num_gpus, attn):
-    """One compact block so the log says exactly what is about to run."""
     build, version = torch_build()
     effective = args.batch_size * args.gradient_accumulation_steps * num_gpus
     logger.info("torch           : %s (%s)", version, build)
@@ -155,7 +140,6 @@ def summarize(args, cmd, num_gpus, attn):
 
 
 def warn_on_environment(args):
-    """Surface the failure modes that otherwise show up minutes into a run."""
     build, _ = torch_build()
     if build == "rocm" and args.attn_implementation == "flash_attention_2":
         logger.warning("flash_attention_2 requested on a ROCm build - flash-attn is CUDA-only here; expect a load failure")
@@ -166,5 +150,4 @@ def warn_on_environment(args):
 
 
 def run(cmd, env):
-    """Run the child process and return its exit code."""
     return subprocess.run(cmd, env=env, check=False).returncode

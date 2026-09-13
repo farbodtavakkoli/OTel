@@ -6,7 +6,6 @@ import torch.nn as nn
 
 
 def _assert_uniform_participation(synced, world_size):
-    """Fail loudly if ranks reduced different numbers of gradient tensors."""
     counts = torch.tensor([float(synced)], dtype=torch.float64)
     allreduce(counts)
     expected = float(synced) * world_size
@@ -36,7 +35,6 @@ class DDP(nn.Module):
             return getattr(self.model, name)
 
     def backward_sync(self):
-        """All-reduce gradients across data-parallel ranks, then average."""
         world_size = get_size()
 
         if world_size == 1:

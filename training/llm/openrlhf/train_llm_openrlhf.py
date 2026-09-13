@@ -1,5 +1,3 @@
-"""OpenRLHF launcher — assembles and execs the right deepspeed / ray job submit command line (see readme_openrlhf.md)."""
-
 import argparse
 import logging
 import os
@@ -71,7 +69,6 @@ def parse_args():
 
 
 def build_deepspeed_cmd(args):
-    """SFT and DPO run through `deepspeed --module`, using the --model.* arg namespace."""
     module = "openrlhf.cli.train_sft" if args.mode == "sft" else "openrlhf.cli.train_dpo"
     cmd = [
         "deepspeed", "--module", module,
@@ -107,7 +104,6 @@ def build_deepspeed_cmd(args):
 
 
 def build_ray_cmd(args):
-    """PPO and GRPO run through `ray job submit`, using the --actor.*/--critic.* namespace."""
     train = [
         "python3", "-m", "openrlhf.cli.train_ppo_ray",
         "--actor.model_name_or_path", args.model_name,

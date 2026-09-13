@@ -1,4 +1,3 @@
-"""Cross-encoder reranker fine-tuner (sentence-transformers CrossEncoder) — see readme_reranker.md."""
 import argparse
 import json, os, random
 import torch
@@ -16,7 +15,6 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 
 def parse_args():
-    """Parse the CLI arguments."""
     parser = argparse.ArgumentParser(description="Cross-encoder reranker fine-tuner")
     parser.add_argument("--model", type=str, default="Qwen/Qwen3-Reranker-0.6B", help="Cross-encoder base model")
     parser.add_argument("--data", type=str, default="OTel_reranker_sample_100.jsonl",
@@ -34,7 +32,6 @@ def parse_args():
 
 
 def load_and_split(path: str, eval_frac: float, n_neg: int, test_mode: bool = False):
-    """Expand each JSONL row into labeled (query, doc) pairs and a held-out eval set."""
     with open(path) as f:
         raw = [json.loads(line) for line in f]
     random.seed(42)

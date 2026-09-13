@@ -1,5 +1,3 @@
-"""Unified embedding fine-tuner (sentence-transformers) with hard negatives — see readme_embedding.md."""
-
 import mteb
 import os
 import logging
@@ -105,7 +103,6 @@ MODELS = {
 }
 
 def parse_args():
-    """Parse CLI arguments; registry-backed flags default to None, meaning "use the registry value"."""
     parser = argparse.ArgumentParser(description="Unified embedding fine-tuner (ST / BGE / Gemma / model2vec)")
     parser.add_argument("--model_name", type=str, default="google/embeddinggemma-300m", help="Model name or path")
     parser.add_argument("--train_file", type=str, default="OTel_embedding_sample_100.jsonl",
@@ -127,7 +124,6 @@ def parse_args():
 
 
 def resolve_cfg(model_name, args_cli):
-    """Merge DEFAULT_CFG <- registry entry <- CLI overrides."""
     cfg = dict(DEFAULT_CFG)
     cfg.update(MODELS.get(model_name, {}))
 
@@ -148,7 +144,6 @@ def resolve_cfg(model_name, args_cli):
 
 
 def safe_get_model_meta(model_name):
-    """mteb.get_model_meta with a fallback for models not on the MTEB hub (static models, local paths)."""
     try:
         meta = mteb.get_model_meta(model_name)
     except Exception:
@@ -159,7 +154,6 @@ def safe_get_model_meta(model_name):
 
 
 def get_datasets(path, max_eval_samples=3000, test_size=0.1, sample_fraction=1.0, seed=42):
-    """Load the training JSONL and produce a deterministic train/eval split shared by all ranks."""
     full_ds = load_dataset("json", data_files=path, split="train")
     logging.info("Loaded %d training data from %s", len(full_ds), path)
 
@@ -317,7 +311,6 @@ class MTEBWrapper:
 
 
 def create_telco_evaluator(train_ds, eval_ds, model_name, corpus_size=None, seed=42):
-    """Build the SequentialEvaluator: unseen/seen IR evaluators plus an MTEB check."""
     random.seed(seed)
 
     n_eval = min(10000, len(eval_ds))
@@ -382,7 +375,6 @@ def create_telco_evaluator(train_ds, eval_ds, model_name, corpus_size=None, seed
 
 
 def load_model(model_name, cfg, local_rank):
-    """Load an embedding model according to its loader type ("transformer" or "static")."""
     if cfg["loader"] == "static":
         # Static model2vec: a lookup table, so no dtype/attention/tokenizer kwargs.
         static_embedding = StaticEmbedding.from_model2vec(model_name)

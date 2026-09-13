@@ -1,7 +1,3 @@
-"""H100 launcher wrapper (temporary): patch transformers so gemma-4's tied word
-embeddings are UNTIED at load, sidestepping torch-2.13 FSDP2's rejection of the
-shared embed_tokens/lm_head. Then run the shipped train_llm_fsdp.py unchanged.
-accelerate launches THIS file; it re-execs the shipped script's main in-process."""
 import os
 import sys
 REPO = os.path.dirname(os.path.abspath(__file__))

@@ -1,4 +1,3 @@
-"""OpenAI-compatible chat client for a Lemonade Server LLM endpoint — see README.md."""
 import argparse
 import json
 import os
@@ -13,7 +12,6 @@ DEFAULT_PROMPT = "In exactly two sentences, explain what an OpenTelemetry span i
 
 
 def parse_args():
-    """Parse the CLI arguments."""
     parser = argparse.ArgumentParser(description="Lemonade Server LLM smoke client")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Lemonade Server host")
     parser.add_argument("--port", type=int, default=8350, help="Lemonade Server port")
@@ -35,7 +33,6 @@ def parse_args():
 
 
 def wait_for_health(base_url: str, retries: int):
-    """Block until Lemonade Server answers /api/v1/health, or raise."""
     for _ in range(retries):
         try:
             if requests.get(f"{base_url}/api/v1/health", timeout=5).status_code == 200:
@@ -47,14 +44,12 @@ def wait_for_health(base_url: str, retries: int):
 
 
 def load_model(base_url: str, model: str, timeout: int):
-    """POST /api/v1/load so the llama.cpp subprocess is warm before timing anything."""
     r = requests.post(f"{base_url}/api/v1/load", json={"model_name": model}, timeout=timeout)
     r.raise_for_status()
     return r.json()
 
 
 def build_messages(prompt: str, system):
-    """Assemble the OpenAI chat message list."""
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
@@ -63,7 +58,6 @@ def build_messages(prompt: str, system):
 
 
 def chat(base_url: str, endpoint: str, model: str, messages, max_tokens: int, temperature: float, timeout: int):
-    """POST one chat-completions request and return the parsed response plus latency."""
     payload = {"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": temperature}
     started = time.time()
     r = requests.post(f"{base_url}{endpoint}", json=payload, timeout=timeout)
@@ -72,7 +66,6 @@ def chat(base_url: str, endpoint: str, model: str, messages, max_tokens: int, te
 
 
 def print_timings(body):
-    """Print llama.cpp's own timing block when Lemonade passes it through."""
     timings = body.get("timings") or {}
     if not timings:
         return

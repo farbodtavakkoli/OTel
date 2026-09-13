@@ -1,4 +1,3 @@
-"""Inference / evaluation for the trained sequence classifier — see readme_classification.md."""
 import argparse
 import torch
 import os
@@ -32,7 +31,6 @@ hf_logging.set_verbosity_info()
 
 
 def parse_args():
-    """Parse the CLI arguments."""
     parser = argparse.ArgumentParser(description="Evaluate a trained sequence classifier on a labeled CSV")
     parser.add_argument("--model_path", type=str, default="best_model_hf_ready",
                         help="HF-ready checkpoint dir (from prepare_model_for_hf.py)")
@@ -54,7 +52,6 @@ recall_metric = evaluate.load("recall")
 
 
 def load_test_dataset(test_file, label2id):
-    """Load only the test dataset and map labels using the provided label2id."""
     test_file = Path(test_file)
 
     if not test_file.exists():
@@ -86,7 +83,6 @@ def load_test_dataset(test_file, label2id):
 
 
 def compute_metrics(predictions, labels, num_classes):
-    """Compute metrics from predictions and labels."""
     # Debug logging — show ALL classes including zeros
     dist_dict = {i: int(np.sum(predictions == i)) for i in range(num_classes)}
     logger.info(f"\nPred Distribution (all {num_classes} classes): {dist_dict}")

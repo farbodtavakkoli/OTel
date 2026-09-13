@@ -1,5 +1,3 @@
-"""Reranker client for a vLLM OpenAI-compatible server — see README.md."""
-
 import argparse
 import json
 import sys
@@ -21,7 +19,6 @@ DEFAULT_DOCS = [
 
 
 def parse_args():
-    """Parse CLI arguments; every tunable of the rerank request is exposed here."""
     parser = argparse.ArgumentParser(description="Rerank documents against a vLLM /v1/rerank endpoint")
     parser.add_argument("--host", type=str, default="localhost", help="Server host")
     parser.add_argument("--port", type=int, default=8002, help="Server port")
@@ -36,7 +33,6 @@ def parse_args():
 
 
 def post_json(url, payload, timeout):
-    """POST a JSON payload and return the decoded JSON response."""
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:

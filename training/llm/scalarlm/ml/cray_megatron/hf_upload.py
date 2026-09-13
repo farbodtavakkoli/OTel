@@ -1,5 +1,3 @@
-"""Push a finished checkpoint to the HuggingFace Hub."""
-
 import logging
 import os
 
@@ -10,7 +8,6 @@ OFFLINE_VARS = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE")
 
 
 def upload_to_hf_if_enabled():
-    """Push the final checkpoint to the Hub when the job asked for it."""
     from cray_infra.training.distributed import get_rank
     from cray_infra.util.get_job_config import get_job_config
     from cray_megatron.models.get_latest_checkpoint_path import (
@@ -50,7 +47,6 @@ def upload_to_hf_if_enabled():
 
 
 def do_upload(hf_repo_id, hf_token, checkpoint_path):
-    """Perform the upload with offline mode suspended for its duration."""
     # Clear the offline flags for the upload only, then restore them.
     saved_offline = {k: os.environ.get(k) for k in OFFLINE_VARS}
     overridden = [k for k, v in saved_offline.items() if v not in (None, "0")]
@@ -110,7 +106,6 @@ def do_upload(hf_repo_id, hf_token, checkpoint_path):
 
 
 def record_hf_upload_result(repo_id=None, error=None):
-    """Surface the upload outcome in status.json without changing job status."""
     try:
         from cray_megatron.megatron.training_harness import get_status, save_status
 

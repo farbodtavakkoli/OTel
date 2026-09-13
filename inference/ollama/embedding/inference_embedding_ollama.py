@@ -1,4 +1,3 @@
-"""Client for an Ollama server serving EmbeddingGemma-300M GGUF — see README.md."""
 import argparse
 import json
 import math
@@ -28,7 +27,6 @@ DEFAULT_DOCUMENTS = [
 
 
 def parse_args():
-    """Parse the CLI arguments."""
     parser = argparse.ArgumentParser(description="Ollama EmbeddingGemma smoke client")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Ollama server host")
     parser.add_argument("--port", type=int, default=11434, help="Ollama server port")
@@ -51,7 +49,6 @@ def parse_args():
 
 
 def wait_for_health(base_url: str, retries: int):
-    """Block until the Ollama server answers on /api/tags, or raise."""
     for _ in range(retries):
         try:
             if requests.get(f"{base_url}/api/tags", timeout=5).status_code == 200:
@@ -63,7 +60,6 @@ def wait_for_health(base_url: str, retries: int):
 
 
 def embed(base_url: str, args, texts):
-    """Embed a list of strings and return (vectors, elapsed_seconds)."""
     if args.api == "openai":
         url = f"{base_url}/v1/embeddings"
         payload = {"model": args.model, "input": texts}
@@ -83,13 +79,11 @@ def embed(base_url: str, args, texts):
 
 
 def cosine(a, b):
-    """Cosine similarity between two vectors."""
     denominator = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))
     return sum(x * y for x, y in zip(a, b)) / denominator
 
 
 def cross_check(matrix, reference_path, tolerance):
-    """Compare a cosine matrix against a saved Transformers reference and print the deltas."""
     with open(reference_path) as f:
         reference = json.load(f)
     expected = reference["cosine_similarities"]

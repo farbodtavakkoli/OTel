@@ -1,5 +1,3 @@
-"""Thin launcher for Axolotl post-training: validate the YAML config, then shell out to the axolotl CLI (see readme_axolotl.md)."""
-
 import argparse
 import logging
 import os
@@ -24,7 +22,6 @@ REQUIRED_KEYS = ("base_model", "learning_rate")
 
 
 def parse_args():
-    """Parse launcher flags; unknown arguments are forwarded verbatim to the axolotl CLI."""
     parser = argparse.ArgumentParser(description="Launch Axolotl training from a YAML config")
     parser.add_argument("--config", required=True,
                         help="Path to the Axolotl YAML config (e.g. config_sft_lora.yaml)")
@@ -42,7 +39,6 @@ def parse_args():
 
 
 def load_config(path):
-    """Parse the YAML config, failing loudly if it is missing or malformed."""
     if not os.path.isfile(path):
         raise SystemExit(f"config not found: {path}")
     with open(path, "r", encoding="utf-8") as handle:
@@ -53,7 +49,6 @@ def load_config(path):
 
 
 def local_dataset_files(cfg):
-    """Collect local file paths referenced by the `datasets` blocks."""
     files = []
     for entry in cfg.get("datasets") or []:
         if not isinstance(entry, dict):
@@ -75,7 +70,6 @@ def local_dataset_files(cfg):
 
 
 def validate(cfg, config_path):
-    """Fail fast on the mistakes that otherwise surface minutes into a run."""
     missing = [key for key in REQUIRED_KEYS if key not in cfg]
     if missing:
         raise SystemExit(f"{config_path}: missing required key(s): {', '.join(missing)}")
@@ -101,7 +95,6 @@ def validate(cfg, config_path):
 
 
 def summarize(cfg, config_path, num_processes):
-    """One compact block so the log says exactly what is about to run."""
     mode = cfg.get("rl") or "sft"
     if cfg.get("adapter"):
         method = cfg["adapter"]
@@ -126,7 +119,6 @@ def summarize(cfg, config_path, num_processes):
 
 
 def build_command(args, passthrough):
-    """Assemble the upstream CLI invocation."""
     cmd = ["axolotl", args.task, args.config]
     if args.task == "train":
         cmd += ["--num-processes", str(args.num_processes)]
@@ -140,7 +132,6 @@ def build_command(args, passthrough):
 
 
 def main():
-    """Validate the config, print a summary, and launch the axolotl CLI."""
     args, passthrough = parse_args()
 
     cfg = load_config(args.config)

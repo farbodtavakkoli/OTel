@@ -1,5 +1,3 @@
-"""KTransformers probe, direct-API generation (ROCm/CUDA), and chat client for a sglang-kt server — see README.md."""
-
 import argparse
 import json
 import os
@@ -21,7 +19,6 @@ DEFAULT_PROMPT = "In two sentences, explain what a mixture-of-experts model is a
 
 
 def parse_args():
-    """Parse CLI arguments; every tunable of the hybrid MoE run is exposed here."""
     parser = argparse.ArgumentParser(description="kt-kernel CPU-GPU heterogeneous MoE probe / generation client")
     parser.add_argument("--mode", type=str, default="probe", choices=["probe", "kernel", "generate", "chat"],
                         help="probe: environment only; kernel: synthetic MoE kernel check; generate: real model")
@@ -50,7 +47,6 @@ def parse_args():
 
 
 def report_environment():
-    """Print the torch/ROCm/kt-kernel facts that decide whether this stack is even viable."""
     import kt_kernel
     from kt_kernel import kt_kernel_ext
 
@@ -73,7 +69,6 @@ def report_environment():
 
 
 def cpu_flags():
-    """Return the MoE-relevant instruction-set flags this CPU actually has."""
     wanted = ["avx512f", "avx512bw", "avx512vbmi", "avx512_vnni", "avx512_bf16",
               "amx_tile", "amx_int8", "amx_bf16"]
     with open("/proc/cpuinfo") as handle:
@@ -85,7 +80,6 @@ def cpu_flags():
 
 
 def vram_used_gb(index=0):
-    """Return VRAM used on one card, in GB, via rocm-smi."""
     out = subprocess.run(["rocm-smi", "--showmeminfo", "vram", "--csv"], capture_output=True, text=True).stdout
     for line in out.splitlines():
         if line.startswith(f"card{index},"):
@@ -94,7 +88,6 @@ def vram_used_gb(index=0):
 
 
 def sample_hardware(stop_event, samples, index=0):
-    """Background sampler recording GPU VRAM and system CPU utilisation during decode."""
     prev = None
     while not stop_event.is_set():
         with open("/proc/stat") as handle:
@@ -109,7 +102,6 @@ def sample_hardware(stop_event, samples, index=0):
 
 
 def build_kt_experts(block, layer_idx, config, args, device):
-    """Swap one Qwen3MoeSparseMoeBlock's GPU experts for a kt-kernel CPU-resident expert bank."""
     from kt_kernel import KTMoEWrapper
 
     mask = None
@@ -133,8 +125,6 @@ def build_kt_experts(block, layer_idx, config, args, device):
     wrapper.load_weights(torch.arange(config.num_experts, dtype=torch.int64).contiguous())
 
     class KTExperts(torch.nn.Module):
-        """Drop-in for Qwen3MoeExperts that runs the expert FFNs on CPU via kt-kernel."""
-
         def forward(self, hidden_states, top_k_index, top_k_weights):
             stream = torch.cuda.current_stream().cuda_stream
             out = wrapper.forward(hidden_states, top_k_index, top_k_weights.to(torch.float32), stream)
@@ -145,7 +135,6 @@ def build_kt_experts(block, layer_idx, config, args, device):
 
 
 def load_hybrid_model(args, device):
-    """Load the MoE model with attention/router/embeddings on GPU and every expert on CPU."""
     from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(args.model)
@@ -174,7 +163,6 @@ def load_hybrid_model(args, device):
 
 
 def run_kernel_check(args):
-    """Validate the CPU MoE kernel against a PyTorch reference, with no model download."""
     from kt_kernel import kt_kernel_ext
 
     torch.manual_seed(args.seed)
@@ -222,7 +210,6 @@ def run_kernel_check(args):
 
 
 def run_generation(args, device):
-    """Load the model in hybrid CPU-GPU placement, generate real text, and report throughput."""
     model, tokenizer, wrappers = load_hybrid_model(args, device)
     if not wrappers:
         print("no MoE layers were offloaded — is this actually an MoE checkpoint?", file=sys.stderr)
@@ -269,7 +256,6 @@ def run_generation(args, device):
 
 
 def post_json(url, payload, timeout):
-    """POST a JSON payload and return the decoded JSON response."""
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -277,7 +263,6 @@ def post_json(url, payload, timeout):
 
 
 def build_messages(args):
-    """Build the chat message list for a single-turn request."""
     messages = []
     if args.system_prompt:
         messages.append({"role": "system", "content": args.system_prompt})
@@ -286,7 +271,6 @@ def build_messages(args):
 
 
 def run_chat(args):
-    """Query a running KTransformers/SGLang OpenAI-compatible server and print the completion."""
     url = f"http://{args.host}:{args.port}/v1/chat/completions"
     payload = {
         "model": args.model,

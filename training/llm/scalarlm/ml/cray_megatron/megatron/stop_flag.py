@@ -1,5 +1,3 @@
-"""Module-level signal latch for graceful training shutdown."""
-
 _stop_requested = False
 _last_signal = None
 

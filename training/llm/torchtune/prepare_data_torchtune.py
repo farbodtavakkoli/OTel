@@ -1,5 +1,3 @@
-"""Flatten chat JSONL into the {text} rows torchtune's text_completion_dataset wants -- see readme_torchtune.md."""
-
 import argparse
 import json
 import logging
@@ -28,7 +26,6 @@ def parse_args():
 
 
 def flatten_record(record):
-    """Return `text` if present, else every `messages[].content` joined by blank lines."""
     if record.get("text"):
         return record["text"]
     messages = record.get("messages") or []

@@ -1,4 +1,3 @@
-"""Format a dataset locally and submit a training job to a remote ScalarLM server — see readme_scalarlm.md."""
 import os
 import json
 import argparse
@@ -10,7 +9,6 @@ load_dotenv('dev.env')
 
 
 def _str2bool(value):
-    """Parse a boolean flag; argparse's type=bool treats any non-empty string as True."""
     if isinstance(value, bool):
         return value
     normalized = str(value).strip().lower()
@@ -141,7 +139,6 @@ def format_conversation(example, model_type):
 
 # Format example for training
 def format_for_scalarlm(example, config):
-    
     if config.gradient_calculation == 'output_tokens':
         # Split: put prompt in 'input' (masked), completion + reasoning in 'output' (gradient computed)
         prompt = str(example.get('prompt', '')) or ""
@@ -216,7 +213,6 @@ def get_dataset(config):
     return dataset
 
 def build_train_args(config):
-    """Assemble the full job configuration passed to `llm.train()`."""
     return {
         # --- scheduling / shape ---
         "max_steps": config.max_steps,

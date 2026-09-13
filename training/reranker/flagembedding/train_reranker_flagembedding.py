@@ -1,4 +1,3 @@
-"""Reranker fine-tuner driving FlagEmbedding's own trainer, incl. LLM rerankers — see readme_reranker_flagembedding.md."""
 import argparse
 import os
 import sys
@@ -14,7 +13,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def parse_args():
-    """Parse the CLI arguments."""
     parser = argparse.ArgumentParser(description="Reranker fine-tuner on FlagEmbedding")
     parser.add_argument("--model_name_or_path", type=str, default="BAAI/bge-reranker-base",
                         help="Base reranker model")
@@ -75,7 +73,6 @@ def parse_args():
 
 
 def load_runner(reranker_type):
-    """Return the (parser dataclasses, runner) pair for the selected FlagEmbedding reranker family."""
     from FlagEmbedding.abc.finetune.reranker import (AbsRerankerDataArguments, AbsRerankerModelArguments,
                                                      AbsRerankerTrainingArguments)
     if reranker_type == "encoder":

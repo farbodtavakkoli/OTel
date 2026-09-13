@@ -1,4 +1,3 @@
-"""Client for an Ollama server serving a Qwen3.8-27B GGUF — see README.md."""
 import argparse
 import json
 import os
@@ -11,7 +10,6 @@ load_dotenv("dev.env")
 
 
 def parse_args():
-    """Parse the CLI arguments."""
     parser = argparse.ArgumentParser(description="Ollama LLM generate/chat smoke client")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Ollama server host")
     parser.add_argument("--port", type=int, default=11434, help="Ollama server port")
@@ -38,7 +36,6 @@ def parse_args():
 
 
 def wait_for_health(base_url: str, retries: int):
-    """Block until the Ollama server answers on /api/tags, or raise."""
     for _ in range(retries):
         try:
             if requests.get(f"{base_url}/api/tags", timeout=5).status_code == 200:
@@ -50,7 +47,6 @@ def wait_for_health(base_url: str, retries: int):
 
 
 def build_options(args):
-    """Assemble the Ollama `options` block from the tunables."""
     options = {
         "num_predict": args.max_tokens,
         "temperature": args.temperature,
@@ -63,7 +59,6 @@ def build_options(args):
 
 
 def call_endpoint(base_url: str, args):
-    """POST one completion on the selected API and return (body, elapsed_seconds)."""
     if args.api == "openai":
         url = f"{base_url}/v1/chat/completions"
         payload = {
@@ -108,7 +103,6 @@ def call_endpoint(base_url: str, args):
 
 
 def report(url: str, body: dict, elapsed: float, api: str):
-    """Print the generated text plus whatever timing the chosen API exposes."""
     print(f"endpoint      : {url}")
     print(f"model         : {body.get('model')}")
     print(f"latency_s     : {elapsed:.2f}")

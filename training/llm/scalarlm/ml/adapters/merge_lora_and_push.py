@@ -1,5 +1,3 @@
-"""Fold a trained LoRA adapter back into its base model and push it to HuggingFace Hub."""
-
 from __future__ import annotations
 
 import argparse
@@ -20,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 
 def find_latest_checkpoint(job_dir: Path) -> Path:
-    """Return the `checkpoint_<step>.pt` with the highest step in `job_dir`."""
     candidates = []
     for p in job_dir.iterdir():
         name = p.name
@@ -40,7 +37,6 @@ def find_latest_checkpoint(job_dir: Path) -> Path:
 
 
 def load_job_config(job_dir: Path) -> dict:
-    """Load the saved job config (model name, lora_config, etc.)."""
     config_path = job_dir / "config.yaml"
     if not config_path.is_file():
         raise FileNotFoundError(f"Missing {config_path}")
@@ -49,7 +45,6 @@ def load_job_config(job_dir: Path) -> dict:
 
 
 def classify_state_dict(state_dict: dict[str, torch.Tensor]) -> dict[str, dict]:
-    """Split a saved adapter state_dict into `lora`, `tokenformer` and `base` buckets."""
     lora: dict[str, torch.Tensor] = {}
     tokenformer: dict[str, torch.Tensor] = {}
     base: dict[str, torch.Tensor] = {}
@@ -69,7 +64,6 @@ def classify_state_dict(state_dict: dict[str, torch.Tensor]) -> dict[str, dict]:
 
 
 def infer_lora_rank(lora_keys: dict[str, torch.Tensor]) -> int:
-    """Read the leading dim of any `lora_A` tensor — that's `r`."""
     for k, v in lora_keys.items():
         # Either `...lora_A.weight` or `...lora_A.<adapter_name>.weight`.
         if ".lora_A." in k:
@@ -85,7 +79,6 @@ def resolve_lora_config_args(
     lora_keys: dict[str, torch.Tensor],
     lora_alpha_override: int | None = None,
 ) -> dict:
-    """Build peft.LoraConfig kwargs; rank comes from the saved tensors, not the job config."""
     rank = infer_lora_rank(lora_keys)
     user_lora = (job_config.get("lora_config") or {})
     if lora_alpha_override is not None:
@@ -122,7 +115,6 @@ PEFT_OUTER_PREFIX = "base_model.model."
 def _prefix_for_peft_load(
     lora_keys: dict[str, torch.Tensor],
 ) -> dict[str, torch.Tensor]:
-    """Re-prefix raw checkpoint keys to match `peft.PeftModel.state_dict()`. Idempotent."""
     out: dict[str, torch.Tensor] = {}
     for k, v in lora_keys.items():
         if k.startswith(PEFT_OUTER_PREFIX):
@@ -459,7 +451,6 @@ def _resolve_dtype(name: str | None):
 def _resolve_output_dir(
     requested: Path | None, mode: str
 ) -> tuple[Path, bool]:
-    """Return (output_dir, cleanup_tmp), creating a temp dir when none was requested."""
     if requested is None:
         prefix = "scalarlm-merged-" if mode == "merged" else "scalarlm-adapter-"
         return Path(tempfile.mkdtemp(prefix=prefix)), True
@@ -469,7 +460,6 @@ def _resolve_output_dir(
 
 # The trainer's raw PEFT state_dict keeps the `.default.` segment save_pretrained strips.
 def strip_default_adapter_segment(key: str) -> str:
-    """Drop the adapter-name segment between `lora_A`/`lora_B` and `weight`, if present."""
     parts = key.split(".")
     # Only drop the segment after lora_* when it isn't "weight"/"bias" itself.
     for i in range(len(parts) - 2):
@@ -487,7 +477,6 @@ def _export_adapter_repo(
     lora_config: "object",
     base_model_name: str,
 ) -> None:
-    """Write a HF-standard PEFT adapter repo: config JSON plus adapter safetensors."""
     import json
     from safetensors.torch import save_file
 
@@ -520,8 +509,6 @@ def _now() -> float:
 
 
 class _StatusWriter:
-    """Phase tracker for the publish flow; a `path` of None makes every update a no-op."""
-
     def __init__(self, path: Path | None, mode: str):
         self.path = path
         self._state = {"mode": mode, "phase": "queued"}

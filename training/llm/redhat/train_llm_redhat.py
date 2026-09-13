@@ -1,4 +1,3 @@
-"""OSFT (Orthogonal Subspace Fine-Tuning) trainer via training_hub — see readme_redhat.md."""
 import os
 import sys
 import time
@@ -96,7 +95,6 @@ def parse_args():
 
 
 def find_most_recent_checkpoint(output_dir):
-    """Return the most recently created hf_format/samples_* checkpoint under output_dir."""
     checkpoint_pattern = os.path.join(output_dir, "hf_format", "samples_*")
     checkpoint_dirs = glob.glob(checkpoint_pattern)
 
@@ -109,7 +107,6 @@ def find_most_recent_checkpoint(output_dir):
 
 
 def save_run_args(args, log_root="logs"):
-    """Write the run's arguments to {log_root}/<timestamp>/run_args.json and return that dir."""
     run_dir = os.path.join(log_root, datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
     os.makedirs(run_dir, exist_ok=True)
     with open(os.path.join(run_dir, "run_args.json"), "w") as f:
@@ -119,7 +116,6 @@ def save_run_args(args, log_root="logs"):
 
 
 def prepare_model_with_eos(model_path, eos_token, staging_dir):
-    """Stage a symlinked copy of model_path with the tokenizer's EOS overridden to eos_token."""
     import shutil
     import tempfile
     from transformers import AutoTokenizer, AutoConfig

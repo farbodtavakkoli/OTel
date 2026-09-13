@@ -1,18 +1,14 @@
-"""Generic GRPO reward functions — porting guide in readme_unsloth.md."""
-
 import os
 import re
 
 
 def _text(completion):
-    """Normalize a TRL completion (conversational list OR plain string) to text."""
     if isinstance(completion, list):
         return completion[0]["content"] if completion else ""
     return completion or ""
 
 
 def _prompt_text(prompt):
-    """Normalize a TRL prompt (message dicts with string or typed-parts content, or a string) to text."""
     if isinstance(prompt, str):
         return prompt
     parts = []
@@ -35,7 +31,6 @@ def _normalize(s: str) -> str:
 
 
 def reward_verifiable(prompts, completions, answer, **kwargs):
-    """Return CORRECT_REWARD when the completion matches the gold `answer`, else WRONG_REWARD."""
     scores = []
     for comp, gold in zip(completions, answer):
         try:
@@ -56,7 +51,6 @@ _JUDGE_SYSTEM = (
 
 def make_llm_judge_reward(model=None, base_url=None, api_key=None,
                           max_tokens=8, weight=1.0, timeout=30.0):
-    """Return a reward fn that grades each completion 0..10 with an external LLM (OpenAI SDK)."""
     model = model or os.environ.get("JUDGE_MODEL", "gpt-4o-mini")
     base_url = base_url or os.environ.get("JUDGE_BASE_URL")  # None -> OpenAI default endpoint
     api_key = api_key or os.environ.get("JUDGE_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
@@ -99,7 +93,6 @@ def make_llm_judge_reward(model=None, base_url=None, api_key=None,
 
 
 def build_reward_funcs(reward_mode="rule", judge_model=None):
-    """Return the reward_funcs list GRPOTrainer expects for a given --reward_mode."""
     if reward_mode == "rule":
         return [reward_verifiable]
     if reward_mode == "llm":

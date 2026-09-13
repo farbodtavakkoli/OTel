@@ -1,5 +1,3 @@
-"""Backfill weights the local transformers did not materialise into a merged model."""
-
 from __future__ import annotations
 
 import logging
@@ -13,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 def backfill_missing_weights(output_dir: Path, base_model_name: str) -> None:
-    """Copy any tensor missing from output_dir out of the HF base model, verbatim."""
     # Read the canonical key list from HF (just the header, no weight download).
     try:
         hf_meta = get_safetensors_metadata(base_model_name)

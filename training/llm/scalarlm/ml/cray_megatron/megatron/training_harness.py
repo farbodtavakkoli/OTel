@@ -19,7 +19,6 @@ import time
 
 
 def _trace_harness(msg: str) -> None:
-    """CRAY_TRAIN_DEBUG tracing for status writes."""
     if not is_train_debug_enabled():
         return
     rank = os.environ.get("RANK", os.environ.get("SLURM_PROCID", "?"))

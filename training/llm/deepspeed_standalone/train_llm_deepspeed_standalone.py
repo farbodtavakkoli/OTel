@@ -1,5 +1,3 @@
-"""Standalone single-file SFT trainer (HF Transformers + DeepSpeed ZeRO, full fine-tuning); see readme_standalone.md."""
-
 import os
 import logging
 import shutil
@@ -77,7 +75,6 @@ def parse_args():
 
 
 def build_deepspeed_config(zero_stage=3, offload_optimizer=False):
-    """Build an in-memory DeepSpeed config dict for TrainingArguments(deepspeed=...)."""
     offload_device = "cpu" if offload_optimizer else "none"
     zero_opt = {
         "stage": zero_stage,
@@ -110,7 +107,6 @@ def build_deepspeed_config(zero_stage=3, offload_optimizer=False):
 
 
 def format_conversation(example, model_type="gemma3"):
-    """Render one row into a single training string using the hand-written template for model_type."""
     prompt = str(example.get('prompt', '')) or ""
     completion = str(example.get('completion', '')) or ""
     reasoning = (example.get('reasoning', '')) or ""
@@ -161,7 +157,6 @@ def format_conversation(example, model_type="gemma3"):
         return f"User: {prompt}\nAssistant: {completion}"
 
 def process_and_format(example, tokenizer=None, model_type="gemma3", mask_user_prompt=False):
-    """Tokenize one formatted row, optionally masking the prompt prefix so loss falls on the completion only."""
     text = format_conversation(example, model_type=model_type)
     if tokenizer is not None:
         tokenized = tokenizer(text, truncation=True, max_length=tokenizer.model_max_length)
@@ -197,7 +192,6 @@ def process_and_format(example, tokenizer=None, model_type="gemma3", mask_user_p
     return example
 
 def _flatten_messages(example):
-    """Flatten a `messages` row to flat {system, user, assistant} fields by role, dropping extra columns."""
     messages = example.get('messages', []) or []
     out = {"system": "", "user": "", "assistant": ""}
     for msg in messages:
@@ -210,7 +204,6 @@ def _flatten_messages(example):
 def get_datasets(path, tokenizer, model_type, max_token_length, seed, test_mode_count,
                  max_eval_samples=None, test_size=0.01, sample_fraction=1.0, max_samples=None,
                  test_mode=False, mask_user_prompt=True, num_proc=8):
-    """Load, format, tokenize and split a JSONL dataset; returns (train, eval)."""
     full_ds = load_dataset("json", data_files=path, split="train")
     initial_count = len(full_ds)
 

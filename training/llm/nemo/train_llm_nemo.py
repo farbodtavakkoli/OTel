@@ -1,5 +1,3 @@
-"""Generate a NeMo AutoModel SFT/LoRA recipe YAML and launch it via the `automodel` CLI -- see readme_nemo.md."""
-
 import os
 import sys
 import json
@@ -80,7 +78,6 @@ def parse_args():
 
 
 def split_train_val(train_file, val_fraction, seed):
-    """Hold out `val_fraction` of a chat JSONL as a validation file; return (train_path, val_path)."""
     # Normalize line endings: a missing final newline would merge two rows after the shuffle.
     with open(train_file) as f:
         rows = [line if line.endswith("\n") else line + "\n" for line in f if line.strip()]
@@ -104,7 +101,6 @@ def split_train_val(train_file, val_fraction, seed):
 
 
 def preflight(path, sample_size=64):
-    """Fail fast if the JSONL is not this repo's {'messages': [...]} contract."""
     with open(path) as f:
         for i, line in enumerate(f):
             if i >= sample_size:
@@ -122,7 +118,6 @@ def preflight(path, sample_size=64):
 
 
 def build_recipe(args, train_path, val_path):
-    """Build the AutoModel recipe dict; key names follow upstream examples/llm_finetune recipes."""
     lr = args.learning_rate
     if lr is None:
         lr = 1e-4 if args.use_lora else 5e-6

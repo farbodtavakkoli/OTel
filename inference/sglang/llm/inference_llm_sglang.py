@@ -1,4 +1,3 @@
-"""OpenAI-compatible client for an SGLang LLM server — see README.md."""
 import argparse
 import json
 import os
@@ -12,7 +11,6 @@ load_dotenv("dev.env")
 
 
 def parse_args():
-    """Parse the CLI arguments."""
     parser = argparse.ArgumentParser(description="SGLang LLM smoke client (/v1/chat/completions)")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="SGLang server host")
     parser.add_argument("--port", type=int, default=8100, help="SGLang server port")
@@ -30,7 +28,6 @@ def parse_args():
 
 
 def post_json(url: str, payload: dict, timeout: int):
-    """POST a JSON body and return the decoded JSON response."""
     data = json.dumps(payload).encode()
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -38,7 +35,6 @@ def post_json(url: str, payload: dict, timeout: int):
 
 
 def wait_for_health(base: str, wait_s: int) -> float:
-    """Block until the server answers /health; return the seconds waited."""
     start = time.time()
     while time.time() - start < wait_s:
         try:
@@ -51,7 +47,6 @@ def wait_for_health(base: str, wait_s: int) -> float:
 
 
 def main():
-    """Wait for the server, send one chat completion, print the real generated text."""
     args = parse_args()
     base = f"http://{args.host}:{args.port}"
     waited = wait_for_health(base, args.wait)

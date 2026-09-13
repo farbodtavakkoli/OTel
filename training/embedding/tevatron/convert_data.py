@@ -1,5 +1,3 @@
-"""Convert the repo's anchor/positive/negative_N embedding JSONL into Tevatron's retriever training JSONL."""
-
 import argparse
 import json
 import os
@@ -9,7 +7,6 @@ DEFAULT_OUTPUT = "OTel_tevatron_sample_100.jsonl"
 
 
 def parse_args():
-    """Parse converter flags."""
     parser = argparse.ArgumentParser(description="Convert triplet JSONL to Tevatron retriever JSONL")
     parser.add_argument("--input_file", default=DEFAULT_INPUT,
                         help="Source JSONL with anchor/positive/negative_1..N columns")
@@ -27,7 +24,6 @@ def parse_args():
 
 
 def read_rows(path, limit):
-    """Yield parsed JSON objects from a JSONL file, skipping blank lines."""
     with open(path, "r", encoding="utf-8") as handle:
         for index, line in enumerate(handle):
             if limit is not None and index >= limit:
@@ -38,14 +34,12 @@ def read_rows(path, limit):
 
 
 def collect_negatives(row, prefix, max_negatives):
-    """Return the row's negative_* values in numeric order, dropping empties."""
     keys = sorted((k for k in row if k.startswith(prefix) and row[k]),
                   key=lambda k: int(k[len(prefix):]) if k[len(prefix):].isdigit() else 0)
     return [row[k] for k in keys[:max_negatives]]
 
 
 def build_example(row, index, args):
-    """Build one Tevatron training record from one triplet row."""
     query = (row.get(args.anchor_field) or "").strip()
     positive = (row.get(args.positive_field) or "").strip()
     if not query or not positive:
@@ -63,7 +57,6 @@ def build_example(row, index, args):
 
 
 def main():
-    """Read the triplet JSONL, emit the Tevatron JSONL, and report the counts."""
     args = parse_args()
     if not os.path.isfile(args.input_file):
         raise SystemExit(f"input file not found: {args.input_file}")

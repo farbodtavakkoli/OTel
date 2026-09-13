@@ -1,4 +1,3 @@
-"""Sequence-classification fine-tuner (HF Transformers + DeepSpeed ZeRO-2) — see readme_classification.md."""
 import argparse
 import importlib.util
 import torch
@@ -35,7 +34,6 @@ hf_logging.set_verbosity_info()
 
 
 def parse_args():
-    """Parse the CLI arguments."""
     parser = argparse.ArgumentParser(description="Sequence-classification fine-tuner (DeepSpeed ZeRO-2)")
     parser.add_argument("--model_id", type=str, default="EssentialAI/rnj-1", help="Base model to fine-tune")
     parser.add_argument("--output_dir", type=str, default="models/rnj-1-classifier",
@@ -63,7 +61,6 @@ def parse_args():
 
 
 def build_deepspeed_config(zero_stage=2):
-    """Build an in-memory DeepSpeed config dict for TrainingArguments(deepspeed=...)."""
     return {
         "fp16": {"enabled": False},
         "bf16": {"enabled": True},
@@ -90,7 +87,6 @@ precision_metric = evaluate.load("precision")
 recall_metric = evaluate.load("recall")
 
 def compute_metrics(eval_pred):
-    """Compute accuracy plus macro F1/precision/recall and log the prediction distribution."""
     logits, labels = eval_pred
     predictions = np.argmax(logits, axis=-1)
 
@@ -117,7 +113,6 @@ def compute_metrics(eval_pred):
 
 
 def load_classification_dataset(train_file, test_file):
-    """Load the train/test CSVs and map the label column (answer or label) to integer ids."""
     train_file = Path(train_file)
     test_file = Path(test_file)
 

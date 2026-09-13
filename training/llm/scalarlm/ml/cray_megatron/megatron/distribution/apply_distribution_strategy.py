@@ -84,7 +84,6 @@ def apply_distribution_strategy(model_info):
 
 
 def get_local_rank_and_size():
-    """This process's rank within its host, and how many ranks share the host."""
     for rank_var, size_var in (
         # torchrun first: it is authoritative, and OMPI_* may describe launcher processes, not workers.
         ("LOCAL_RANK", "LOCAL_WORLD_SIZE"),

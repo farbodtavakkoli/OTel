@@ -1,5 +1,3 @@
-"""NaRA (Noise-aware LoRA) prototype — NOT wired into the production training loop."""
-
 from __future__ import annotations
 
 import math
@@ -25,8 +23,6 @@ class NaRAConfig:
 
 
 class GaussianFourierProjection(nn.Module):
-    """Fixed (non-learnable) random Fourier features for a scalar noise level."""
-
     def __init__(self, embed_dim: int, scale: float = 16.0):
         super().__init__()
         if embed_dim % 2 != 0:
@@ -40,8 +36,6 @@ class GaussianFourierProjection(nn.Module):
 
 
 class NaRAMapper(nn.Module):
-    """The single shared hypernetwork: noise embedding -> flattened (r*r) core matrix."""
-
     def __init__(self, r: int, in_dim: int, h1: int, h2: int):
         super().__init__()
         self.r = r
@@ -68,8 +62,6 @@ class NaRAMapper(nn.Module):
 
 
 class NaRAContext(nn.Module):
-    """Owns the shared mapper + noise embedding and the current core matrix ``Ceff``."""
-
     def __init__(self, config: NaRAConfig):
         super().__init__()
         self.config = config
@@ -90,7 +82,6 @@ class NaRAContext(nn.Module):
             p.requires_grad_(req)
 
     def set_noise_level(self, noise_level: Optional[Union[float, torch.Tensor]]):
-        """Compute and cache ``Ceff = c_scale * C(lambda) + I`` for this step."""
         if self.training_stage == 1 or noise_level is None:
             self.ceff = self._eye  # identity => behaves exactly like plain LoRA
             return
@@ -105,8 +96,6 @@ class NaRAContext(nn.Module):
 
 
 class NaRALinear(nn.Module):
-    """Wraps a frozen base ``nn.Linear`` and adds the noise-aware low-rank branch."""
-
     def __init__(self, base: nn.Linear, context: NaRAContext, config: NaRAConfig):
         super().__init__()
         self.base = base
@@ -151,7 +140,6 @@ NARA_CONTEXT_ATTR = "nara_context"
 
 
 def inject_nara(model: nn.Module, target_modules, config: NaRAConfig) -> NaRAContext:
-    """Replace every targeted ``nn.Linear`` with a ``NaRALinear`` sharing one ``NaRAContext``."""
     targets = set(target_modules)
     full_targets = {t for t in targets if "." in t}
     leaf_targets = {t for t in targets if "." not in t}
@@ -179,7 +167,6 @@ def inject_nara(model: nn.Module, target_modules, config: NaRAConfig) -> NaRACon
 
 
 def find_nara_context(model: nn.Module) -> Optional[NaRAContext]:
-    """Return the model's NaRAContext through any wrapping, or None if NaRA is not active."""
     for m in model.modules():
         if isinstance(m, NaRAContext):
             return m
@@ -187,7 +174,6 @@ def find_nara_context(model: nn.Module) -> Optional[NaRAContext]:
 
 
 def mark_nara_trainable(model: nn.Module) -> int:
-    """Freeze everything but the NaRA branch and shared mapper; return the trainable count."""
     for p in model.parameters():
         p.requires_grad_(False)
     n = 0

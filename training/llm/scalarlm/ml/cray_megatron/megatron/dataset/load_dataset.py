@@ -9,7 +9,6 @@ from cray_megatron.megatron.dataset.load_classification_dataset import (
 )
 
 def load_dataset(model, tokenizer, epoch):
-    """Load dataset for language-model, diffusion, embedding, or classification training."""
     job_config = get_job_config()
     training_mode = job_config["training_mode"]
 

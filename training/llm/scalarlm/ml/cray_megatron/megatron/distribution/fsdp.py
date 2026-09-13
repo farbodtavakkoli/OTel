@@ -216,7 +216,6 @@ class SimpleFSDP(nn.Module):
         self._wrap_layers(model)
 
     def _wrap_layers(self, module):
-
         for name, child in module.named_children():
             is_conditional_layer = self._get_is_conditional_layer(child)
             grand_children = list(child.children())
@@ -329,7 +328,6 @@ class SimpleFSDP(nn.Module):
             )
 
     def load_unwrapped_model(self, state_dict):
-        """Inverse of unwrap_model: re-shard each full tensor and write this rank's slice."""
         missing: list[str] = []
         loaded = self._load_unwrapped_layers(
             prefix="", module=self.model, state_dict=state_dict, missing=missing
@@ -403,7 +401,6 @@ class SimpleFSDP(nn.Module):
         return loaded
 
     def _sharded_metadata_by_param(self):
-        """id(param) -> metadata_dict, for every `shard_` parameter."""
         out = {}
 
         def walk(module):
@@ -428,7 +425,6 @@ class SimpleFSDP(nn.Module):
         return out
 
     def unwrap_optimizer(self, optimizer):
-        """Full, unsharded, CPU optimizer state - the counterpart to unwrap_model (collective)."""
         metadata_by_param = self._sharded_metadata_by_param()
         state_dict = optimizer.state_dict()
         ordered_params = [p for group in optimizer.param_groups for p in group["params"]]
@@ -460,7 +456,6 @@ class SimpleFSDP(nn.Module):
         }
 
     def load_unwrapped_optimizer(self, optimizer, state_dict):
-        """Inverse of unwrap_optimizer: re-shard full moments into this rank (collective)."""
         rank = get_rank()
         world_size = get_size()
         metadata_by_param = self._sharded_metadata_by_param()
@@ -500,7 +495,6 @@ class SimpleFSDP(nn.Module):
 
 
 def get_fsdp_layers(module):
-    """Recursively collect all FSDPLayer instances"""
     fsdp_layers = []
     for child in module.children():
         if isinstance(child, FSDPLayer):
@@ -510,7 +504,6 @@ def get_fsdp_layers(module):
 
 
 def aggregate_perf_metrics(module):
-
     fsdp_layers = get_fsdp_layers(module)
 
     """Sum metrics across all FSDP layers"""
@@ -524,7 +517,6 @@ def aggregate_perf_metrics(module):
 
 
 def shard_tensor(tensor):
-    """Evenly shard tensor across ranks, returning (shard, metadata_dict)."""
     world_size = get_size()
     rank = get_rank()
 
@@ -579,7 +571,6 @@ def shard_tensor(tensor):
 
 
 def shard_full_tensor(full_tensor, metadata_dict, rank, world_size):
-    """Inverse of shard_tensor() for a single rank."""
     shard_size = metadata_dict[rank][2]
     flat = full_tensor.reshape(-1)
     padded_numel = shard_size * world_size
@@ -590,7 +581,6 @@ def shard_full_tensor(full_tensor, metadata_dict, rank, world_size):
 
 
 def trim_padding(all_tensors, rank, world_size, metadata_dict):
-
     original_numel, _, shard_size, padding = metadata_dict[rank]
 
     if padding == 0:
@@ -620,7 +610,6 @@ def trim_padding(all_tensors, rank, world_size, metadata_dict):
 
 
 def collectives_all_gather(shard, metadata_dict):
-    """Gather shards and reconstruct the full tensor using metadata."""
     world_size = get_size()
     rank = get_rank()
 
@@ -655,7 +644,6 @@ def collectives_all_gather(shard, metadata_dict):
 
 
 def collectives_reduce_scatter(tensor, metadata_dict):
-    """Reduce-scatter with even sharding. Returns local shard trimmed to original size."""
     world_size = get_size()
     rank = get_rank()
 

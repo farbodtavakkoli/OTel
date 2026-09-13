@@ -1,5 +1,3 @@
-"""Thin launcher for torchtitan continued pre-training / SFT -- see readme_torchtitan.md."""
-
 import argparse
 import logging
 import os
@@ -72,7 +70,6 @@ def parse_args():
 
 
 def validate_repo(titan_repo: Path) -> None:
-    """Fail fast if --titan-repo is not actually a torchtitan checkout."""
     if not titan_repo.is_dir():
         raise SystemExit(f"--titan-repo does not exist: {titan_repo}")
     train_entry = titan_repo / "torchtitan" / "train.py"
@@ -84,7 +81,6 @@ def validate_repo(titan_repo: Path) -> None:
 
 
 def build_env(titan_repo: Path) -> dict:
-    """Environment for the child process: recipe on PYTHONPATH, allocator tuned."""
     env = os.environ.copy()
     pythonpath = [str(HERE), str(titan_repo)]
     if env.get("PYTHONPATH"):
@@ -96,7 +92,6 @@ def build_env(titan_repo: Path) -> dict:
 
 
 def build_train_cmd(args) -> list:
-    """Mirror upstream run_train.sh: torchrun -m torchtitan.train --module M --config C."""
     return [
         "torchrun",
         f"--nproc_per_node={args.ngpu}",

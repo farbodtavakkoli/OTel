@@ -1,4 +1,3 @@
-"""Qwen3 reranker reference inference (sentence-transformers CrossEncoder) — see README.md."""
 import argparse
 import json, os, time
 
@@ -25,7 +24,6 @@ DEFAULT_RELEVANT = [0, 1]
 
 
 def parse_args():
-    """Parse the CLI arguments."""
     parser = argparse.ArgumentParser(description="Qwen3 reranker reference inference")
     parser.add_argument("--model", type=str, default="Qwen/Qwen3-Reranker-0.6B", help="Cross-encoder model id or path")
     parser.add_argument("--query", type=str, default=DEFAULT_QUERY, help="Query to rerank documents against")
@@ -50,7 +48,6 @@ def parse_args():
 
 
 def read_texts(path: str, fallback: list[str]) -> list[str]:
-    """Read a JSON list or a JSONL/plain-text file of strings; fall back to the built-in set."""
     if path is None:
         return list(fallback)
     with open(path) as f:
@@ -61,7 +58,6 @@ def read_texts(path: str, fallback: list[str]) -> list[str]:
 
 
 def resolve_devices(spec: str) -> list[str]:
-    """Turn the --devices string into a device list, validating against the visible GPU count."""
     devices = [d.strip() for d in spec.split(",") if d.strip()]
     n = torch.cuda.device_count()
     for d in devices:
@@ -90,12 +86,6 @@ QWEN3_RERANKER_PAIR_TEMPLATE = (
 
 
 def install_pair_chat_template(model) -> bool:
-    """Install a query/document pair chat template if the loaded one can't carry both roles.
-
-    Returns True when the template was replaced. A packaged reranker that already renders both
-    roles is left untouched; this only fires for a bare checkpoint carrying the plain generation
-    template (the common case when loading from a minimal local cache).
-    """
     try:
         formatter = model[0].input_formatter
         if formatter.pair_roles_failure({}) is None:
@@ -110,7 +100,6 @@ def install_pair_chat_template(model) -> bool:
 
 
 def load_model(args):
-    """Load the CrossEncoder, selecting sdpa on ROCm since flash-attn is a CUDA-only build."""
     attn = args.attn_impl or ("sdpa" if torch.version.hip else "eager")
     model = CrossEncoder(
         args.model,
@@ -128,7 +117,6 @@ def load_model(args):
 
 
 def score(model, query, documents, args, devices):
-    """Score every (query, document) pair; multi-device uses a process pool."""
     kwargs = {"batch_size": args.batch_size, "convert_to_numpy": True}
     if args.activation != "default":
         kwargs["activation_fn"] = torch.nn.Sigmoid() if args.activation == "sigmoid" else torch.nn.Identity()
@@ -139,7 +127,6 @@ def score(model, query, documents, args, devices):
 
 
 def vram_mib() -> list[float]:
-    """Per-visible-GPU allocated VRAM in MiB, as torch sees it."""
     return [round(torch.cuda.memory_allocated(i) / 2**20, 1) for i in range(torch.cuda.device_count())]
 
 

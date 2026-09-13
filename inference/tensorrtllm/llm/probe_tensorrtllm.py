@@ -1,5 +1,3 @@
-"""Probe whether this host can run TensorRT-LLM (NVIDIA-only) and report why not."""
-
 import argparse
 import ctypes
 import glob
@@ -16,8 +14,10 @@ NVIDIA_SONAMES = ["libcuda.so.1", "libnvidia-ml.so.1", "libcudart.so.13", "libcu
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--device_id", type=int, default=6)
+    parser = argparse.ArgumentParser(
+        description="Probe whether this host can run TensorRT-LLM (NVIDIA-only) and report why not."
+    )
+    parser.add_argument("--device_id", type=int, default=0)
     parser.add_argument("--check_import", dest="check_import", action="store_true", default=True)
     parser.add_argument("--no_check_import", dest="check_import", action="store_false")
     parser.add_argument("--out", default=None)

@@ -1,5 +1,3 @@
-"""Thin LLM Foundry launcher — picks a recipe YAML, applies overrides, execs `composer`; see readme_llmfoundry.md."""
-
 import argparse
 import logging
 import os
@@ -58,7 +56,6 @@ def parse_args():
 
 
 def resolve_config(args):
-    """Honor an explicit --config, else use the recipe YAML shipped in this folder."""
     if args.config:
         return args.config
 
@@ -68,7 +65,6 @@ def resolve_config(args):
 
 
 def check_env(args, config, train_script):
-    """Fail early on the things that always go wrong: no launcher, no repo, no token."""
     ok = True
 
     if shutil.which("composer") is None:
@@ -93,7 +89,6 @@ def check_env(args, config, train_script):
 
 
 def build_overrides(args):
-    """Map the CLI flags onto YAML keys that exist in the shipped configs or TrainConfig."""
     overrides = {
         "variables.model_name": args.model,
         "variables.data_local": args.data_local,

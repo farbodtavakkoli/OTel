@@ -1,5 +1,3 @@
-"""ColBERT late-interaction (multi-vector) fine-tuner built on PyLate — see readme_embedding_pylate.md."""
-
 import argparse
 import os
 from datetime import datetime, timezone
@@ -39,7 +37,6 @@ MODELS = {
 }
 
 def parse_args():
-    """Parse CLI arguments; registry-backed flags default to None, meaning "use the registry value"."""
     parser = argparse.ArgumentParser(description="ColBERT late-interaction fine-tuner (PyLate)")
     parser.add_argument("--model_name", type=str, default="BAAI/bge-small-en-v1.5",
                         help="Base encoder or ColBERT checkpoint; selects the registry entry")
@@ -102,7 +99,6 @@ def parse_args():
 
 
 def resolve_output_dir(args, cfg):
-    """Default the output dir to <experiment_root>/<run_id>/colbert_<model>."""
     if args.output_dir:
         return args.output_dir
     run_id = args.run_id or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -111,7 +107,6 @@ def resolve_output_dir(args, cfg):
 
 
 def build_training_args(args, cfg, output_dir):
-    """Assemble the sentence-transformers training arguments PyLate trains through."""
     return SentenceTransformerTrainingArguments(
         output_dir=output_dir,
         num_train_epochs=cfg["epochs"],
@@ -184,7 +179,6 @@ def main():
 
 
 def build_evaluator_safe(eval_dataset, columns, batch_size, logger):
-    """Build the triplet evaluator, logging and skipping it when the split has no negatives."""
     evaluator = utils.build_evaluator(eval_dataset, columns, batch_size)
     if evaluator is None:
         logger.info("No eval split or no negative column — skipping the triplet evaluator")
@@ -192,7 +186,6 @@ def build_evaluator_safe(eval_dataset, columns, batch_size, logger):
 
 
 def run_late_interaction_check(model, train_dataset, columns, args, output_dir, logger):
-    """Post-training proof that the model emits per-token vectors and ranks by MaxSim."""
     positive_column = [key for key in columns if key.startswith("positive")][0]
     negative_columns = [key for key in columns if key.startswith("negative")]
     query = train_dataset[0]["query"]

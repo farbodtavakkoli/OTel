@@ -1,4 +1,3 @@
-"""OpenAI-compatible client for a llama.cpp llama-server LLM endpoint — see README.md."""
 import argparse
 import json
 import os
@@ -11,7 +10,6 @@ load_dotenv("dev.env")
 
 
 def parse_args():
-    """Parse the CLI arguments."""
     parser = argparse.ArgumentParser(description="llama.cpp LLM chat-completions smoke client")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="llama-server host")
     parser.add_argument("--port", type=int, default=8200, help="llama-server port")
@@ -31,7 +29,6 @@ def parse_args():
 
 
 def wait_for_health(base_url: str, retries: int):
-    """Block until /health reports the model is loaded, or raise."""
     for attempt in range(retries):
         try:
             r = requests.get(f"{base_url}/health", timeout=5)
@@ -44,7 +41,6 @@ def wait_for_health(base_url: str, retries: int):
 
 
 def chat(base_url: str, args, timeout: int):
-    """POST one chat completion and return the parsed response."""
     payload = {
         "model": args.model,
         "messages": [

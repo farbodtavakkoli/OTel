@@ -1,4 +1,3 @@
-"""Client for a Hugging Face TEI text-embeddings-router endpoint — see README.md."""
 import argparse
 import json
 import math
@@ -25,7 +24,6 @@ DEFAULT_DOCUMENTS = [
 
 
 def parse_args():
-    """Parse the CLI arguments."""
     parser = argparse.ArgumentParser(description="TEI embedding smoke client")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="text-embeddings-router host")
     parser.add_argument("--port", type=int, default=8301, help="text-embeddings-router port")
@@ -53,7 +51,6 @@ def parse_args():
 
 
 def wait_for_health(base_url, retries):
-    """Block until /health returns 200, or raise."""
     for _ in range(retries):
         try:
             if requests.get(f"{base_url}/health", timeout=5).status_code == 200:
@@ -65,14 +62,12 @@ def wait_for_health(base_url, retries):
 
 
 def server_info(base_url, timeout):
-    """Fetch /info so the run records what the server actually loaded."""
     r = requests.get(f"{base_url}/info", timeout=timeout)
     r.raise_for_status()
     return r.json()
 
 
 def embed_native(base_url, texts, prompt_name, normalize, truncate, timeout):
-    """POST TEI's native /embed and return (vectors, seconds)."""
     payload = {"inputs": texts, "normalize": normalize, "truncate": truncate}
     if prompt_name:
         payload["prompt_name"] = prompt_name
@@ -83,7 +78,6 @@ def embed_native(base_url, texts, prompt_name, normalize, truncate, timeout):
 
 
 def embed_openai(base_url, model, texts, timeout):
-    """POST the OpenAI-compatible /v1/embeddings and return (vectors, seconds)."""
     started = time.time()
     r = requests.post(f"{base_url}/v1/embeddings", json={"model": model, "input": texts}, timeout=timeout)
     r.raise_for_status()
@@ -92,7 +86,6 @@ def embed_openai(base_url, model, texts, timeout):
 
 
 def cosine(a, b):
-    """Cosine similarity between two equal-length vectors."""
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))
@@ -100,12 +93,10 @@ def cosine(a, b):
 
 
 def l2_norm(vec):
-    """L2 norm of a vector."""
     return math.sqrt(sum(x * x for x in vec))
 
 
 def compare_to_reference(path, query_vectors, similarity_rows):
-    """Compare this run against a Transformers baseline reference JSON."""
     with open(path) as handle:
         ref = json.load(handle)
     report = {"reference_path": path, "reference_dim": ref.get("embedding_dim")}

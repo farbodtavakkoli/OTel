@@ -1,5 +1,3 @@
-"""Data/eval/loss helpers and DPO/GRPO dataset builders for train_llm_deepspeed.py; design notes in readme_deepspeed.md."""
-
 import logging
 import math
 import os
@@ -10,7 +8,6 @@ from transformers import AutoModelForCausalLM, TrainerCallback
 
 
 def _message_content_to_text(message):
-    """Coerce a chat message's `content` to a string ("" for None/non-dict)."""
     content = message.get("content", "") if isinstance(message, dict) else ""
     if content is None:
         return ""
@@ -20,7 +17,6 @@ def _message_content_to_text(message):
 
 
 def _validate_messages_example(example):
-    """Check one record against the `messages` contract; return None if valid, else a short reason string."""
     messages = example.get("messages")
     if not isinstance(messages, list) or not messages:
         return "missing_messages"
@@ -44,7 +40,6 @@ def _validate_messages_example(example):
 
 
 def _sample_indices(total_count, sample_size):
-    """Pick up to `sample_size` evenly-spaced indices over [0, total_count)."""
     if total_count <= 0 or sample_size <= 0:
         return []
     if total_count <= sample_size:
@@ -58,7 +53,6 @@ def _sample_indices(total_count, sample_size):
 
 
 def _run_messages_preflight(dataset, sample_size):
-    """Validate evenly-spaced rows against the `messages` contract; raise ValueError on malformed rows."""
     sample_indices = _sample_indices(len(dataset), sample_size)
     invalid_examples = []
     for dataset_index in sample_indices:
@@ -82,7 +76,6 @@ def _run_messages_preflight(dataset, sample_size):
 
 
 def _resolve_eval_sample_count(total_count, test_size, max_eval_samples=None, min_eval_samples=1):
-    """Resolve the eval split to an absolute, distributed-safe row count."""
     if total_count < 2:
         raise ValueError(f"Need at least 2 rows to create a train/eval split; got {total_count}.")
 
@@ -115,7 +108,6 @@ def _resolve_eval_sample_count(total_count, test_size, max_eval_samples=None, mi
 
 
 def _log_supervision_sanity(dataset, dataset_name, tokenizer, sample_size, decode_example=False):
-    """Log token supervision stats over a sample; raise ValueError if any sampled row has zero supervised tokens."""
     sample_indices = _sample_indices(len(dataset), sample_size)
     if not sample_indices:
         raise ValueError(f"{dataset_name} dataset is empty after preprocessing.")
@@ -179,7 +171,6 @@ def _log_supervision_sanity(dataset, dataset_name, tokenizer, sample_size, decod
 
 
 def _stable_causal_lm_loss(outputs, labels, num_items_in_batch=None):
-    """Completion-only causal-LM loss with a clamped denominator so zero-supervised micro-batches yield 0.0, not NaN."""
     shift_logits = outputs.logits[..., :-1, :].contiguous().float()
     shift_labels = labels[..., 1:].contiguous().to(shift_logits.device)
 
@@ -200,7 +191,6 @@ def _stable_causal_lm_loss(outputs, labels, num_items_in_batch=None):
 
 
 def _process_with_chat_template(messages, tokenizer, mask_user_prompt=True):
-    """Tokenize a conversation via the tokenizer's chat template with completion-only loss masking."""
     # add_special_tokens=False: the template already injects BOS etc.
     prompt_text = tokenizer.apply_chat_template(
         messages[:-1], tokenize=False, add_generation_prompt=True
@@ -251,7 +241,6 @@ def get_datasets(
     num_proc=8,
     min_eval_samples=1,
 ):
-    """Load, validate, tokenize, length-filter and split a `messages` dataset; returns (train, eval)."""
     full_ds = load_dataset("json", data_files=path, split="train")
     initial_count = len(full_ds)
 
@@ -315,7 +304,6 @@ def get_datasets(
 
 
 def run_generation_sanity_check(model_dir=None, eval_dataset=None, tokenizer=None, num_samples=2, max_new_tokens=256, device=None, model=None):
-    """Decode a few eval prompts and log prompt / generation / reference side by side (rank-0 only)."""
     if num_samples <= 0:
         return
     if device is None:
@@ -364,7 +352,6 @@ def run_generation_sanity_check(model_dir=None, eval_dataset=None, tokenizer=Non
 
 
 def build_deepspeed_config(zero_stage=3, offload_optimizer=False):
-    """Build an in-memory DeepSpeed config dict for TrainingArguments(deepspeed=...)."""
     offload_device = "cpu" if offload_optimizer else "none"
 
     zero_opt = {
@@ -400,7 +387,6 @@ def build_deepspeed_config(zero_stage=3, offload_optimizer=False):
 
 
 def _pref_to_conversational(example, tokenizer):
-    """Map a {system?, prompt, chosen, rejected} row to DPO format with a chat-templated prompt."""
     msgs = []
     sys = (example.get("system") or "").strip()
     if sys:
@@ -415,7 +401,6 @@ def _pref_to_conversational(example, tokenizer):
 
 
 def build_pref_dataset(pref_file, tokenizer, seed, eval_size=200, num_proc=8):
-    """Load a DPO preference JSONL and return (train, eval) datasets, dropping degenerate pairs."""
     ds = load_dataset("json", data_files=pref_file, split="train")
     ds = ds.map(lambda x: _pref_to_conversational(x, tokenizer),
                 remove_columns=ds.column_names, num_proc=num_proc, desc="Building DPO pairs")
@@ -429,7 +414,6 @@ def build_pref_dataset(pref_file, tokenizer, seed, eval_size=200, num_proc=8):
 
 
 def build_grpo_prompts(train_file, tokenizer, seed, max_samples=None, num_proc=8):
-    """Build a GRPO prompt dataset (chat-templated `prompt` + gold `reference`) from a messages JSONL."""
     ds = load_dataset("json", data_files=train_file, split="train")
 
     def _to_prompt(ex):
@@ -448,7 +432,6 @@ def build_grpo_prompts(train_file, tokenizer, seed, max_samples=None, num_proc=8
 
 
 def build_qlora_bnb_config():
-    """Return a BitsAndBytesConfig for 4-bit (QLoRA) base-weight quantization."""
     from transformers import BitsAndBytesConfig
 
     return BitsAndBytesConfig(
@@ -468,7 +451,6 @@ def run_custom_eval(
     batch_size=16,
     device=None,
 ):
-    """Generate on each test/<name>_eval.jsonl and score with a pluggable scorer module (rank-0 only)."""
     import importlib
     import sys
 
@@ -526,8 +508,6 @@ def run_custom_eval(
 
 
 class EmptyCacheCallback(TrainerCallback):
-    """Free the CUDA allocator cache every N optimizer steps on all ranks (0 disables)."""
-
     def __init__(self, every_n_steps=1):
         self.every_n_steps = every_n_steps
 
@@ -537,8 +517,6 @@ class EmptyCacheCallback(TrainerCallback):
 
 
 class CustomEvalCallback(TrainerCallback):
-    """Run run_custom_eval() at each epoch end and log per-dataset + macro accuracy (rank-0 only, crash-safe)."""
-
     def __init__(self, tokenizer, test_dir, scorer_module="step8_score_eval",
                  max_new_tokens=768, batch_size=16, rank=0):
         self.tokenizer = tokenizer
@@ -566,7 +544,6 @@ class CustomEvalCallback(TrainerCallback):
 
 
 def grpo_reward_funcs():
-    """Return the reward functions for GRPOTrainer — a PLACEHOLDER that rewards non-empty completions; replace before real GRPO."""
     def _length_reward(prompts, completions, **kwargs):
         rewards = []
         for c in completions:

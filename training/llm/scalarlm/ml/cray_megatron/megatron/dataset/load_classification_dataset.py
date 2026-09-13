@@ -1,5 +1,3 @@
-"""Sequence-classification dataset loading."""
-
 from cray_infra.util.get_job_config import get_job_config
 
 from cray_megatron.megatron.dataset.load_language_model_dataset import (
@@ -16,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 
 def load_classification_dataset(model, tokenizer, epoch):
-    """Load dataset for sequence-classification training."""
     hf_dataset = datasets.IterableDataset.from_generator(
         make_dataset_generator(),
         features=datasets.Features(
@@ -50,7 +47,6 @@ def make_dataset_generator():
 
 
 def get_tokenize_function_classification(model, tokenizer):
-    """Tokenize for sequence classification; padding MUST be on the left."""
     job_config = get_job_config()
     max_length = job_config["max_token_block_size"]
 

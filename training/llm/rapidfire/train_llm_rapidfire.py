@@ -1,5 +1,3 @@
-"""RapidFire AI hyperparallel post-training — run N TRL SFT/DPO/GRPO configs concurrently on the same GPUs (see readme_rapidfire.md)."""
-
 import argparse
 import logging
 import os
@@ -70,13 +68,11 @@ def parse_args():
 # worker processes, so they must stay module-level and not close over argparse state.
 
 def sft_formatting_func(row):
-    """{"messages": [...]} -> TRL prompt/completion pair (last turn is the target)."""
     messages = row["messages"]
     return {"prompt": messages[:-1], "completion": messages[-1:]}
 
 
 def grpo_formatting_func(row):
-    """Chat `messages` or flat {prompt, answer} -> GRPO prompt + gold answer."""
     messages = row.get("messages")
     if isinstance(messages, list) and messages:
         prompt = [{"role": "system", "content": GRPO_SYSTEM_PROMPT}]
@@ -101,14 +97,12 @@ def _extract_xml_answer(text):
 
 
 def correctness_reward_func(prompts, completions, answer, **kwargs):
-    """2.0 when the extracted answer matches the ground truth. Replace for real tasks."""
     responses = [completion[0]["content"] for completion in completions]
     extracted = [_extract_xml_answer(r) for r in responses]
     return [2.0 if r == a else 0.0 for r, a in zip(extracted, answer)]
 
 
 def format_reward_func(completions, **kwargs):
-    """0.5 when the completion respects the <reasoning>/<answer> envelope."""
     import re
 
     pattern = r"<reasoning>.*?</reasoning>\s*<answer>.*?</answer>"
@@ -117,7 +111,6 @@ def format_reward_func(completions, **kwargs):
 
 
 def create_model(model_config):
-    """Must return (model, tokenizer). Called once per config by each worker."""
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     model = AutoModelForCausalLM.from_pretrained(
@@ -133,7 +126,6 @@ def create_model(model_config):
 
 
 def build_training_args(args, learning_rate):
-    """One RF*Config (a drop-in TRL config) per swept learning rate."""
     common = dict(
         learning_rate=learning_rate,
         per_device_train_batch_size=args.batch_size,

@@ -1,5 +1,3 @@
-"""Decide how to handle packed-document attention masking per batch/model."""
-
 # Decision outcomes for doc_mask_decision().
 BUILD = "build"                    # construct the 4D block-diagonal+causal mask
 SKIP_MULTIMODAL = "skip_multimodal"  # wrapper masks loss by a 2D mask; keep 2D
@@ -19,14 +17,12 @@ _SSM_MODEL_TYPES = {
 
 
 def is_multimodal(model_config) -> bool:
-    """True for HF multimodal wrapper configs, which nest a ``vision_config``."""
     if model_config is None:
         return False
     return getattr(model_config, "vision_config", None) is not None
 
 
 def is_diffusion(model_config) -> bool:
-    """True for DiffusionGemma configs; must be checked BEFORE the multimodal fork."""
     if model_config is None:
         return False
     return getattr(model_config, "model_type", None) == "diffusion_gemma"
@@ -34,7 +30,6 @@ def is_diffusion(model_config) -> bool:
 
 
 def has_ssm_layers(model_config) -> bool:
-    """True for hybrid state-space model configs, which need a 2D padding mask."""
     if model_config is None:
         return False
     block_types = getattr(model_config, "layers_block_type", None)
@@ -47,7 +42,6 @@ def has_ssm_layers(model_config) -> bool:
 
 
 def doc_mask_decision(batch, seq_len: int, model_config, max_4d_mask_seq_len: int) -> str:
-    """Return how to handle packed-document attention for this batch."""
     if "document_ids" not in batch:
         return NONE
     if is_multimodal(model_config):

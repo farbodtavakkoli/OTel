@@ -1,4 +1,3 @@
-"""Derive data/classification_sample.csv from the chat JSONL sample — see readme_classification.md."""
 import argparse
 import csv
 import json
@@ -6,7 +5,6 @@ from pathlib import Path
 
 
 def parse_args():
-    """Parse the CLI arguments."""
     parser = argparse.ArgumentParser(description="Derive a labeled classification CSV from a chat JSONL")
     parser.add_argument("--source", type=str,
                         default="../../llm/deepspeed_standalone/OTel_LLM_sample_10.jsonl",

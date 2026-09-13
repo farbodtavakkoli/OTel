@@ -1,5 +1,3 @@
-"""Generic post-training (SFT / DPO / GRPO) for `messages` models with HF Transformers + DeepSpeed ZeRO; see readme_deepspeed.md."""
-
 import os
 # Must be set before `import torch` (read by c10 at import time).
 os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "ERROR")

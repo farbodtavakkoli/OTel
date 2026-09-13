@@ -1,5 +1,3 @@
-"""Chat SFT with standalone Hugging Face PEFT (LoRA / QLoRA / DoRA / rsLoRA) -- see readme_peft.md."""
-
 import os
 import json
 import logging
@@ -71,7 +69,6 @@ def parse_args():
 
 
 def build_example(messages, tokenizer, mask_prompt):
-    """Render one conversation with the chat template; mask non-assistant tokens to -100 unless mask_prompt is off."""
     # return_dict=False: transformers v5 returns a BatchEncoding by default; we need the flat id list.
     input_ids = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=False, return_dict=False)
 
@@ -89,7 +86,6 @@ def build_example(messages, tokenizer, mask_prompt):
 
 
 def load_chat_jsonl(path, tokenizer, max_seq_len, mask_prompt, max_samples=None):
-    """Read a chat JSONL, tokenize it, and drop rows that are over-length or unsupervised."""
     rows, dropped_long, dropped_empty = [], 0, 0
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
@@ -119,7 +115,6 @@ def load_chat_jsonl(path, tokenizer, max_seq_len, mask_prompt, max_samples=None)
 
 
 def make_collator(pad_token_id):
-    """Pad a batch to its longest row: input_ids with pad, labels with -100."""
     def collate(features):
         width = max(len(f["input_ids"]) for f in features)
         input_ids, labels, attention_mask = [], [], []

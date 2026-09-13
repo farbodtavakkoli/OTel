@@ -1,4 +1,3 @@
-"""Client for a llama.cpp llama-server reranking endpoint — see README.md."""
 import argparse
 import json
 import os
@@ -19,7 +18,6 @@ DEFAULT_DOCUMENTS = [
 
 
 def parse_args():
-    """Parse the CLI arguments."""
     parser = argparse.ArgumentParser(description="llama.cpp reranker smoke client")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="llama-server host")
     parser.add_argument("--port", type=int, default=8202, help="llama-server port")
@@ -37,7 +35,6 @@ def parse_args():
 
 
 def wait_for_health(base_url: str, retries: int):
-    """Block until /health reports the model is loaded, or raise."""
     for attempt in range(retries):
         try:
             r = requests.get(f"{base_url}/health", timeout=5)
@@ -50,7 +47,6 @@ def wait_for_health(base_url: str, retries: int):
 
 
 def rerank(base_url: str, endpoint: str, model: str, query: str, documents, top_n, timeout: int):
-    """POST one rerank request and return the parsed response plus latency."""
     payload = {"model": model, "query": query, "documents": documents}
     if top_n:
         payload["top_n"] = top_n

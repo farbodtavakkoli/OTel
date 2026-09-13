@@ -1,4 +1,3 @@
-"""OpenAI-compatible client for a Lemonade Server embedding endpoint — see README.md."""
 import argparse
 import json
 import math
@@ -18,7 +17,6 @@ DEFAULT_TEXTS = [
 
 
 def parse_args():
-    """Parse the CLI arguments."""
     parser = argparse.ArgumentParser(description="Lemonade Server embedding smoke client")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Lemonade Server host")
     parser.add_argument("--port", type=int, default=8350, help="Lemonade Server port")
@@ -41,7 +39,6 @@ def parse_args():
 
 
 def wait_for_health(base_url: str, retries: int):
-    """Block until Lemonade Server answers /api/v1/health, or raise."""
     for _ in range(retries):
         try:
             if requests.get(f"{base_url}/api/v1/health", timeout=5).status_code == 200:
@@ -53,14 +50,12 @@ def wait_for_health(base_url: str, retries: int):
 
 
 def load_model(base_url: str, model: str, timeout: int):
-    """POST /api/v1/load so the llama.cpp subprocess is warm before timing anything."""
     r = requests.post(f"{base_url}/api/v1/load", json={"model_name": model}, timeout=timeout)
     r.raise_for_status()
     return r.json()
 
 
 def embed(base_url: str, endpoint: str, model: str, texts, timeout: int):
-    """POST one embeddings request and return the parsed response plus latency."""
     started = time.time()
     r = requests.post(f"{base_url}{endpoint}", json={"model": model, "input": texts}, timeout=timeout)
     r.raise_for_status()
@@ -68,7 +63,6 @@ def embed(base_url: str, endpoint: str, model: str, texts, timeout: int):
 
 
 def cosine(a, b):
-    """Cosine similarity between two equal-length vectors."""
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))
@@ -76,7 +70,6 @@ def cosine(a, b):
 
 
 def load_reference(path):
-    """Read a baseline JSON and return (reference_vectors, source_texts_or_None)."""
     with open(path) as f:
         blob = json.load(f)
     if isinstance(blob, dict):

@@ -1,5 +1,3 @@
-"""Thin launcher for LLaMA-Factory post-training: validate the YAML config and dataset registry, then shell out to llamafactory-cli (see readme_llamafactory.md)."""
-
 import argparse
 import json
 import logging
@@ -26,7 +24,6 @@ DATA_CONFIG = "dataset_info.json"          # upstream constant; name is not conf
 
 
 def parse_args():
-    """Parse launcher flags; unknown arguments are forwarded verbatim to llamafactory-cli."""
     parser = argparse.ArgumentParser(description="Launch LLaMA-Factory training from a YAML config")
     parser.add_argument("--config", required=True,
                         help="Path to the LLaMA-Factory YAML config (e.g. config_sft_lora.yaml)")
@@ -44,7 +41,6 @@ def parse_args():
 
 
 def load_config(path):
-    """Parse the YAML config, failing loudly if it is missing or malformed."""
     if not os.path.isfile(path):
         raise SystemExit(f"config not found: {path}")
     with open(path, "r", encoding="utf-8") as handle:
@@ -55,7 +51,6 @@ def load_config(path):
 
 
 def check_datasets(cfg, config_path):
-    """Verify every dataset name is registered and its backing file exists."""
     names = cfg.get("dataset")
     if not names:
         raise SystemExit(f"{config_path}: no `dataset:` - nothing to train on")
@@ -95,7 +90,6 @@ def check_datasets(cfg, config_path):
 
 
 def validate(cfg, config_path):
-    """Fail fast on the mistakes that otherwise surface minutes into a run."""
     missing = [key for key in REQUIRED_KEYS if key not in cfg]
     if missing:
         raise SystemExit(f"{config_path}: missing required key(s): {', '.join(missing)}")
@@ -117,7 +111,6 @@ def validate(cfg, config_path):
 
 
 def summarize(cfg, config_path, names, num_gpus):
-    """One compact block so the log says exactly what is about to run."""
     method = cfg.get("finetuning_type")
     if cfg.get("quantization_bit"):
         method = f"{method} + {cfg['quantization_bit']}-bit {cfg.get('quantization_method', 'bnb')}"
@@ -137,7 +130,6 @@ def summarize(cfg, config_path, names, num_gpus):
 
 
 def build_env(cfg, args, num_gpus):
-    """Environment for the child: HF_TOKEN (from dev.env) plus the launch switches."""
     env = os.environ.copy()
     env.setdefault("TOKENIZERS_PARALLELISM", "false")
 
@@ -153,7 +145,6 @@ def build_env(cfg, args, num_gpus):
 
 
 def main():
-    """Validate the config and registry, print a summary, and launch llamafactory-cli."""
     args, passthrough = parse_args()
 
     num_gpus = len(args.gpus.split(",")) if args.gpus else args.num_gpus

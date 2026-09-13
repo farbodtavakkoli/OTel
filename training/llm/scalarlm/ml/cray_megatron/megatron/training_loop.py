@@ -39,7 +39,6 @@ from cray_infra.training.train_debug import is_train_debug_enabled
 
 
 def _trace_loop(msg: str) -> None:
-    """CRAY_TRAIN_DEBUG tracing for the training loop's phase boundaries."""
     if not is_train_debug_enabled():
         return
     import os as _os
@@ -110,7 +109,6 @@ def _use_flex_attention() -> bool:
 
 
 def _build_document_block_mask(doc_ids, device):
-    """Build a BlockMask for packed-document causal attention."""
     try:
         from torch.nn.attention.flex_attention import _DEFAULT_SPARSE_BLOCK_SIZE as BLOCK
     except ImportError:
@@ -156,7 +154,6 @@ def _build_document_block_mask(doc_ids, device):
     is_full   = strictly_causal.unsqueeze(0) & q_single & kv_single & same_doc
 
     def _pack(mask_bqkv):
-        """Pack a [B, nq, nkv] bool mask into (counts [B,1,nq], indices [B,1,nq,max_k])."""
         Bm, nq, nkv = mask_bqkv.shape
         counts = mask_bqkv.sum(dim=2).to(torch.int32)   # [B, nq]
         max_k  = int(counts.max().item()) if counts.numel() > 0 else 0
@@ -231,7 +228,6 @@ class TrainingLoop:
         self._finalize_slice()
 
     def _finalize_slice(self):
-        """Persist accumulated wall time after every slice."""
         slice_elapsed = time.time() - self.training_state.start_time
         accumulated = (
             self.training_state.accumulated_seconds_at_slice_start + slice_elapsed
@@ -373,7 +369,6 @@ class TrainingLoop:
         self.on_train_end()
 
     def _stop_requested_on_any_rank(self, local_stop):
-        """True when ANY rank wants to stop. Collective — every rank must call."""
         group = self._loss_process_group()
         if group is None:
             return bool(local_stop)
@@ -454,7 +449,6 @@ class TrainingLoop:
         self.training_state.history = self.training_harness.get_status()["history"]
 
     def training_step_accumulate(self, batch, accum_step, gradient_accumulation_steps):
-        """Perform a single forward/backward pass with gradient accumulation."""
         model_config = self.training_state.model_info.get("model_config")
 
         # DiffusionGemma has a wholly different forward contract; own path below.
@@ -540,7 +534,6 @@ class TrainingLoop:
     def _embedding_training_step_accumulate(
         self, batch, accum_step, gradient_accumulation_steps
     ):
-        """Embedding training step: CoSENT loss over a sentence pair."""
         device = self.training_state.model_info["distribution_strategy"]["device"]
         start_time = time.time()
 
@@ -570,7 +563,6 @@ class TrainingLoop:
     def _classification_training_step_accumulate(
         self, batch, accum_step, gradient_accumulation_steps
     ):
-        """Sequence-classification training step."""
         device = self.training_state.model_info["distribution_strategy"]["device"]
         classification = get_job_config().get("classification") or {}
         label_smoothing = classification.get("label_smoothing", 0.0) or 0.0
@@ -612,7 +604,6 @@ class TrainingLoop:
     def _diffusion_training_step_accumulate(
         self, batch, accum_step, gradient_accumulation_steps
     ):
-        """DiffusionGemma canvas-denoising training step."""
         device = self.training_state.model_info["distribution_strategy"]["device"]
         model = self.training_state.model_info["model"]
         model_config = self.training_state.model_info.get("model_config")
@@ -704,7 +695,6 @@ class TrainingLoop:
         return loss.detach()
 
     def _diffusion_nara_context(self):
-        """Return the model's NaRAContext when NaRA is enabled, else None."""
         if getattr(self, "_nara_context_resolved", False):
             return self._nara_context_cache
 
@@ -731,7 +721,6 @@ class TrainingLoop:
         return diffusion.get("eps", 0.001)
 
     def _diffusion_anchor_id(self):
-        """Resolve the Tier-2 canvas anchor id when enabled, else None."""
         job_config = get_job_config()
         diffusion = job_config.get("diffusion") or {}
         if hasattr(diffusion, "anchor_token"):
@@ -744,7 +733,6 @@ class TrainingLoop:
         return anchor_token_id(tokenizer)
 
     def _diffusion_self_conditioning_prob(self):
-        """Per-step probability of self-conditioning during training (0 disables)."""
         job_config = get_job_config()
         diffusion = job_config.get("diffusion") or {}
         if hasattr(diffusion, "self_conditioning_prob"):
@@ -752,7 +740,6 @@ class TrainingLoop:
         return diffusion.get("self_conditioning_prob", 0.5)
 
     def optimizer_step(self):
-        """Clip gradients, verify they are finite, then step; True if it stepped."""
         total_norm = torch.nn.utils.clip_grad_norm_(
             self.training_state.model_info["model"].parameters(),
             get_gradient_clip_value(),
@@ -766,7 +753,6 @@ class TrainingLoop:
         return True
 
     def _grads_finite_on_all_ranks(self, total_norm):
-        """True only when EVERY rank's gradients are finite. Collective."""
         local_bad = 0.0 if bool(torch.isfinite(total_norm)) else 1.0
 
         group = self._loss_process_group()
@@ -781,7 +767,6 @@ class TrainingLoop:
         return flag.item() == 0.0
 
     def _loss_process_group(self):
-        """A process group for this module's reductions only. Collective — all ranks."""
         if get_size() <= 1:
             return None
         if getattr(self, "_loss_pg", None) is None:
@@ -792,7 +777,6 @@ class TrainingLoop:
         return self._loss_pg
 
     def sync_loss(self, loss):
-        """Mean of `loss` across ranks; never call between a forward and backward."""
         group = self._loss_process_group()
         if group is not None:
             import torch.distributed as dist
@@ -823,7 +807,6 @@ class TrainingLoop:
                 callback.on_step_end(step)
 
     def on_train_end(self):
-
         logger.info(
             f"Training finished successfully after {time.time() - self.training_state.start_time} seconds"
         )
@@ -857,7 +840,6 @@ class TrainingLoop:
         self.save_checkpoint(model_state_dict, optimizer_state_dict, cuda_rng_state)
 
     def _gather_cuda_rng_state(self):
-        """One CUDA RNG state per RANK (not per device). Collective — all ranks."""
         import torch.distributed as dist
 
         if not torch.cuda.is_available():
@@ -875,7 +857,6 @@ class TrainingLoop:
 
     @main_rank_only
     def save_checkpoint(self, model_state_dict, optimizer_state_dict, cuda_rng_state):
-
         checkpoint = {
             "model_state_dict": model_state_dict,
             # Gathered by the caller on every rank; this method is @main_rank_only.
@@ -973,8 +954,6 @@ def get_callbacks(trainer):
 
 
 class TimeoutCallback:
-    """Stops training when the user's TOTAL budget across all slices is exhausted."""
-
     def __init__(self, trainer):
         self.trainer = trainer
         job_config = get_job_config()
@@ -1018,8 +997,6 @@ class CheckpointCallback:
 
 
 class CudaMemoryCallback:
-    """Periodic snapshot of CUDA allocator state, every `cuda_memory_log_interval` steps."""
-
     def __init__(self, trainer):
         self.trainer = trainer
         job_config = get_job_config()
@@ -1162,7 +1139,6 @@ def filter_checkpoint(model, state_dict):
 
 
 def _load_trained_parameters(wrapped_model, state_dict):
-    """Load a filtered (trainable-only) checkpoint back into the live model."""
     # Candidate load targets: the wrapper and its `.model` descendants.
     candidates = []
     module = wrapped_model
@@ -1215,7 +1191,6 @@ def _load_trained_parameters(wrapped_model, state_dict):
 
 
 def build_adapter_metadata():
-    """Build the `metadata` dict saved in the `.pt` alongside `model_state_dict`."""
     job_config = get_job_config()
     metadata: dict = {}
 

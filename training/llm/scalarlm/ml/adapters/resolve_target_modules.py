@@ -1,5 +1,3 @@
-"""Resolve PEFT's "all-linear" target-modules shorthand ourselves."""
-
 import re
 
 import torch.nn as nn
@@ -12,7 +10,6 @@ _SEPARATE_EXPERT_RE = re.compile(r"(?:^|\.)experts\.\d+\.")
 
 
 def _is_multimodal_model(model) -> bool:
-    """True for HF multimodal wrappers, which nest a `vision_config` on their config."""
     config = getattr(model, "config", None)
     if config is None:
         return False
@@ -20,7 +17,6 @@ def _is_multimodal_model(model) -> bool:
 
 
 def _language_decoder(model):
-    """The text-decoder submodule to confine LoRA to, or None when no scoping is needed."""
     if not _is_multimodal_model(model):
         return None
     if not hasattr(model, "get_decoder"):
@@ -32,7 +28,6 @@ def _language_decoder(model):
 
 
 def _module_prefix(model, target) -> str | None:
-    """The dotted name of `target` within `model` (by identity), or None if not found."""
     for name, module in model.named_modules():
         if module is target:
             return name
@@ -40,7 +35,6 @@ def _module_prefix(model, target) -> str | None:
 
 
 def _is_moe_model(model) -> bool:
-    """True if the model has routed MoE expert submodules."""
     return any(
         ".experts" in name or ".block_sparse_moe" in name
         for name, _ in model.named_modules()
@@ -48,7 +42,6 @@ def _is_moe_model(model) -> bool:
 
 
 def _ssm_mixer_prefixes(model) -> set[str]:
-    """Dotted names of SSM mixer submodules not identifiable by path, found via `A_log`."""
     prefixes: set[str] = set()
     for name, module in model.named_modules():
         if ".mamba" in name or ".linear_attn" in name:
@@ -59,14 +52,12 @@ def _ssm_mixer_prefixes(model) -> set[str]:
 
 
 def _is_ssm_linear(name: str, ssm_prefixes: set[str]) -> bool:
-    """True if the `nn.Linear` at `name` belongs to an SSM / linear-attention mixer."""
     if ".mamba" in name or ".linear_attn" in name:
         return True
     return any(name.startswith(prefix + ".") for prefix in ssm_prefixes)
 
 
 def _has_ssm_layers(model) -> bool:
-    """True if the model has SSM or linear-attention mixer submodules."""
     return any(
         ".mamba" in name or ".linear_attn" in name
         for name, _ in model.named_modules()
@@ -74,14 +65,12 @@ def _has_ssm_layers(model) -> bool:
 
 
 def _has_separate_experts(model) -> bool:
-    """True if routed experts are per-expert `nn.Linear`s rather than grouped."""
     return any(
         isinstance(module, nn.Linear) and _SEPARATE_EXPERT_RE.search(name)
         for name, module in model.named_modules()
     )
 
 def _moe_servable_linear_paths(model, output_embeddings, separate_experts=False) -> list[str]:
-    """Full dotted paths of every servable `nn.Linear` in a MoE model."""
     ssm_prefixes = _ssm_mixer_prefixes(model)
     paths: list[str] = []
     for module_name, module in model.named_modules():
@@ -118,7 +107,6 @@ def _moe_servable_linear_paths(model, output_embeddings, separate_experts=False)
 
 
 def resolve_target_parameters(model) -> list[str]:
-    """Leaf names of batched expert projections for `LoraConfig.target_parameters`."""
     config = getattr(model, "config", None)
     if getattr(config, "model_type", None) == "diffusion_gemma":
         return []
@@ -134,7 +122,6 @@ def resolve_target_parameters(model) -> list[str]:
 
 
 def resolve_target_modules(model, target_modules):
-    """Resolve the "all-linear" shorthand against the live `model`; pass anything else through."""
     if target_modules != ALL_LINEAR:
         return target_modules
 

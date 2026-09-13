@@ -1,11 +1,9 @@
-"""Convert the repo's anchor/positive/negative_N JSONL into FlagEmbedding's query/pos/neg reranker format."""
 import argparse
 import json
 import os
 
 
 def parse_args():
-    """Parse the CLI arguments."""
     parser = argparse.ArgumentParser(description="Convert triplet JSONL to FlagEmbedding reranker format")
     parser.add_argument("--src", type=str, default="../sentence_transformers/OTel_reranker_sample_100.jsonl",
                         help="Source JSONL with anchor/positive/negative_1..negative_N columns")
@@ -20,7 +18,6 @@ def parse_args():
 
 
 def convert_row(row, n_neg, prompt, max_chars):
-    """Map one anchor/positive/negative_N row to a FlagEmbedding reranker record."""
     neg = [row[f"negative_{i}"][:max_chars] for i in range(1, n_neg + 1) if row.get(f"negative_{i}")]
     return {
         "query": row["anchor"][:max_chars],

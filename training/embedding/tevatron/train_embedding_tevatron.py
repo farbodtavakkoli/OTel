@@ -1,5 +1,3 @@
-"""Thin launcher for Tevatron dense-retriever training: resolve the ROCm/CUDA knobs, then shell out to tevatron.retriever.driver.train (see readme_embedding_tevatron.md)."""
-
 import argparse
 import logging
 import sys
@@ -20,7 +18,6 @@ logger = logging.getLogger("training/embedding/tevatron")
 
 
 def parse_args():
-    """Parse every tunable this launcher forwards to the Tevatron training driver."""
     parser = argparse.ArgumentParser(description="Train a Tevatron dense retriever")
 
     parser.add_argument("--model_name_or_path", default="BAAI/bge-small-en-v1.5",
@@ -103,7 +100,6 @@ def parse_args():
 
 
 def main():
-    """Resolve the launch configuration, print a summary, and run the Tevatron driver."""
     args = parse_args()
 
     num_gpus = visible_device_count(args.devices)

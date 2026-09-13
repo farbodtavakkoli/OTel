@@ -5,8 +5,8 @@
 #
 # Usage:
 #   ./build_image.sh                              # auto-detect target, build + label
-#   TARGET=amd    IMAGE_TAG=mi355-v1.6 ./build_image.sh
-#   TARGET=nvidia IMAGE_TAG=h100-v1.5  ./build_image.sh
+#   TARGET=amd    IMAGE_TAG=mi355-v1.7 ./build_image.sh
+#   TARGET=nvidia IMAGE_TAG=h100-v1.6  ./build_image.sh
 #
 # Targets:
 #   amd     MI355X (gfx950/ROCm). Runbook: DOCKER_IMAGE_MI355.md.
@@ -30,12 +30,12 @@ fi
 case "$TARGET" in
     amd)
         BASE_NAME=amd;    ARCH_LIST=gfx942; VLLM_DEVICE=rocm
-        DEFAULT_TAG=mi355-v1.6; DEFAULT_STAGE=cray:mi355-build
+        DEFAULT_TAG=mi355-v1.7; DEFAULT_STAGE=cray:mi355-build
         TITLE="ScalarLM MI355X"
         DESCRIPTION="ScalarLM training+inference for AMD Instinct MI355X (gfx950/ROCm): NCCL/RCCL collectives, DDP+FSDP+FSDP2 verified on 8 GPUs" ;;
     nvidia)
         BASE_NAME=nvidia; ARCH_LIST=9.0;    VLLM_DEVICE=cuda
-        DEFAULT_TAG=h100-v1.5;  DEFAULT_STAGE=cray:h100-build
+        DEFAULT_TAG=h100-v1.6;  DEFAULT_STAGE=cray:h100-build
         TITLE="ScalarLM H100"
         DESCRIPTION="ScalarLM training+inference for NVIDIA H100 (sm_90/CUDA): NCCL collectives, DDP+FSDP+FSDP2" ;;
     *)  echo "ERROR: TARGET must be amd or nvidia (got '$TARGET')"; exit 1 ;;

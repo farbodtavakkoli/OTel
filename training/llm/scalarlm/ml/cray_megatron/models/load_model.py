@@ -68,7 +68,6 @@ def load_model_config():
 
 
 def sync_freshly_initialized_heads(model):
-    """Make randomly-initialized task heads identical on every rank."""
     if get_size() <= 1:
         return
 
@@ -95,7 +94,6 @@ def sync_freshly_initialized_heads(model):
 
 
 def apply_freeze_layer_keywords(model, job_config):
-    """Freeze every parameter whose name contains one of freeze_layer_keywords."""
     keywords = job_config.get("freeze_layer_keywords")
     if not keywords:
         return
@@ -122,7 +120,6 @@ def apply_freeze_layer_keywords(model, job_config):
 
 
 def _resolve_attn_impl(job_config):
-    """Decide the HF attention backend for training."""
     override = job_config.get("attn_implementation", "auto")
     if override in (None, "auto", "flash_attention_2"):
         return "sdpa"
@@ -130,7 +127,6 @@ def _resolve_attn_impl(job_config):
 
 
 def _resolve_dtype(job_config):
-    """Per-job dtype (train_args["dtype"]) wins over global cray-config.yaml."""
     job_dtype = job_config.get("dtype", "auto")
     config_dtype = job_dtype if job_dtype != "auto" else get_config()["dtype"]
     if config_dtype == "auto":
@@ -143,7 +139,6 @@ def _resolve_dtype(job_config):
 
 
 def _materialize_embedding(model_info):
-    """Embedding training: SentenceTransformer body + CoSENT pairwise loss."""
     from sentence_transformers import SentenceTransformer
     from sentence_transformers.losses.CoSENTLoss import CoSENTLoss
 

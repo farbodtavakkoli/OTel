@@ -1,5 +1,3 @@
-"""Thin launcher for Megatron-LM continued pre-training from a TOML config -- see readme_megatron.md."""
-
 import argparse
 import logging
 import os
@@ -70,7 +68,6 @@ def load_config(path: Path) -> dict:
 
 
 def flatten(config: dict) -> tuple:
-    """Split the TOML into (launcher settings, Megatron key/value pairs); duplicate keys are an error."""
     launcher, flags = {}, {}
     for table, body in config.items():
         if not isinstance(body, dict):
@@ -88,7 +85,6 @@ def flatten(config: dict) -> tuple:
 
 
 def apply_overrides(launcher: dict, flags: dict, args) -> None:
-    """CLI beats TOML. --set values are parsed as TOML so types stay honest."""
     for item in args.overrides:
         if "=" not in item:
             raise SystemExit(f"--set expects KEY=VALUE, got: {item}")
@@ -109,7 +105,6 @@ def apply_overrides(launcher: dict, flags: dict, args) -> None:
 
 
 def resolve_paths(flags: dict) -> None:
-    """Absolutize relative path flags against this folder."""
     for key in PATH_KEYS:
         value = flags.get(key)
         if isinstance(value, str) and value and not Path(value).is_absolute():
@@ -117,7 +112,6 @@ def resolve_paths(flags: dict) -> None:
 
 
 def to_cli(flags: dict) -> list:
-    """`num_layers = 32` -> `--num-layers 32`; `swiglu = true` -> `--swiglu`."""
     argv = []
     for key, value in flags.items():
         flag = "--" + key.replace("_", "-")

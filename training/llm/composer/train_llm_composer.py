@@ -1,5 +1,3 @@
-"""Fine-tune or continue pre-training a Hugging Face causal LM with MosaicML Composer — see readme_composer.md."""
-
 import os
 import json
 import logging
@@ -83,7 +81,6 @@ def parse_args():
 
 
 def build_example(messages, tokenizer, mask_prompt):
-    """Render one conversation with the chat template; mask non-assistant tokens when mask_prompt."""
     # return_dict=False: transformers 5.x returns a BatchEncoding by default, whose len() is
     # its key count (2) — that silently breaks the length-diff masking below. Force a flat list.
     input_ids = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=False, return_dict=False)
@@ -102,7 +99,6 @@ def build_example(messages, tokenizer, mask_prompt):
 
 
 def load_chat_jsonl(path, tokenizer, max_seq_len, mask_prompt, max_samples=None):
-    """Read a chat JSONL, tokenize it, and drop rows that are over-length or unsupervised."""
     rows, dropped_long, dropped_empty = [], 0, 0
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
@@ -129,7 +125,6 @@ def load_chat_jsonl(path, tokenizer, max_seq_len, mask_prompt, max_samples=None)
 
 
 def make_collator(pad_token_id):
-    """Pad a batch to its longest row: input_ids with pad, labels with -100."""
     def collate(features):
         width = max(len(f["input_ids"]) for f in features)
         input_ids, labels, attention_mask = [], [], []
@@ -147,14 +142,12 @@ def make_collator(pad_token_id):
 
 
 def build_dataloader(rows, batch_size, collate, num_workers, shuffle):
-    """Composer requires an explicit DistributedSampler for map-style datasets."""
     sampler = dist.get_sampler(rows, shuffle=shuffle)
     return DataLoader(rows, batch_size=batch_size, sampler=sampler,
                       collate_fn=collate, num_workers=num_workers, drop_last=shuffle)
 
 
 def tag_blocks_for_fsdp(model, activation_checkpointing):
-    """Set _fsdp_wrap on each transformer block so Composer's auto-wrap policy shards them."""
     names = set(getattr(model, "_no_split_modules", None) or [])
     if not names:
         raise ValueError("Model does not declare _no_split_modules; set _fsdp_wrap manually for this architecture.")

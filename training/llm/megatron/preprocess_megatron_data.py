@@ -1,5 +1,3 @@
-"""Build Megatron's indexed .bin/.idx dataset from a JSONL corpus -- see readme_megatron.md."""
-
 import argparse
 import logging
 import os

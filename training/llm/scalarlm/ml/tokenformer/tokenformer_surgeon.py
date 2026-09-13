@@ -39,7 +39,6 @@ class TokenformerAdapter(nn.Module):
 
     @staticmethod
     def _resolve_param_dtype(layer):
-        """Adapter storage dtype: the host layer's, else the global default, else float32."""
         for source in (layer.parameters(recurse=True) if layer is not None else ()):
             if source.dtype.is_floating_point:
                 return source.dtype
@@ -133,12 +132,10 @@ _NON_LANGUAGE_PATH_COMPONENTS = frozenset(
 
 
 def is_non_language_path(name: str) -> bool:
-    """True if a parameter/module path sits inside a non-language tower."""
     return any(part in _NON_LANGUAGE_PATH_COMPONENTS for part in name.split("."))
 
 
 class TokenformerSurgeon(ABC):
-
     def __init__(self, model: nn.Module, device: torch.device):
         self.model = model
         self.device = device
@@ -156,7 +153,6 @@ class TokenformerSurgeon(ABC):
             self._recursive_setattr(getattr(obj, attr[0]), attr[1], value)
 
     def update_layer(self, name, layer):
-        """Try to wrap the layer with a TokenformerAdapter."""
         if not self._is_adapter_layer(name):
             return
 

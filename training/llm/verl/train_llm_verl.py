@@ -1,5 +1,3 @@
-"""GRPO/PPO launcher for verl — builds the Hydra override list for verl.trainer.main_ppo and execs it (see readme_verl.md)."""
-
 import argparse
 import logging
 import os
@@ -67,7 +65,6 @@ def parse_args():
 
 
 def build_overrides(args):
-    """Assemble the Hydra override list for verl.trainer.main_ppo."""
     loggers = ",".join(f'"{name.strip()}"' for name in args.logger.split(","))
 
     overrides = [

@@ -1,5 +1,3 @@
-"""Embedding client for a vLLM OpenAI-compatible server — see README.md."""
-
 import argparse
 import json
 import math
@@ -21,7 +19,6 @@ DEFAULT_DOCS = [
 
 
 def parse_args():
-    """Parse CLI arguments; every tunable of the request is exposed here."""
     parser = argparse.ArgumentParser(description="Embed texts against a vLLM /v1/embeddings endpoint")
     parser.add_argument("--host", type=str, default="localhost", help="Server host")
     parser.add_argument("--port", type=int, default=8001, help="Server port")
@@ -39,7 +36,6 @@ def parse_args():
 
 
 def post_json(url, payload, timeout):
-    """POST a JSON payload and return the decoded JSON response."""
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -47,7 +43,6 @@ def post_json(url, payload, timeout):
 
 
 def cosine(a, b):
-    """Cosine similarity between two equal-length vectors."""
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))

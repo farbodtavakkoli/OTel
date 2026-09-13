@@ -1,5 +1,3 @@
-"""Live canvas corruption for DiffusionGemma training."""
-
 import torch
 
 
@@ -12,7 +10,6 @@ def corrupt_canvas(
     protect_prefix=0,
     return_noise_level=False,
 ):
-    """Uniform-state discrete-diffusion corruption of a clean canvas."""
     device = canvas_input_ids.device
     batch_sz, canvas_len = canvas_input_ids.shape
 
