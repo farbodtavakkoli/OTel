@@ -168,13 +168,14 @@ The latest available project images are:
 docker pull farbodatdocker/scalarlm:mi355-v1.7
 
 # NVIDIA H100
-docker pull farbodatdocker/scalarlm:h100-v1.5
+docker pull farbodatdocker/scalarlm:h100-v1.6
 ```
 
 ScalarLM ships the training code (`ml/`) from the **client** with each job, so the client
-checkout and the server image must come from the same revision. The MI355X image
-runbook, acceptance gates and source-revision label are in
-[`training/llm/scalarlm/docs/DOCKER_IMAGE_MI355.md`](training/llm/scalarlm/docs/DOCKER_IMAGE_MI355.md).
+checkout and the server image must come from the same revision. Each image's runbook,
+acceptance gates and source-revision label are in
+[`training/llm/scalarlm/docs/DOCKER_IMAGE_MI355.md`](training/llm/scalarlm/docs/DOCKER_IMAGE_MI355.md)
+and [`training/llm/scalarlm/docs/DOCKER_IMAGE_H100.md`](training/llm/scalarlm/docs/DOCKER_IMAGE_H100.md).
 
 ## OTel Data
 

@@ -76,8 +76,12 @@ fi
 
 echo "==> Gate 1: unit suite in $IMAGE"
 
+# pytest is a test-harness dependency and is not installed in the image, so
+# install it in the throwaway container before collecting.
 docker run --rm "${GPU_ARGS[@]}" "${MOUNT_ARGS[@]}" --entrypoint bash "$IMAGE" -c "
     cd /app/cray
+    python3 -m pytest --version >/dev/null 2>&1 || \
+        pip install --no-cache-dir -q -r test/requirements-pytest.txt
     RANK=0 LOCAL_RANK=0 WORLD_SIZE=1 \
     MASTER_ADDR=127.0.0.1 MASTER_PORT=${MASTER_PORT:-29555} \
     python3 -m pytest test/unit -q $DESELECT

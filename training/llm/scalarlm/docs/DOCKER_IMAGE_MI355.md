@@ -12,7 +12,7 @@ Build / run / customize / publish runbook for the **MI355X (gfx950, CDNA 4)** se
 | `farbodatdocker/scalarlm:mi355-v1.6` | AMD MI355X, gfx950 / ROCm 7.2.4 | previous current tag |
 | `farbodatdocker/scalarlm:mi355-v1.5` | AMD MI355X, gfx950 / ROCm 7.2.4 | first image built from the unified AMD + NVIDIA tree |
 | `farbodatdocker/scalarlm:mi355-v1.0` | AMD MI355X, gfx950 / ROCm 7.2.4 | first published tag (pre-fix history, see version records) |
-| `farbodatdocker/scalarlm:h100-v1.5` | NVIDIA H100, sm_90 | see the NVIDIA doc |
+| `farbodatdocker/scalarlm:h100-v1.6` | NVIDIA H100, sm_90 | see the NVIDIA doc |
 
 The image is **58.9 GB** on disk (~15 GB compressed over the wire).
 
@@ -275,7 +275,7 @@ Run these against the built image with **zero source mounts** unless noted:
 | 0a | corrections present in image | all AMD fixes + all H100 ports found |
 | 0b | gfx950 kernels | `roc-obj-ls` probe is invalid (returns 0 for every lib) — use the functional proof instead: MI355X matmul + `gfx950` in the arch list |
 | 1 | unit suite in-image — run it with `./run_unit_tests.sh <tag>` | 811 passed, 2 deselected |
-| 2 | collective correctness, 8 ranks | `RESULT: ALL COLLECTIVES CORRECT` |
+| 2 | collective correctness | `python3 -m pytest test/infra/distribution_strategy -q` passes |
 | 3 | end-to-end, image as **both** server and client | losses match the fingerprints below |
 | 4 | serving regression | 5 passed *(this script mounts the repo tree; with a clean tree at the built commit the mounts are byte-identical to what is baked)* |
 | 5 | legacy collective jobs, 8 ranks | 5/5 `RESULT: … passed` |

@@ -167,7 +167,7 @@ One source tree, one `ml/` recipe, two server images. Runbooks: **`docs/DOCKER_I
 | Tag | Hardware |
 |---|---|
 | `farbodatdocker/scalarlm:mi355-v1.7` | AMD MI355X — gfx950 / ROCm 7.2.4 |
-| `farbodatdocker/scalarlm:h100-v1.5` | NVIDIA H100 — sm_90 / CUDA 13 |
+| `farbodatdocker/scalarlm:h100-v1.6` | NVIDIA H100 — sm_90 / CUDA 13 |
 
 Both images are built from the same source revision by the same `repo/Dockerfile`. Build either
 with `docs/build_image.sh`; it auto-detects the vendor, or set it explicitly:
@@ -175,10 +175,10 @@ with `docs/build_image.sh`; it auto-detects the vendor, or set it explicitly:
 ```bash
 cd docs
 TARGET=amd    IMAGE_TAG=mi355-v1.7 ./build_image.sh
-TARGET=nvidia IMAGE_TAG=h100-v1.5  ./build_image.sh
+TARGET=nvidia IMAGE_TAG=h100-v1.6  ./build_image.sh
 ```
 
-On 8×H100, `h100-v1.5` covers `ddp`, `fsdp` and `pytorch_fsdp` training plus classification at
+On 8×H100, `h100-v1.6` covers `ddp`, `fsdp` and `pytorch_fsdp` training plus classification at
 `batch_size > 1` and LoRA. `flash_attention_2` crashes on H100 as it does on MI355X, so the
 unconditional `sdpa` mapping applies on both.
 
@@ -195,7 +195,7 @@ docker run -d --name scalarlm --gpus '"device=0"' --ipc host \
   -e SCALARLM_MAX_GPUS_PER_NODE=8 \
   --cap-add SYS_PTRACE -p 8000:8000 -p 8001:8001 \
   -v /path/to/hf-cache:/root/.cache/huggingface \
-  farbodatdocker/scalarlm:h100-v1.5
+  farbodatdocker/scalarlm:h100-v1.6
 # curl http://localhost:8000/v1/health -> {"api":"up","vllm":"up","all":"up"}
 ```
 
@@ -237,7 +237,7 @@ All settings travel in `train_args`, which the server materializes into the job 
 | Layer | AMD MI355X / ROCm | NVIDIA H100 / CUDA |
 |---|---|---|
 | Client (`train.py` / `inference.py`) | pure Python, hardware-agnostic | same |
-| Server image | `mi355-v1.7`, built from this repo | `h100-v1.5`, built from this repo |
+| Server image | `mi355-v1.7`, built from this repo | `h100-v1.6`, built from this repo |
 | Collectives | RCCL via `torch.distributed` | NCCL via `torch.distributed` |
 
 This folder is a **client** — training hardware is the server deployment's concern, and the client

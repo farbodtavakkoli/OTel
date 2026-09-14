@@ -11,21 +11,33 @@ Drop into the ScalarLM Kubernetes Helm chart via `image.repository` / `.tag` / `
 
 | Image | Hardware |
 |---|---|
-| `farbodatdocker/scalarlm:h100-v1.5` | NVIDIA H100 / Hopper (`sm_90`) — current: from-scratch `repo/Dockerfile` build of the unified tree |
+| `farbodatdocker/scalarlm:h100-v1.6` | NVIDIA H100 / Hopper (`sm_90`) — current: from-scratch `repo/Dockerfile` build of the unified tree |
 | `farbodatdocker/scalarlm:mi355-v1.7` | AMD MI355X (ROCm) — see `DOCKER_IMAGE_MI355.md` |
 
 ```yaml
 image:
   repository: farbodatdocker/scalarlm
-  tag: h100-v1.5          # NVIDIA H100 / Hopper; use mi355-v1.7 for AMD MI355X
+  tag: h100-v1.6          # NVIDIA H100 / Hopper; use mi355-v1.7 for AMD MI355X
   pullPolicy: Always
 ```
 
-> `h100-v1.5` is built by `TARGET=nvidia ./build_image.sh` from the unified tree; digest
-> `sha256:be7aac2525bfa06c45adf10ac44a15cfd5b5cebd7495556d2215dae520189611` (the revision
-> label is recorded in the image). It supports `ddp`, `fsdp` and `pytorch_fsdp` training,
-> classification at `batch_size > 1`, and LoRA. Earlier `h100-*` tags predate the unified
-> tree and the `mpirun -> torchrun` launcher — use `h100-v1.5`.
+> `h100-v1.6` is built by `TARGET=nvidia ./build_image.sh` from the unified tree (the revision
+> label is recorded in the image; digests are in the release records below). It supports `ddp`,
+> `fsdp` and `pytorch_fsdp` training, classification at `batch_size > 1`, and LoRA. Earlier
+> `h100-*` tags predate the unified tree and the `mpirun -> torchrun` launcher — use `h100-v1.6`.
+
+### Release records
+
+Identify an image you pulled by its digest or its `org.opencontainers.image.revision` label, not
+by the tag:
+
+| Tag | Digest | `org.opencontainers.image.revision` |
+|---|---|---|
+| `h100-v1.6` | `sha256:1aaa99bd4da5df7e30e91f892a701ebb1f3e857bf2e54958c741536c25ef6b64` | `06cc2f624aa1233b7a6b5edbff5080d6140f0bdb` |
+| `h100-v1.5` | `sha256:be7aac2525bfa06c45adf10ac44a15cfd5b5cebd7495556d2215dae520189611` | `6bc7d82a3a8a0185b88a3741e51272a92fd5d40e` |
+
+`h100-v1.6` and `mi355-v1.7` are built from the same `ml/` tree, so the two hardware images share
+one training recipe.
 
 ### Acceptance gates
 
@@ -42,6 +54,28 @@ harness artefacts — the FSDP tests need the `torchrun` rendezvous variables, a
 `cmd/test_command.sh`, which the Dockerfile does not ship. The script handles both; the reasoning
 is in the MI355X runbook.
 
+Results on 8xH100 for `h100-v1.6`:
+
+| Gate | Check | Result |
+|---|---|---|
+| 0a | corrections present in image | baked `/app/cray/ml` byte-identical to the tree at the revision label — 41 `.py` files, zero docstrings |
+| 0b | `sm_90` kernels | `sm_90` in `torch.cuda.get_arch_list()`, capability `(9,0)`, matmul runs |
+| 1 | unit suite in-image | 811 passed, 2 deselected (`WITH_CMD=1`: 813 passed) |
+| 2 | collective correctness | 14 passed — `python3 -m pytest test/infra/distribution_strategy -q` |
+| 3 | end-to-end, image as **both** server and client | per-step losses bit-identical to `h100-v1.5` |
+| 4 | serving regression | 5 passed — `python3 -m pytest test/integration/api/test_slurm_api.py -q` |
+| 5 | legacy collective jobs, 8 ranks | 5/5 `RESULT: ... passed` |
+
+Gate 2's count is vendor-specific: several tests under `test/infra/distribution_strategy` are
+marked `arch="rocm"` and are collected only on the AMD image.
+
+Gates 3-5 need a running server. Run gate 3 with no `ml/` in the client's working directory, so
+the client uses the image's own baked copy.
+
+Known failure on both `h100-v1.5` and `h100-v1.6`:
+`test/integration/api/test_vllm_api.py::test_lora_adapter_endpoints` — vLLM returns 500 rather
+than 4xx for a nonexistent adapter path.
+
 ### Run it directly
 
 The image restores the real entrypoint, so it starts the server on its own (no override):
@@ -51,7 +85,7 @@ docker run -d --name scalarlm --gpus '"device=0"' --ipc host --shm-size=64g \
   -e SCALARLM_MODEL=Qwen/Qwen3-0.6B -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 \
   --cap-add SYS_PTRACE -p 8000:8000 -p 8001:8001 \
   -v /path/to/hf-cache:/root/.cache/huggingface \
-  farbodatdocker/scalarlm:h100-v1.5
+  farbodatdocker/scalarlm:h100-v1.6
 # curl http://localhost:8000/v1/health  ->  {"api":"up","vllm":"up","all":"up"}
 ```
 
@@ -83,7 +117,7 @@ The supported route is the one-command build — it stages `ml/`, builds the `nv
 
 ```bash
 cd training/llm/scalarlm
-TARGET=nvidia ./build_image.sh                 # or: TARGET=nvidia IMAGE_TAG=h100-v1.5 ./build_image.sh
+TARGET=nvidia ./build_image.sh                 # or: TARGET=nvidia IMAGE_TAG=h100-v1.6 ./build_image.sh
 ```
 
 The Dockerfile uses BuildKit `RUN --mount` cache syntax, so the host needs `docker buildx` and
@@ -186,7 +220,7 @@ pinning a model, or re-tagging under your own namespace.
 
 ```dockerfile
 # my-scalarlm/Dockerfile
-FROM farbodatdocker/scalarlm:h100-v1.5
+FROM farbodatdocker/scalarlm:h100-v1.6
 
 # example: overlay your own modified ml/ tree
 COPY ml/ /app/cray/ml/
