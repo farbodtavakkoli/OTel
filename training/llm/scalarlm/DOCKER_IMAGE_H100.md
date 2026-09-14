@@ -12,12 +12,12 @@ Drop into the ScalarLM Kubernetes Helm chart via `image.repository` / `.tag` / `
 | Image | Hardware |
 |---|---|
 | `farbodatdocker/scalarlm:h100-v1.5` | NVIDIA H100 / Hopper (`sm_90`) — current: from-scratch `repo/Dockerfile` build of the unified tree |
-| `farbodatdocker/scalarlm:mi355-v1.6` | AMD MI355X (ROCm) — same source revision; see `DOCKER_IMAGE_MI355.md` |
+| `farbodatdocker/scalarlm:mi355-v1.7` | AMD MI355X (ROCm) — see `DOCKER_IMAGE_MI355.md` |
 
 ```yaml
 image:
   repository: farbodatdocker/scalarlm
-  tag: h100-v1.5          # NVIDIA H100 / Hopper; use mi355-v1.6 for AMD MI355X
+  tag: h100-v1.5          # NVIDIA H100 / Hopper; use mi355-v1.7 for AMD MI355X
   pullPolicy: Always
 ```
 
@@ -26,6 +26,21 @@ image:
 > label is recorded in the image). It supports `ddp`, `fsdp` and `pytorch_fsdp` training,
 > classification at `batch_size > 1`, and LoRA. Earlier `h100-*` tags predate the unified
 > tree and the `mpirun -> torchrun` launcher — use `h100-v1.5`.
+
+### Acceptance gates
+
+The gate list is shared with the AMD image — see `DOCKER_IMAGE_MI355.md` section 4. Run gate 1
+with the runner script rather than calling `pytest` directly:
+
+```bash
+./run_unit_tests.sh h100-v1.6          # expect: 811 passed, 2 deselected
+WITH_CMD=1 ./run_unit_tests.sh h100-v1.6   # also runs the two cmd/ tests: 813 passed
+```
+
+A bare `python3 -m pytest test/unit` reports 18 failures on either vendor's image. They are
+harness artefacts — the FSDP tests need the `torchrun` rendezvous variables, and two tests read
+`cmd/test_command.sh`, which the Dockerfile does not ship. The script handles both; the reasoning
+is in the MI355X runbook.
 
 ### Run it directly
 

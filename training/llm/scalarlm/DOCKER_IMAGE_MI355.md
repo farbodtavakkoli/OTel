@@ -274,11 +274,27 @@ Run these against the built image with **zero source mounts** unless noted:
 |---|---|---|
 | 0a | corrections present in image | all AMD fixes + all H100 ports found |
 | 0b | gfx950 kernels | `roc-obj-ls` probe is invalid (returns 0 for every lib) — use the functional proof instead: MI355X matmul + `gfx950` in the arch list |
-| 1 | unit suite in-image | 14 passed |
+| 1 | unit suite in-image — run it with `./run_unit_tests.sh <tag>` | 811 passed, 2 deselected |
 | 2 | collective correctness, 8 ranks | `RESULT: ALL COLLECTIVES CORRECT` |
 | 3 | end-to-end, image as **both** server and client | losses match the fingerprints below |
 | 4 | serving regression | 5 passed *(this script mounts the repo tree; with a clean tree at the built commit the mounts are byte-identical to what is baked)* |
 | 5 | legacy collective jobs, 8 ranks | 5/5 `RESULT: … passed` |
+
+Use `./run_unit_tests.sh` for gate 1 rather than calling `pytest` directly. A bare
+`python3 -m pytest test/unit` reports 18 failures that are harness artefacts, not defects:
+
+- **16 fsdp / pytorch_fsdp tests.** The FSDP wrap path calls `get_rank()`, which initialises
+  `torch.distributed` through the `env://` rendezvous and needs `RANK`, `LOCAL_RANK`,
+  `WORLD_SIZE`, `MASTER_ADDR` and `MASTER_PORT`. Those are normally set by `torchrun`, so a bare
+  `pytest` fails with `ValueError: environment variable RANK expected, but not set`. `ddp` is
+  unaffected because it does not initialise at wrap time.
+- **2 `test_live_test_command.py` tests.** They read `/app/cray/cmd/test_command.sh`. The
+  Dockerfile copies `infra`, `sdk`, `test`, `ml` and `scripts` but not `cmd/`, which is a
+  host-side developer CLI that is deliberately not shipped. The script deselects those two so the
+  gate needs no source mount; run `WITH_CMD=1 ./run_unit_tests.sh <tag>` to bind-mount `repo/cmd`
+  and get 813 passed instead.
+
+The script sets the rendezvous variables and picks the GPU flags for the tag's vendor.
 
 ### Release records
 
@@ -295,8 +311,9 @@ by the tag:
 
 `mi355-v1.7` bakes the same training recipe as `mi355-v1.6` with all Python docstrings removed,
 and corrects `org.opencontainers.image.source`, which earlier images pointed at an unrelated
-repository. Nothing in the training or serving path changed: the in-image unit suite gives the
-same result on both tags.
+repository. Nothing in the training or serving path changed. Verified two ways: the unit suite
+gives the same result on both tags, and an identical 8-GPU `fsdp` job run against each image
+produced per-step losses equal to the last digit.
 
 ### Reproducible training fingerprints
 
