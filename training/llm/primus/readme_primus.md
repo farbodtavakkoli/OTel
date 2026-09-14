@@ -182,7 +182,7 @@ repo's canonical chat JSONL, one conversation per line:
 **The dataset-key caveat — you cannot point this recipe at your own JSONL.** On the
 Megatron-Bridge post-training path `--data-path` is **dead code**: the `qwen.qwen3` recipe
 hard-codes `default_squad_config(...)` and exposes no dataset argument, and Primus's
-`auto_filter_and_call()` **silently drops** unknown keys (`⚠️  Retry 20: Removing invalid
+`auto_filter_and_call()` **silently drops** unknown keys (` Retry 20: Removing invalid
 parameter 'dataset'`) instead of failing. To train on your own data you must write a custom
 recipe exposing a dataset argument, or pre-convert your JSONL to what the Bridge
 `HFDatasetConfig` pipeline expects.

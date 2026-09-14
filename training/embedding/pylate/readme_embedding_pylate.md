@@ -285,7 +285,7 @@ The post-training check then exercises all three retrieval paths — `scores.col
 [rank=0] INFO: MAXSIM rank 1: score 31.1195 | doc[0] Once the path message reaches the exit ASBR, any choice of inter-AS TE
 [rank=0] INFO: Relevant document is rank 1: True
 [rank=0] INFO: RERANK rank 1: id 0 score 31.1195
-[rank=0] INFO: ✅ Index with FastPlaid backend.
+[rank=0] INFO: Index with FastPlaid backend.
 [rank=0] INFO: PLAID rank 1: id 0 score 31.1191
 ```
 

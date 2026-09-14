@@ -1,4 +1,4 @@
-# `inference/ktransformers` — CPU-GPU heterogeneous MoE serving (H100 ✅ serving · MI355X ⚠️ kernels only)
+# `inference/ktransformers` — CPU-GPU heterogeneous MoE serving (H100 serving · MI355X kernels only)
 
 **KTransformers** (github.com/kvcache-ai/ktransformers) is a research framework for
 **CPU-GPU heterogeneous** LLM inference. Its reason to exist is running **giant
@@ -19,8 +19,8 @@ VRAM, use [`../vllm/llm/`](../vllm/llm/) or [`../sglang/llm/`](../sglang/llm/) i
 |---|---|---|
 | Route | prebuilt PyPI wheels (`kt-kernel` + `sglang-kt`), no build | **source build** of kt-kernel with `CPUINFER_USE_ROCM=1` (the PyPI wheel is CUDA-only) |
 | CPU kernel tier | **AMX** | **AVX512-BF16** (no AMX on Zen 5) |
-| Serving | ✅ `sglang-kt` serves an MoE checkpoint with experts in CPU DRAM | ❌ **blocked** — `sglang-kt` 0.7.0 hard-pins `cuda-python`, `flashinfer`, `sgl-kernel` (CUDA-only wheels), so a container does not route around them |
-| Direct Python API | not exercised | ✅ hybrid works — MoE layers on CPU, output identical to the all-GPU baseline |
+| Serving | `sglang-kt` serves an MoE checkpoint with experts in CPU DRAM | **blocked** — `sglang-kt` 0.7.0 hard-pins `cuda-python`, `flashinfer`, `sgl-kernel` (CUDA-only wheels), so a container does not route around them |
+| Direct Python API | not exercised | hybrid works — MoE layers on CPU, output identical to the all-GPU baseline |
 
 **The kernel library ports across vendors; the serving layer is CUDA-first.** On AMD, use
 [`../vllm/llm/`](../vllm/llm/) or [`../sglang/llm/`](../sglang/llm/) for serving.
@@ -66,8 +66,8 @@ export CPUINFER_CPU_INSTRUCT=NATIVE CPUINFER_ENABLE_AMX=OFF
 pip install . -v --no-build-isolation --no-deps    # --no-deps is MANDATORY (see trap below)
 ```
 
-⚠️ **The `--no-deps` trap:** kt-kernel's `pyproject.toml` hard-pins `torch==2.9.1` +
-`triton`; a plain `pip install .` replaces the ROCm torch with a CUDA wheel. ⚠️ **The PyPI
+**The `--no-deps` trap:** kt-kernel's `pyproject.toml` hard-pins `torch==2.9.1` +
+`triton`; a plain `pip install .` replaces the ROCm torch with a CUDA wheel. **The PyPI
 wheel is CUDA-only** (statically linked cudart, no HIP path) — on AMD it silently degrades
 to CPU-only, which is why the source build is mandatory. Build detail, evidence, and the
 `sglang-kt` blocking analysis: [`llm/README.md`](llm/README.md).

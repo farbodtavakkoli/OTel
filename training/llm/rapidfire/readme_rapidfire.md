@@ -89,7 +89,7 @@ rapidfireai start
 
 **Upstream says not supported. It works anyway, with changes.** No upstream source needs
 patching; the only thing that breaks is `rapidfireai init --train`, which probes for GPUs
-with `nvidia-smi`/`nvcc` only, prints `🎯 Using CPU`, and force-installs a **CPU/CUDA
+with `nvidia-smi`/`nvcc` only, reports that it is using CPU, and force-installs a **CPU/CUDA
 PyTorch wheel over your ROCm one** (first failure you see:
 `ValueError: Your setup doesn't support bf16/gpu`).
 
@@ -104,7 +104,7 @@ pip install -U pip setuptools wheel
 pip install rapidfireai==0.16.1 python-dotenv==1.2.2
 
 # Pulls the fine-tuning dependency set (trl/peft/transformers/accelerate/ray/...).
-# It WILL replace torch with a CPU/CUDA wheel and print "🎯 Using CPU" — expected on AMD.
+# It WILL replace torch with a CPU/CUDA wheel and report CPU use — expected on AMD.
 rapidfireai init --train
 
 # The AMD repair step: put ROCm torch back over what init just installed.
@@ -130,7 +130,7 @@ never asks for flash-attn anyway. ROCm keeps `init`'s own transformers/trl pins 
 upgrade above is only needed for transformers-5.x-era models).
 
 `rapidfireai doctor` is **not useful on AMD** — it reports `nvidia-smi: not found`,
-`CUDA Installation: not present` and `⚠️ Torch version not found` for a perfectly good
+`CUDA Installation: not present` and `Torch version not found` for a perfectly good
 ROCm torch. Ignore it; it blocks nothing.
 
 ## Environment & secrets

@@ -41,21 +41,21 @@ HTTP client with no local training loop.) Commands live in each folder's own REA
 | `llm/fsdp` | **works, unmodified** | FSDP2 full shard | — |
 | `llm/megatron` | **works, unmodified** | TP + PP + DP, 3 layouts | TP2/PP2/DP2 exercises every process-group type |
 | `llm/torchtitan` | **works, unmodified** | FSDP2 + TP, 2 layouts | — |
-| `llm/primus` | **works (DP8 only)** | DP 8 | ⚠️ TP/PP **blocked** — the image's checkpoint converter only ever emits TP1/PP1, so re-sharding is rejected at resume. LoRA still broken |
+| `llm/primus` | **works (DP8 only)** | DP 8 | TP/PP **blocked** — the image's checkpoint converter only ever emits TP1/PP1, so re-sharding is rejected at resume. LoRA still broken |
 | `llm/verl` | **works, unmodified** | FSDP2 world 8 **colocated** with 4 vLLM engines × TP2 | the default topology already targets 8 GPUs; trainer and rollout share the same cards rather than splitting them |
 | `classification/deepspeed` | **works, unmodified** | ZeRO-2 | use ZeRO-2, not ZeRO-3 — see the silent no-op save below |
 | `llm/ray` | **works, unmodified** | 8 Ray workers on 8 distinct GPUs | `RAY_EXPERIMENTAL_NOSET_HIP_VISIBLE_DEVICES=1` **still required** at 8 workers |
 | `llm/composer` | **works, unmodified** | DDP **and** FSDP `FULL_SHARD` | only `-n 8` and batch geometry changed |
 | `llm/llmfoundry` | **works** | FSDP `FULL_SHARD` | config only — geometry divisible by 8, `init_device: mixed` put back |
-| `llm/nemo` | **works** | FSDP2, `dp_size 8` | ⚠️ the folder's CLI cannot change torchrun's rendezvous port (inherits the 29500 default) — collides on a shared box; use upstream's in-process launcher. TP/PP/CP meshes still untested |
-| `llm/unsloth` | **works** | DDP 8, no sharding (Unsloth OSS is DDP-only) | ⚠️ the package still ships a `device_count() > 1` refusal; it fails to land only because trl 0.24.0 makes Unsloth's patch path bail out — **version luck, not a supported guarantee**. QLoRA and GRPO were not retested at 8 GPUs |
+| `llm/nemo` | **works** | FSDP2, `dp_size 8` | the folder's CLI cannot change torchrun's rendezvous port (inherits the 29500 default) — collides on a shared box; use upstream's in-process launcher. TP/PP/CP meshes still untested |
+| `llm/unsloth` | **works** | DDP 8, no sharding (Unsloth OSS is DDP-only) | the package still ships a `device_count() > 1` refusal; it fails to land only because trl 0.24.0 makes Unsloth's patch path bail out — **version luck, not a supported guarantee**. QLoRA and GRPO were not retested at 8 GPUs |
 | `llm/axolotl` | **works, with changes** | plain DDP — no DeepSpeed, no FSDP | 8-GPU YAML + replicated dataset + pin override; no new packages, so the upstream "DeepSpeed is broken on ROCm" caveat never applies to LoRA |
 | `llm/llamafactory` | **works, with changes** | DDP 8 (the CLI re-execs itself under `torchrun`) | environment and data plumbing only, no framework fix |
 | `llm/lightning` | **works, with changes** | FSDP `FULL_SHARD`, and DDP | `--grad_clip 0` still required under FSDP; DDP needs `ddp_find_unused_parameters_true` |
 | `llm/torchtune` | **works, with changes** | FSDP2 | needs a *separate* distributed config (recipes come in pairs, each owning its config surface) + a bigger dataset. Nothing AMD-specific |
 | `llm/redhat` | **works, with changes** | world 8 | pin override + a dataset large enough to feed 8 ranks |
-| `llm/peft` | **works, with one change** | DDP 8 — LoRA, QLoRA, DoRA | `--ddp_find_unused_parameters` (see multimodal note below). ⚠️ QLoRA skews VRAM heavily onto GPU 0 |
-| `llm/rapidfire` | **works** | *config-level*: 8 configs, one per GPU | ⚠️ must **unset** `HIP_/CUDA_VISIBLE_DEVICES` — the opposite of every other folder (see below) |
+| `llm/peft` | **works, with one change** | DDP 8 — LoRA, QLoRA, DoRA | `--ddp_find_unused_parameters` (see multimodal note below). QLoRA skews VRAM heavily onto GPU 0 |
+| `llm/rapidfire` | **works** | *config-level*: 8 configs, one per GPU | must **unset** `HIP_/CUDA_VISIBLE_DEVICES` — the opposite of every other folder (see below) |
 | `embedding/sentence_transformers` | **works** | DDP + cross-rank negative gather | `gather_across_devices` grows the in-batch negative pool, which is the real reason to scale this one |
 | `reranker/sentence_transformers` | **works** | DDP 8 | — |
 | `llm/openrlhf` | **SFT/DPO work**; RL tiers unchanged | DeepSpeed, world 8 | batch geometry was the only change. PPO/GRPO remain blocked in the venv — a *dependency* limit (vLLM), not a scale one; they run in the `rocm/verl` container |
@@ -113,7 +113,7 @@ where multi-GPU tends to break quietly:
 | `llm/deepspeed` ZeRO-3, full FT (no LoRA), 4 GPUs | **holds** — the unguarded all-ranks `save_model` is the correct pattern (rank-0-guarding it is what deadlocked `deepspeed_standalone`) |
 | `llm/fsdp` FSDP2, collective save enabled, 4 ranks | **holds** — but the consolidated save is **fp32**, so budget disk for it. During the save ranks 1-3 sit at 100% busy-waiting in the barrier — easy to misread as a hang |
 | `llm/lightning` FSDP `FULL_SHARD`, 4 devices | **holds** — rank-0 gather produced a valid unsharded checkpoint |
-| `classification/deepspeed` ZeRO-3, 4 GPUs | ⚠️ **silent no-op save**. ZeRO-2 on the same GPUs wrote weights correctly |
+| `classification/deepspeed` ZeRO-3, 4 GPUs | **silent no-op save**. ZeRO-2 on the same GPUs wrote weights correctly |
 
 The classification ZeRO-3 bug is a *config* bug reachable only once parameters are
 sharded — its `build_deepspeed_config()` never sets

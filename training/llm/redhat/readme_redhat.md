@@ -122,7 +122,7 @@ python3 train_llm_redhat.py \
 ```
 Epoch 1: ──━━━━━━━━  20% │ 1/5 │ loss: 10.7442 │ lr: 5.00e-06 │ 112 tok/s
 Epoch 1: ────────── 100% │ 5/5 │ loss: 6.0593 │ lr: 4.77e-07 │ 2385 tok/s
-✅ Saved model at 10.0 samples in 162.99 seconds
+Saved model at 10.0 samples in 162.99 seconds
 ```
 
 **Quirks found on ROCm (both required, neither in the generic AMD steps above):**
@@ -178,7 +178,7 @@ gradient accumulation itself from `effective_batch_size` and the world size.
 Epoch 1: ─━━━━━━━━━  10% │  1/10 │ loss: 10.8526 │ lr: 5.00e-06 │  5306 tok/s
 Epoch 1: ────━━━━━━  40% │  4/10 │ loss:  5.8742 │ lr: 3.97e-06 │ 37704 tok/s
 Epoch 1: ────────── 100% │ 10/10 │ loss:  4.8896 │ lr: 1.22e-07 │ 18575 tok/s
-✅ Saved model at 640.0 samples in 167.21 seconds
+Saved model at 640.0 samples in 167.21 seconds
 ```
 
 Loss is finite and monotonically decreasing, `grad_norm` collapses, and OSFT itself runs:
@@ -254,7 +254,7 @@ python3 train_llm_redhat.py \
 step  2 epoch 0 loss 5.0361 lr 4.95e-06 grad_norm 217.85
 step  5 epoch 0 loss 2.7385 lr 4.17e-06 grad_norm 60.16
 step 11 epoch 2 loss 1.5709 lr 1.25e-06 grad_norm 16.52
-✅ OSFT Training completed successfully!   Most recent checkpoint: .../hf_format/samples_30.0
+OSFT Training completed successfully! Most recent checkpoint: .../hf_format/samples_30.0
 ```
 
 A full HF checkpoint is written (delete it afterwards — see the checkpointing note above).

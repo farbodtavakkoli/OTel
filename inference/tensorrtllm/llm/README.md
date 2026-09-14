@@ -21,7 +21,7 @@ dependency closure is CUDA 12/13 wheels. For LLM serving on an AMD host use
 | NVIDIA Hopper (H100/H200/GH200) | **Works** — `tensorrt_llm` 1.2.1 imports and the PyTorch backend loads a supported checkpoint |
 | NVIDIA Blackwell / Ada Lovelace / Ampere | upstream targets (Ampere has no FP8 path) |
 | **AMD ROCm (any GPU)** | **Not supported** — there is no ROCm build upstream |
-| Embedding / reranker workloads | ❌ upstream even on NVIDIA — no first-class recipe. See [`../README.md`](../README.md) |
+| Embedding / reranker workloads | upstream even on NVIDIA — no first-class recipe. See [`../README.md`](../README.md) |
 
 ## Install
 

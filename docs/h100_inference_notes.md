@@ -87,6 +87,6 @@ tree + `LLAMA_CACHE` must live on local disk or tmpfs.
 ## FP8 on Hopper
 
 The 27B FP8 checkpoint (OCP **E4M3FN**) loads and serves natively wherever the engine
-registers the `qwen3_5` arch (SGLang 0.5.18 ✅; TRT-LLM 1.2.1 ✗ — version, not hardware). FP8
+registers the `qwen3_5` arch (SGLang 0.5.18 ; TRT-LLM 1.2.1 — version, not hardware). FP8
 is native on Hopper, so the constraint is arch/version support in each engine, not the
 datatype.

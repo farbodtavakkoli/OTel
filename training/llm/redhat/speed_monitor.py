@@ -137,7 +137,7 @@ def format_report(report: dict) -> str:
     vloss_s = f"{vloss:.4f}" if vloss is not None else "N/A"
     return "\n".join([
     "",
-    "⏱️ Speed / ETA report",
+    "Speed / ETA report",
     "-" * 50,
     f" Progress: step {report['completed_steps']}/{report['total_steps']} "
     f"(epoch {report['current_epoch']}/{report['num_epochs']}, "
@@ -194,7 +194,7 @@ poll_interval: float = 5.0):
     steps_per_epoch = compute_steps_per_epoch(data_path, effective_batch_size)
     total_steps = steps_per_epoch * num_epochs
     print(
-        f"📈 Speed monitor enabled: {steps_per_epoch:,} steps/epoch "
+        f"Speed monitor enabled: {steps_per_epoch:,} steps/epoch "
         f"({total_steps:,} total steps over {num_epochs} epochs); "
         f"reporting every {report_every_steps} step(s).",
         flush=True,

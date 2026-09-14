@@ -7,7 +7,7 @@ layout (`inference/<software>/<modality>`). Target models: LLM `Qwen/Qwen3.8-27B
 embedding `google/embeddinggemma-300m`, reranker `Qwen/Qwen3-Reranker-0.6B` (GGUF
 equivalents where a stack requires a converted checkpoint).
 
-## ⚠️ The two silent-corruption traps
+## The two silent-corruption traps
 
 Both return **HTTP 200 and plausible-looking output**, so a smoke test that only checks for
 a response will pass while the deployment is wrong:

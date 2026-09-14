@@ -127,7 +127,7 @@ Two ROCm guards are already in `train_llm_classification.py` and need no attenti
 Accelerate logs `ROCm + DeepSpeed + bf16 detected: setting communication_data_type='fp32'`
 once per rank. Benign.
 
-## ⚠️ `--zero_stage 3` silently produces no `model.safetensors`
+## `--zero_stage 3` silently produces no `model.safetensors`
 
 **This is hardware-neutral and reproduces at a single GPU.** A ZeRO-3 run exits **0**, logs
 `Model weights saved in .../model.safetensors`, and that file does not exist on disk. The

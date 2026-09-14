@@ -190,7 +190,7 @@ def main():
         )
 
     # OSFT configuration
-    print("🚀 OSFT Training")
+    print("OSFT Training")
     print("=" * 50)
     print(f"Model: {args.model_path}")
     if args.eos_token:
@@ -211,7 +211,7 @@ def main():
     f"(every {args.validation_frequency} steps, "
     f"save_best_val_loss={args.save_best_val_loss})")
     print()
-    print(f"📝 OSFT Benefits for {args.model_path}:")
+    print(f"OSFT Benefits for {args.model_path}:")
     print(" • Preserve the base model's general capabilities")
     print(" • Add domain-specific knowledge efficiently")
     print(" • No need for complex data mixing or replay buffers")
@@ -291,12 +291,12 @@ def main():
         most_recent_checkpoint = find_most_recent_checkpoint(args.ckpt_output_dir)
 
         print("=" * 50)
-        print("✅ OSFT Training completed successfully!")
-        print(f"⏱️ Duration: {duration/3600:.2f} hours")
-        print(f"📁 Checkpoints: {args.ckpt_output_dir}/hf_format")
+        print("OSFT Training completed successfully!")
+        print(f"Duration: {duration/3600:.2f} hours")
+        print(f"Checkpoints: {args.ckpt_output_dir}/hf_format")
         print(f" Most recent checkpoint: {most_recent_checkpoint}")
         print()
-        print(f"🎯 Your {args.model_path} model has been successfully adapted!")
+        print(f"Your {args.model_path} model has been successfully adapted!")
         print(" The model now incorporates your domain-specific knowledge")
         print(" while maintaining its original high-quality capabilities.")
 
@@ -305,10 +305,10 @@ def main():
         duration = end_time - start_time
 
         print("=" * 50)
-        print(f"❌ Training failed after {duration/60:.1f} minutes")
+        print(f"Training failed after {duration/60:.1f} minutes")
         print(f"Error: {e}")
         print()
-        print("💡 Troubleshooting tips:")
+        print("Troubleshooting tips:")
         print(" - Reduce --max-tokens-per-gpu if you see OOM errors (large / large-vocab models are memory-hungry)")
         print(" - For domain adaptation, try --unfreeze-rank-ratio between 0.2-0.3")
         print(" - Reduce --effective-batch-size further for memory constraints")

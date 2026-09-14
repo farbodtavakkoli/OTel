@@ -14,10 +14,10 @@ host has a strong server CPU; for dense models, or models that fit in VRAM, use
 
 | | NVIDIA H100 (Intel Xeon, AMX) | AMD MI355X (EPYC, AVX512) |
 |---|---|---|
-| kt-kernel library | ✅ PyPI wheel, `__cpu_variant__ == 'amx'` | ✅ **source build** (`CPUINFER_USE_ROCM=1`), `avx512_bf16` variant, HIP-linked |
-| Full serving (`sglang-kt`) | ✅ **works** — Qwen3-30B-A3B (128 experts), experts in CPU DRAM | ❌ blocked — `sglang-kt` hard-pins CUDA-only deps (`cuda-python`, `flashinfer`, `sgl-kernel`); not fixable by a container |
-| Direct Python API hybrid | not exercised (serving path preferred) | ✅ **works** — MoE layers on CPU, output **character-identical** to the all-GPU baseline |
-| Dense `Qwen3.8-27B-FP8` | ❌ no experts to offload, and output is incoherent on this stack. Use vLLM/SGLang | premise absent |
+| kt-kernel library | PyPI wheel, `__cpu_variant__ == 'amx'` | **source build** (`CPUINFER_USE_ROCM=1`), `avx512_bf16` variant, HIP-linked |
+| Full serving (`sglang-kt`) | **works** — Qwen3-30B-A3B (128 experts), experts in CPU DRAM | blocked — `sglang-kt` hard-pins CUDA-only deps (`cuda-python`, `flashinfer`, `sgl-kernel`); not fixable by a container |
+| Direct Python API hybrid | not exercised (serving path preferred) | **works** — MoE layers on CPU, output **character-identical** to the all-GPU baseline |
+| Dense `Qwen3.8-27B-FP8` | no experts to offload, and output is incoherent on this stack. Use vLLM/SGLang | premise absent |
 
 The script serves four modes: `--mode probe` (import/environment check, both vendors),
 `--mode chat` (client for a running `sglang-kt` server — the NVIDIA serving path),
@@ -434,7 +434,7 @@ SGLang, and `sglang-kt` is CUDA-only by package metadata.
 | **AMD MI355X (gfx950, ROCm 7.2)** | **Kernel library only** — source build with `CPUINFER_USE_ROCM=1`, hybrid generate via the direct Python API. Serving is **blocked upstream** by `sglang-kt`'s CUDA-only pins. |
 | AMD Zen4/Zen5 CPU (AVX512/BLIS) | **Works** — `avx512_bf16` variant; AMX methods are impossible. |
 | Dense `Qwen/Qwen3.8-27B-FP8` | Loads but the MoE offload is inert and output is incoherent. Use vLLM/SGLang. |
-| Embedding / reranker | ❌ upstream — KT is LLM-only. Use vLLM/TEI/SGLang/llama.cpp. |
+| Embedding / reranker | upstream — KT is LLM-only. Use vLLM/TEI/SGLang/llama.cpp. |
 
 ## Recommendation
 

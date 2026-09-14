@@ -206,7 +206,7 @@ python3 -m openrlhf.cli.train_ppo_ray \
 A healthy run logs vLLM engine init and KV-cache allocation, then per-step
 `update weight: model.layers.N...` lines (the actor→vLLM NCCL weight sync), a
 `CuMemAllocator: sleep freed ...` line (colocate_all sleep/wake), one
-`✨ Global step N: {...}` line per optimizer step with finite `policy_loss`,
+`Global step N: {...}` line per optimizer step with finite `policy_loss`,
 `actor_grad_norm`, `ppo_kl` and `group_reward_std`, and finally `Writing model shards` for
 the HF checkpoint. With the rule-based stub reward and short completions, `reward` and
 `accuracy` legitimately read `0.0` on a smoke.
@@ -359,7 +359,7 @@ This is what `train_llm_openrlhf.py --mode grpo ... --dry_run` prints, minus the
 
 Expect one `GPU KV cache size: ...` line per vLLM engine, then per-step
 `update weight: model.layers.N...` lines (the actor→engine sync) and one
-`✨ Global step N: {...}` line per optimizer step with finite `reward`, `policy_loss`,
+`Global step N: {...}` line per optimizer step with finite `reward`, `policy_loss`,
 `actor_grad_norm` and `group_reward_std > 0`. `--ckpt.save_hf` then writes
 `<output_dir>/model.safetensors` plus `config.json`, `tokenizer.json` and
 `chat_template.jinja`.

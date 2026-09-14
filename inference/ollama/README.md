@@ -132,7 +132,7 @@ container. The token would only matter for `ollama pull hf.co/<gated-repo>`.
 
 ## Scope note — deliberately no `reranker/` leaf
 
-Ollama is ❌ for the reranker workload:
+Ollama is for the reranker workload:
 Ollama's HTTP surface is `/api/generate`, `/api/chat`, `/api/embed` plus the OpenAI shim —
 **there is no rerank route**, and a cross-encoder cannot be emulated by embedding both
 sides and taking a cosine. For reranking use
@@ -143,8 +143,8 @@ answer) or [`../vllm/reranker/`](../vllm/reranker/) (the production GPU-serving 
 
 | Leaf | Model | Status |
 |---|---|---|
-| [`llm/`](llm/README.md) | `unsloth/Qwen3.8-27B-GGUF:Q8_0` | ✅ **works** — single- and multi-GPU, `100% GPU` residency. |
-| [`embedding/`](embedding/README.md) | `ggml-org/embeddinggemma-300M-GGUF:Q8_0` | ✅ **works** — task prefixes must be applied client-side (the one correctness trap). |
+| [`llm/`](llm/README.md) | `unsloth/Qwen3.8-27B-GGUF:Q8_0` | **works** — single- and multi-GPU, `100% GPU` residency. |
+| [`embedding/`](embedding/README.md) | `ggml-org/embeddinggemma-300M-GGUF:Q8_0` | **works** — task prefixes must be applied client-side (the one correctness trap). |
 
 ## Shared quirks (both leaves)
 
