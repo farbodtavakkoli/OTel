@@ -174,7 +174,7 @@ docker pull farbodatdocker/scalarlm:h100-v1.5
 ScalarLM ships the training code (`ml/`) from the **client** with each job, so the client
 checkout and the server image must come from the same revision. The MI355X image
 runbook, acceptance gates and source-revision label are in
-[`training/llm/scalarlm/DOCKER_IMAGE_MI355.md`](training/llm/scalarlm/DOCKER_IMAGE_MI355.md).
+[`training/llm/scalarlm/docs/DOCKER_IMAGE_MI355.md`](training/llm/scalarlm/docs/DOCKER_IMAGE_MI355.md).
 
 ## OTel Data
 

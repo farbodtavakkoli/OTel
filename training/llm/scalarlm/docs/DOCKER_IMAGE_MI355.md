@@ -120,7 +120,7 @@ rank 1 while rank 0 looks healthy.
 
 ## 2. Build from scratch
 
-The full ScalarLM server source ships in this folder as **`repo/`** — a verbatim tree with the AMD
+The full ScalarLM server source ships in the `scalarlm` folder as **`repo/`** — a verbatim tree with the AMD
 integration applied. Build from its Dockerfile, not by overlaying a published base: the
 integration touches `ml/`, `infra/cray_infra/`, `scripts/` and `test/`, so an `ml/`-only overlay
 cannot deliver it.
@@ -239,10 +239,10 @@ So:
 
 | You run the client from | Which `ml/` actually trains |
 |---|---|
-| `training/llm/scalarlm/` (this folder) | **yours** — edit `ml/`, rerun, done. No rebuild. |
+| `training/llm/scalarlm/` | **yours** — edit `ml/`, rerun, done. No rebuild. |
 | anywhere without an `ml/` dir | the image's baked default |
 
-That is the supported way to modify the recipe: **edit `ml/` in this folder and submit a job.** Your
+That is the supported way to modify the recipe: **edit `ml/` in the `scalarlm` folder and submit a job.** Your
 changes take effect on the next run.
 
 > **Note.** Because the client's copy wins, a
@@ -261,7 +261,7 @@ COPY ml/ /app/cray/ml/          # changes the DEFAULT for clients that have no m
 ```
 
 Anything outside `ml/` — the collectives layer (`infra/cray_infra/training/distributed.py`), the
-launcher, the Slurm wiring, the ROCm/PyTorch versions — is **not** in this folder and cannot be
+launcher, the Slurm wiring, the ROCm/PyTorch versions — is **not** in the `scalarlm` folder and cannot be
 changed by an overlay. Those need the full source: see §7.
 
 ---
@@ -317,8 +317,8 @@ produced per-step losses equal to the last digit.
 
 ### Reproducible training fingerprints
 
-Qwen3-0.6B · 128 records · 30 steps · `adapter_type: none` · `gpus: 8, nodes: 1`, with this
-folder's `ml/`:
+Qwen3-0.6B · 128 records · 30 steps · `adapter_type: none` · `gpus: 8, nodes: 1`, with the
+`scalarlm` folder's `ml/`:
 
 | Strategy | Final loss (30 steps) |
 |---|---|
@@ -398,17 +398,20 @@ Also present: `/app/cray/vllm/.git` (245 MB) — not a secret, but pure image bl
 
 ## 7. Where the full source lives, and cutting the next release
 
-Everything needed to rebuild is in this folder. There is no separate repository to track.
+Everything needed to rebuild is in the `scalarlm` folder. There is no separate repository to track.
 
 ### What is here
+
+Paths are relative to `training/llm/scalarlm/`:
 
 | Path | What it is |
 |---|---|
 | `ml/` | **the training recipe — the one canonical copy.** Edit this. |
 | `repo/` | the full ScalarLM server source with the AMD integration applied |
-| `build_image.sh` | stages `ml/` into `repo/` and builds the image |
-| `scalarlm_mi355.patch` | the integration as one patch against public upstream |
-
+| `docs/build_image.sh` | stages `ml/` into `repo/` and builds the image |
+| `docs/run_unit_tests.sh` | runs acceptance gate 1 against a built image |
+| `docs/scalarlm_mi355.patch` | the integration as one patch against public upstream |
+| `docs/DOCKER_IMAGE_MI355.md`, `docs/DOCKER_IMAGE_H100.md` | the two image runbooks |
 | `train.py`, `inference.py`, `data/` | the client |
 
 `repo/` is a verbatim upstream tree at commit `4566a84` with the AMD integration applied. It

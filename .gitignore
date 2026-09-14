@@ -301,7 +301,9 @@ h100_new_bugs_v3.md
 h100_new_features-bugs.md
 h100_new_features-bugs_v2.md
 *.bundle
-training/llm/scalarlm/docs/
+# training/llm/scalarlm/docs/ previously held internal working notes and was
+# ignored. It is now the published home of the ScalarLM runbooks, build_image.sh,
+# run_unit_tests.sh and scalarlm_mi355.patch, so it must be tracked.
 
 # --- additional exclusions: local venvs, scratch files, and ScalarLM path rules ---
 .env_*
@@ -315,7 +317,9 @@ training/llm/rapidfire/tutorial_notebooks/
 !/training/llm/scalarlm/**
 /training/llm/scalarlm/**/dev.env
 /training/llm/scalarlm/dev.env
-/training/llm/scalarlm/docs/
+# training/llm/scalarlm/docs/ previously held internal working notes and was
+# ignored. It is now the published home of the ScalarLM runbooks, build_image.sh,
+# run_unit_tests.sh and scalarlm_mi355.patch, so it must be tracked.
 /training/llm/scalarlm/**/*.env
 /training/llm/scalarlm/.env_*
 /training/llm/scalarlm/.env_scalarlm

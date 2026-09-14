@@ -1,7 +1,7 @@
 # ScalarLM server image — run, build, customize, push
 
 The ScalarLM server runs as a Docker image (one container serves both the vLLM inference
-endpoint and the Megatron-LM-via-Slurm training endpoint, with this folder's `ml/` tree baked
+endpoint and the Megatron-LM-via-Slurm training endpoint, with the `scalarlm` folder's `ml/` tree baked
 in). This document covers running the pre-built images, building one from scratch, building your
 **own** image on top of a published one, and pushing.
 
@@ -134,7 +134,7 @@ the torchrun environment (`RANK`/`LOCAL_RANK`/`WORLD_SIZE`), which
 > `flash_attention_2` crashes in the varlen kernel on this image, so the loader maps it to
 > `sdpa` unconditionally.
 
-### 2 — Bake in this folder's `ml/`
+### 2 — Bake in the `scalarlm` folder's `ml/`
 
 ```bash
 SRC=training/llm/scalarlm/ml ; DST=/tmp/ml_clean

@@ -18,8 +18,21 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$HERE/repo"
-ML_DIR="$HERE/ml"
+
+# This script lives in docs/, while the trees it builds from (repo/, ml/) sit in
+# the scalarlm folder above it. Resolve either layout so the script keeps working
+# if it is moved back alongside them.
+if [ -d "$HERE/repo" ] && [ -d "$HERE/ml" ]; then
+    SCALARLM_DIR="$HERE"
+elif [ -d "$HERE/../repo" ] && [ -d "$HERE/../ml" ]; then
+    SCALARLM_DIR="$(cd "$HERE/.." && pwd)"
+else
+    echo "ERROR: cannot locate the scalarlm folder (no repo/ and ml/ in $HERE or its parent)"
+    exit 1
+fi
+
+REPO_DIR="$SCALARLM_DIR/repo"
+ML_DIR="$SCALARLM_DIR/ml"
 
 TARGET="${TARGET:-auto}"
 if [ "$TARGET" = auto ]; then
@@ -64,9 +77,11 @@ echo "    $(find "$REPO_DIR/ml" -name '*.py' | wc -l) python files staged"
 # Record which source revision this image was built from. The vendored tree has
 # no .git of its own, so this is the OUTER repository's HEAD -- which is the
 # correct answer, because that is now where this source lives.
-REVISION="$(git -C "$HERE" rev-parse HEAD 2>/dev/null || echo unknown)"
+REVISION="$(git -C "$SCALARLM_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
 DIRTY=""
-if ! git -C "$HERE" diff --quiet HEAD -- "$HERE" 2>/dev/null; then
+# Check the whole scalarlm folder, not just this script's directory: ml/ is what
+# gets baked in, so an uncommitted change there must mark the image dirty.
+if ! git -C "$SCALARLM_DIR" diff --quiet HEAD -- "$SCALARLM_DIR" 2>/dev/null; then
     DIRTY="-dirty"
     echo "    WARNING: working tree has uncommitted changes; labelling revision as ${REVISION}${DIRTY}"
 fi

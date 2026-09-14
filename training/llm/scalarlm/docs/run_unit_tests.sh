@@ -30,6 +30,17 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# This script lives in docs/, while repo/ sits in the scalarlm folder above it.
+# Resolve either layout so it keeps working if moved back alongside repo/.
+if [ -d "$HERE/repo" ]; then
+    SCALARLM_DIR="$HERE"
+elif [ -d "$HERE/../repo" ]; then
+    SCALARLM_DIR="$(cd "$HERE/.." && pwd)"
+else
+    SCALARLM_DIR="$HERE"   # only matters for WITH_CMD=1, which checks the path below
+fi
+
 IMAGE_REPO="${IMAGE_REPO:-farbodatdocker/scalarlm}"
 
 # Pick the tag matching this host unless one was given.
@@ -57,8 +68,8 @@ MOUNT_ARGS=()
 DESELECT="--deselect test/unit/test_live_test_command.py::test_live_profile_stops_when_image_build_fails \
           --deselect test/unit/test_live_test_command.py::test_live_profile_forwards_pytest_filters"
 if [ "${WITH_CMD:-0}" = "1" ]; then
-    [ -d "$HERE/repo/cmd" ] || { echo "ERROR: $HERE/repo/cmd not found"; exit 1; }
-    MOUNT_ARGS=(-v "$HERE/repo/cmd:/app/cray/cmd:ro")
+    [ -d "$SCALARLM_DIR/repo/cmd" ] || { echo "ERROR: $SCALARLM_DIR/repo/cmd not found"; exit 1; }
+    MOUNT_ARGS=(-v "$SCALARLM_DIR/repo/cmd:/app/cray/cmd:ro")
     DESELECT=""
     echo "==> WITH_CMD=1: bind-mounting repo/cmd so the two cmd/ tests can run"
 fi

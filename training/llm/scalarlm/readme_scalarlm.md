@@ -11,15 +11,15 @@ Files:
 - `inference.py` — submit a batch generate/embedding job against a (fine-tuned) model.
 - `ml/` — **the training recipe.** Runs server-side (`cray_megatron`, `adapters`, `tokenformer`). This is the copy you edit: the SDK uploads whatever `ml/` sits next to you, so a change here takes effect on your next job with no image rebuild. Vendored and deliberately left in upstream style.
 - `repo/` — the full ScalarLM **server** source with the AMD integration applied. Only needed to rebuild the image or change something outside `ml/` (the collectives layer, launcher, Dockerfile). It carries no `.git`; `repo/ml/` is generated at build time and is not source.
-- `build_image.sh` — stages `ml/` into `repo/` and builds the MI355X image.
-- `scalarlm_mi355.patch` — the AMD integration as one patch against public upstream
+- `docs/build_image.sh` — stages `ml/` into `repo/` and builds the MI355X image.
+- `docs/scalarlm_mi355.patch` — the AMD integration as one patch against public upstream
   `supermassive-intelligence/scalarlm` at commit `4566a84`. Applying it to a fresh upstream clone
-  at that commit reproduces `repo/` — see `DOCKER_IMAGE_MI355.md` §7.
-- `DOCKER_IMAGE_MI355.md` — build / run / publish runbook for the MI355X server image.
+  at that commit reproduces `repo/` — see `docs/DOCKER_IMAGE_MI355.md` §7.
+- `docs/DOCKER_IMAGE_MI355.md` — build / run / publish runbook for the MI355X server image.
 - `data/` — small sample datasets for each mode.
 
 > **There is exactly one `ml/` tree in version control** — this one. `repo/ml/` is created by
-> `build_image.sh` at build time and is gitignored, so the image always bakes the recipe you see
+> `docs/build_image.sh` at build time and is gitignored, so the image always bakes the recipe you see
 > here and the two cannot drift.
 
 > The vendored trees here derive from `supermassive-intelligence/scalarlm`. The client talks to
@@ -161,8 +161,8 @@ python inference.py \
 
 ## Server image
 
-One source tree, one `ml/` recipe, two server images. Runbooks: **`DOCKER_IMAGE_MI355.md`** (AMD)
-and **`DOCKER_IMAGE_H100.md`** (NVIDIA).
+One source tree, one `ml/` recipe, two server images. Runbooks: **`docs/DOCKER_IMAGE_MI355.md`**
+(AMD) and **`docs/DOCKER_IMAGE_H100.md`** (NVIDIA).
 
 | Tag | Hardware |
 |---|---|
@@ -170,9 +170,10 @@ and **`DOCKER_IMAGE_H100.md`** (NVIDIA).
 | `farbodatdocker/scalarlm:h100-v1.5` | NVIDIA H100 — sm_90 / CUDA 13 |
 
 Both images are built from the same source revision by the same `repo/Dockerfile`. Build either
-with `build_image.sh`; it auto-detects the vendor, or set it explicitly:
+with `docs/build_image.sh`; it auto-detects the vendor, or set it explicitly:
 
 ```bash
+cd docs
 TARGET=amd    IMAGE_TAG=mi355-v1.7 ./build_image.sh
 TARGET=nvidia IMAGE_TAG=h100-v1.5  ./build_image.sh
 ```
@@ -273,7 +274,7 @@ The client is a thin HTTP job-submitter — multi-GPU behaviour is a property of
 deployment. Choosing `--distribution_strategy`: `ddp` is fine at ~0.6B and OOMs at 32B; from a few
 billion parameters upwards use `pytorch_fsdp` (FSDP2, also the only sharded strategy with HSDP via
 `hsdp_shard_size`). Each strategy is bit-reproducible against itself; the reference loss values
-are in `DOCKER_IMAGE_MI355.md` §4.
+are in `docs/DOCKER_IMAGE_MI355.md` §4.
 
 ## Backend internals (vendored `ml/`)
 
