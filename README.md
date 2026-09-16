@@ -32,10 +32,10 @@ evaluation, open-weight checkpoints, and runnable infrastructure recipes.
 
 OTel has evolved in three stages:
 
-| Stage | Objective | What changed |
-|---|---|---|
-| **OTel 1.0** | Establish a shared telecom training and evaluation foundation | Released datasets and model families for retrieval, reranking, context-grounded generation, classification, and abstention |
-| **OTel 2.0** | Train telecom knowledge more deeply and at much larger scale | Expanded to a 31B model, broader instruction and direct-Q&A data, and a hundreds-of-billions-of-tokens training mixture |
+| Stage               | Objective                                                        | What changed                                                                                                                                                                                                    |
+| ------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **OTel 1.0**        | Establish a shared telecom training and evaluation foundation    | Released datasets and model families for retrieval, reranking, context-grounded generation, classification, and abstention                                                                                      |
+| **OTel 2.0**        | Train telecom knowledge more deeply and at much larger scale     | Expanded to a 31B model, broader instruction and direct-Q&A data, and a hundreds-of-billions-of-tokens training mixture                                                                                         |
 | **Toward OTel 2.5** | Make the family more current, capable, efficient, and deployable | Address the current limitations documented in the OTel 2.0 model card, including gaps in evaluation, data coverage, telecom-specific tools, operational validation, languages, modalities, and hardware support |
 
 The progression is not simply *small model -> larger model*. It is **shared foundation
@@ -82,17 +82,18 @@ workloads.
 
 ### Recommended starting points
 
-| Goal | Start here |
-|---|---|
-| Chat SFT, DPO, or GRPO | `training/llm/deepspeed` |
-| Standard bi-encoder training | `training/embedding/sentence_transformers` |
-| Cross-encoder reranking | `training/reranker/sentence_transformers` |
-| Multi-class telecom classification | `training/classification/deepspeed` |
-| Scalable cross-vendor training deployment | `training/llm/scalarlm` |
-| Production-oriented serving | `inference/vllm` |
-| Correctness baseline | `inference/transformers` |
-| Local or GGUF deployment | `inference/llamacpp` or `inference/ollama` |
-| Local API with reranking | `inference/lemonade` |
+| Goal                                      | Start here                                 |
+| ----------------------------------------- | ------------------------------------------ |
+| Chat SFT, DPO, or GRPO                    | `training/llm/deepspeed`                   |
+| Standard bi-encoder training              | `training/embedding/sentence_transformers` |
+| Cross-encoder reranking                   | `training/reranker/sentence_transformers`  |
+| Multi-class telecom classification        | `training/classification/deepspeed`        |
+| Scalable cross-vendor training deployment | `training/llm/scalarlm`                    |
+| Production-oriented serving               | `inference/vllm`                           |
+| Correctness baseline                      | `inference/transformers`                   |
+| Local or GGUF deployment                  | `inference/llamacpp` or `inference/ollama` |
+| Local API with reranking                  | `inference/lemonade`                       |
+| Apple silicon (Mac) inference             | `inference/mlx`                            |
 
 ## Repository Map
 
@@ -112,7 +113,8 @@ workloads.
 |   |-- ollama/               # LLM and embedding
 |   |-- tei/                  # Embedding
 |   |-- ktransformers/        # CPU-GPU hybrid MoE serving
-|   `-- tensorrtllm/          # NVIDIA LLM serving
+|   |-- tensorrtllm/          # NVIDIA LLM serving
+|   `-- mlx/                  # Apple silicon (Metal) LLM, embedding, reranker
 `-- docs/                     # Hardware platform notes (MI355X and H100) plus project coverage
 ```
 
@@ -122,35 +124,36 @@ the workloads beneath it.
 
 ## Training Frameworks
 
-| Workload | Available recipes |
-|---|---|
-| LLM | DeepSpeed, standalone DeepSpeed, Unsloth, PEFT, FSDP2, Lightning, Composer, LLM Foundry, Axolotl, LLaMA-Factory, RapidFire AI, Red Hat OSFT, Ray, verl, OpenRLHF, Megatron-LM, TorchTitan, TorchTune, NVIDIA NeMo, AMD Primus, ScalarLM |
-| Embedding | Sentence Transformers, Tevatron, PyLate |
-| Reranking | Sentence Transformers, FlagEmbedding |
-| Classification | DeepSpeed |
+| Workload       | Available recipes                                                                                                                                                                                                                       |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| LLM            | DeepSpeed, standalone DeepSpeed, Unsloth, PEFT, FSDP2, Lightning, Composer, LLM Foundry, Axolotl, LLaMA-Factory, RapidFire AI, Red Hat OSFT, Ray, verl, OpenRLHF, Megatron-LM, TorchTitan, TorchTune, NVIDIA NeMo, AMD Primus, ScalarLM |
+| Embedding      | Sentence Transformers, Tevatron, PyLate                                                                                                                                                                                                 |
+| Reranking      | Sentence Transformers, FlagEmbedding                                                                                                                                                                                                    |
+| Classification | DeepSpeed                                                                                                                                                                                                                               |
 
 ## Inference Stacks
 
-| Stack | LLM | Embedding | Reranker | Best fit |
-|---|:---:|:---:|:---:|---|
-| vLLM | Yes | Yes | Yes | Default high-throughput server |
-| SGLang | Yes | Yes | Yes | Structured and high-performance serving |
-| Transformers | Yes | Yes | Yes | Reference implementation and debugging |
-| llama.cpp | Yes | Yes | Yes | GGUF and portable local inference |
-| Lemonade | Yes | Yes | Yes | One local API across workloads |
-| Ollama | Yes | Yes | No | Simple local model workflows |
-| TEI | No | Yes | Limited | Dedicated embedding service |
-| KTransformers | MoE | No | No | CPU-GPU expert offload on supported systems |
-| TensorRT-LLM | Yes | No | No | NVIDIA-specific optimized serving |
+| Stack         |  LLM  | Embedding | Reranker | Best fit                                                      |
+| ------------- | :---: | :-------: | :------: | ------------------------------------------------------------- |
+| vLLM          |  Yes  |    Yes    |   Yes    | Default high-throughput server                                |
+| SGLang        |  Yes  |    Yes    |   Yes    | Structured and high-performance serving                       |
+| Transformers  |  Yes  |    Yes    |   Yes    | Reference implementation and debugging                        |
+| llama.cpp     |  Yes  |    Yes    |   Yes    | GGUF and portable local inference                             |
+| Lemonade      |  Yes  |    Yes    |   Yes    | One local API across workloads                                |
+| Ollama        |  Yes  |    Yes    |    No    | Simple local model workflows                                  |
+| TEI           |  No   |    Yes    | Limited  | Dedicated embedding service                                   |
+| KTransformers |  MoE  |    No     |    No    | CPU-GPU expert offload on supported systems                   |
+| TensorRT-LLM  |  Yes  |    No     |    No    | NVIDIA-specific optimized serving                             |
+| MLX           |  Yes  |    Yes    |   Yes    | Apple silicon: served LLM, in-process embedding and reranking |
 
 ## Hardware Support
 
-| Platform | Status |
-|---|---|
+| Platform                           | Status                                                                                                                                                      |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **AMD Instinct MI355X** (ROCm 7.2) | Training and inference. TensorRT-LLM is NVIDIA-only; the KTransformers ROCm kernel path works but its serving layer is blocked by CUDA-pinned dependencies. |
-| **NVIDIA H100** (CUDA 13) | Training and inference. `training/llm/primus` is AMD-only by design. |
-| **Apple silicon** | Selected paths via MPS, Metal, MLX, and CPU backends — confirm support in the recipe README first. |
-| **Intel hardware** | Selected paths via XPU, SYCL, AMX, and CPU backends — support varies by framework and device. |
+| **NVIDIA H100** (CUDA 13)          | Training and inference. `training/llm/primus` is AMD-only by design.                                                                                        |
+| **Apple silicon**                  | Inference through `inference/mlx`. Training paths via MPS/CPU are selected and unverified — confirm support in the recipe README first.                     |
+| **Intel hardware**                 | Selected paths via XPU, SYCL, AMX, and CPU backends — support varies by framework and device.                                                               |
 
 Not every framework supports every platform. Confirm the exact device and framework
 combination in the recipe README.
@@ -184,12 +187,12 @@ examples covering 3GPP, GSMA, O-RAN, IETF RFCs, academic papers, industry white 
 Wikipedia, and web-derived telecom content. Released datasets contain derived examples
 rather than copies of the raw source documents.
 
-| Dataset | Purpose | Core fields |
-|---|---|---|
-| [OTel-LLM](https://huggingface.co/datasets/farbodtavakkoli/OTel-LLM) | Context-grounded instruction tuning | `prompt`, `completion`, abstention and chunk metadata |
-| [OTel-Embedding](https://huggingface.co/datasets/farbodtavakkoli/OTel-Embedding) | Bi-encoder retrieval with hard negatives | `anchor`, `positive`, `negative_1` ... `negative_5` |
-| [OTel-Reranker](https://huggingface.co/datasets/farbodtavakkoli/OTel-Reranker) | Cross-encoder reranking | `sentence_0`, `sentence_1`, `label` |
-| [OTel-Safety](https://huggingface.co/datasets/farbodtavakkoli/OTel-Safety) | Abstention when context is insufficient | `prompt`, `completion`, abstention and chunk metadata |
+| Dataset                                                                          | Purpose                                  | Core fields                                           |
+| -------------------------------------------------------------------------------- | ---------------------------------------- | ----------------------------------------------------- |
+| [OTel-LLM](https://huggingface.co/datasets/farbodtavakkoli/OTel-LLM)             | Context-grounded instruction tuning      | `prompt`, `completion`, abstention and chunk metadata |
+| [OTel-Embedding](https://huggingface.co/datasets/farbodtavakkoli/OTel-Embedding) | Bi-encoder retrieval with hard negatives | `anchor`, `positive`, `negative_1` ... `negative_5`   |
+| [OTel-Reranker](https://huggingface.co/datasets/farbodtavakkoli/OTel-Reranker)   | Cross-encoder reranking                  | `sentence_0`, `sentence_1`, `label`                   |
+| [OTel-Safety](https://huggingface.co/datasets/farbodtavakkoli/OTel-Safety)       | Abstention when context is insufficient  | `prompt`, `completion`, abstention and chunk metadata |
 
 The OTel 1.0 pipeline reduced roughly 1.1 million raw examples to 326,767
 higher-confidence examples through heuristic and semantic filtering, reranking,
@@ -210,15 +213,15 @@ The complete model roster is available in the
 [reranker](https://huggingface.co/collections/farbodtavakkoli/otel-reranker) collections.
 Representative releases include:
 
-| Model | Role | Public result or status |
-|---|---|---:|
+| Model                                                                             | Role                                   |                     Public result or status |
+| --------------------------------------------------------------------------------- | -------------------------------------- | ------------------------------------------: |
 | [OTel 2.0 LLM 31B IT](https://huggingface.co/farbodtavakkoli/OTel-2.0-LLM-31B-IT) | Large-scale domain-adapted telecom LLM | Comprehensive public evaluation forthcoming |
-| [OTel-LLM-E4B-IT](https://huggingface.co/farbodtavakkoli/OTel-LLM-E4B-IT) | Context-grounded generation | 91.7% +/- 0.4 correctness |
-| [OTel-LLM-8B-A1B-IT](https://huggingface.co/farbodtavakkoli/OTel-LLM-8B-A1B-IT) | Mid-size context-grounded generation | 88.4% +/- 0.5 correctness |
-| [OTel-Embedding-300M](https://huggingface.co/farbodtavakkoli/OTel-Embedding-300M) | Efficient dense retrieval | 90.9% +/- 0.5 NDCG@10 |
-| [OTel-Embedding-8B](https://huggingface.co/farbodtavakkoli/OTel-Embedding-8B) | Highest reported OTel retrieval score | 93.5% +/- 0.3 NDCG@10 |
-| [OTel-Reranker-0.6B](https://huggingface.co/farbodtavakkoli/OTel-Reranker-0.6B) | Efficient cross-encoder reranking | 0.944 +/- 0.006 MRR@10 |
-| [OTel-Reranker-8B](https://huggingface.co/farbodtavakkoli/OTel-Reranker-8B) | Highest reported OTel reranking score | 0.952 +/- 0.004 MRR@10 |
+| [OTel-LLM-E4B-IT](https://huggingface.co/farbodtavakkoli/OTel-LLM-E4B-IT)         | Context-grounded generation            |                   91.7% +/- 0.4 correctness |
+| [OTel-LLM-8B-A1B-IT](https://huggingface.co/farbodtavakkoli/OTel-LLM-8B-A1B-IT)   | Mid-size context-grounded generation   |                   88.4% +/- 0.5 correctness |
+| [OTel-Embedding-300M](https://huggingface.co/farbodtavakkoli/OTel-Embedding-300M) | Efficient dense retrieval              |                       90.9% +/- 0.5 NDCG@10 |
+| [OTel-Embedding-8B](https://huggingface.co/farbodtavakkoli/OTel-Embedding-8B)     | Highest reported OTel retrieval score  |                       93.5% +/- 0.3 NDCG@10 |
+| [OTel-Reranker-0.6B](https://huggingface.co/farbodtavakkoli/OTel-Reranker-0.6B)   | Efficient cross-encoder reranking      |                      0.944 +/- 0.006 MRR@10 |
+| [OTel-Reranker-8B](https://huggingface.co/farbodtavakkoli/OTel-Reranker-8B)       | Highest reported OTel reranking score  |                      0.952 +/- 0.004 MRR@10 |
 
 The numeric results above are for OTel 1.0 models on held-out OTel evaluation partitions.
 LLM correctness measures answers generated from retrieved context and must not be
@@ -272,14 +275,14 @@ embeddings = model.encode(sentences, normalize_embeddings=True)
 
 ## Documentation
 
-| Document | Contents |
-|---|---|
-| [`docs/mi355x_training_notes.md`](docs/mi355x_training_notes.md) | ROCm training lessons, scaling, and failure modes |
-| [`docs/mi355x_inference_notes.md`](docs/mi355x_inference_notes.md) | ROCm serving lessons and FP8 findings |
-| [`docs/h100_training_notes.md`](docs/h100_training_notes.md) | CUDA training lessons and the ROCm→CUDA reversals |
-| [`docs/h100_inference_notes.md`](docs/h100_inference_notes.md) | CUDA serving lessons and TensorRT-LLM/SGLang findings |
-| [`docs/OTel-2.0-blogs.md`](docs/OTel-2.0-blogs.md) · [`docs/OTel-1.0-media-coverage.md`](docs/OTel-1.0-media-coverage.md) | Organizational and independent coverage of the project |
-| Each recipe README (`readme_<framework>.md` under `training/`, `README.md` under `inference/`) | Exact installation, smoke and full runs, arguments, outputs, and platform status |
+| Document                                                                                                                  | Contents                                                                         |
+| ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| [`docs/mi355x_training_notes.md`](docs/mi355x_training_notes.md)                                                          | ROCm training lessons, scaling, and failure modes                                |
+| [`docs/mi355x_inference_notes.md`](docs/mi355x_inference_notes.md)                                                        | ROCm serving lessons and FP8 findings                                            |
+| [`docs/h100_training_notes.md`](docs/h100_training_notes.md)                                                              | CUDA training lessons and the ROCm→CUDA reversals                                |
+| [`docs/h100_inference_notes.md`](docs/h100_inference_notes.md)                                                            | CUDA serving lessons and TensorRT-LLM/SGLang findings                            |
+| [`docs/OTel-2.0-blogs.md`](docs/OTel-2.0-blogs.md) · [`docs/OTel-1.0-media-coverage.md`](docs/OTel-1.0-media-coverage.md) | Organizational and independent coverage of the project                           |
+| Each recipe README (`readme_<framework>.md` under `training/`, `README.md` under `inference/`)                            | Exact installation, smoke and full runs, arguments, outputs, and platform status |
 
 ## Responsible Use and Limitations
 

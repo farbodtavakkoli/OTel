@@ -1,0 +1,17 @@
+# Shared environment for inference/mlx (Python 3.12) -- one venv for all three leaves
+# (llm, embedding, reranker) on Apple silicon via MLX / Metal. No torch, no CUDA/ROCm.
+#
+#   cd inference/mlx
+#   python3.12 -m venv .env_mlx && source .env_mlx/bin/activate
+#   pip install -r requirements.txt
+#
+# mlx-lm serves the LLM (OpenAI-compatible HTTP) and scores the reranker in-process;
+# mlx-embeddings runs the embedding model in-process. All three run on the GPU through
+# Metal with unified memory -- there is no device selection and no VRAM separate from RAM.
+mlx==0.32.2
+mlx-lm==0.31.3
+mlx-embeddings==0.1.0        # embedding leaf. See the "Known fix" in embedding/README.md.
+huggingface_hub==1.31.0
+requests==2.34.2
+python-dotenv==1.2.3
+numpy==2.5.3
