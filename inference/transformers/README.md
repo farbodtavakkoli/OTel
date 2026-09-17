@@ -1,71 +1,58 @@
 # `inference/transformers` — Transformers / sentence-transformers baseline
 
-The **correctness baseline** for the inference stacks: plain PyTorch + HF Transformers +
-sentence-transformers, no serving engine. Every other stack's output is compared against
-the reference artifacts these folders produce. Leaves: [`llm/`](llm/) ·
-[`embedding/`](embedding/) · [`reranker/`](reranker/).
+The correctness baseline for the inference stacks: plain PyTorch + HF Transformers +
+sentence-transformers, no serving engine. Every other stack's output is diffed against the
+reference artifacts these leaves write to `$OUTPUT_DIR/inference_*_transformers/`. Use a
+serving stack (vLLM, SGLang, llama.cpp) for throughput.
 
-| Leaf | Model | Status |
-|---|---|---|
-| [`llm/`](llm/) | `Qwen/Qwen3.8-27B-FP8` | **works — FP8 loaded natively** (no BF16 fallback), single-GPU and 2-GPU `device_map` |
-| [`embedding/`](embedding/) | `google/embeddinggemma-300m` | **works** — reference vectors saved for cross-stack comparison |
-| [`reranker/`](reranker/) | `Qwen/Qwen3-Reranker-0.6B` | **works** — `CrossEncoder` scores, reference artifact saved |
+**Hardware:** AMD MI355X (gfx950, ROCm 7.2) · NVIDIA H100 80GB (CUDA 13)
 
-Reference artifacts (generated text, embedding vectors, rerank scores) are written under
-`$OUTPUT_DIR/inference_*_transformers/` and are what the other stacks diff against.
+## Leaves
 
-## Install — AMD / ROCm
+| Leaf | Model |
+|---|---|
+| [`llm/`](llm/) | `Qwen/Qwen3.8-27B-FP8` — FP8 loads natively, single-GPU or `--device_map auto` |
+| [`embedding/`](embedding/) | `google/embeddinggemma-300m` — reference vectors |
+| [`reranker/`](reranker/) | `Qwen/Qwen3-Reranker-0.6B` — `CrossEncoder` scores |
+
+## Setup
+
+One venv at this stack root serves all three leaves.
+
+NVIDIA / CUDA 13:
 
 ```bash
-# Set these to suit your machine
-export OUTPUT_DIR=/path/to/outputs     # inference reference artifacts
-export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+cd inference/transformers
+python3 -m venv .env_transformers && source .env_transformers/bin/activate
+pip install torch==2.11.0          # the PyPI wheel is the CUDA 13 build
+pip install -r requirements.txt
+python -c "import torch;print(torch.__version__, torch.version.cuda)"   # 2.11.0 13.0
+```
 
+AMD / ROCm 7.2:
+
+```bash
 cd inference/transformers
 python3 -m venv .env_transformers && source .env_transformers/bin/activate
 pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/rocm7.2
 pip install -r requirements.txt
+python -c "import torch;print(torch.cuda.is_available(), torch.version.hip)"   # True 7.2.x
 ```
 
-One venv serves all three leaves; build it from this requirements file. Never install
-flash-attn on ROCm — the attention path is `sdpa`.
+Install torch (and `torchvision`, pinned) first on both platforms so the requirements
+install does not re-resolve it. Do not install `flash-attn`. On CUDA add
+`--index-url https://download.pytorch.org/whl/cu130` if you want the `+cu130` tag.
 
-## Environment & secrets
-
-Scripts load `dev.env` from their own folder (leaves symlink the repo root:
-`ln -sf ../../../dev.env dev.env`). `google/embeddinggemma-300m` is gated — the token is
-required for the first download.
-
-## Install — NVIDIA / CUDA 13
+## Environment
 
 ```bash
-cd inference/transformers
-python3 -m venv .env_transformers && source .env_transformers/bin/activate
-pip install torch==2.11.0          # CUDA 13 build from PyPI; no --index-url needed
-pip install -r requirements.txt    # the torch pin is already satisfied
-python -c "import torch;print(torch.__version__, torch.version.cuda)"   # 2.11.0 13.0
+export HF_HOME=/path/to/hf_cache       # model cache, large volume
+export OUTPUT_DIR=/path/to/outputs     # reference artifacts
 ```
 
-One venv serves all three leaves (offline: `HF_HOME=$HF_HOME HF_HUB_OFFLINE=1
-TRANSFORMERS_OFFLINE=1`). The PyPI `torch==2.11.0` wheel is a CUDA 13 build, so the pin in
-requirements holds here as it does on ROCm; install torch first so the requirements install
-does not re-resolve it. Add `--index-url https://download.pytorch.org/whl/cu130` if you want
-the `+cu130` local version tag. Never install flash-attn here either — there is no prebuilt
-cu130 wheel; all three leaves run `sdpa`.
+Each leaf loads `dev.env` from its own folder: `ln -sf ../../../dev.env dev.env`. It must
+supply `HF_TOKEN` — `google/embeddinggemma-300m` is gated. Offline runs (cache already
+populated): `HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1`.
 
-## Known fix — reranker pair template
-
-The reranker leaf needs one code fix, enabled by default via `--fix_pair_template`: a bare
-cached `Qwen/Qwen3-Reranker-0.6B` checkpoint carries only the generic Qwen3 *generation* chat
-template, and sentence-transformers **5.7.0** refuses a template that cannot render the
-`query`/`document` pair roles, so `predict()` raises `ValueError`. The script installs a
-Query/Document yes-no template when the loaded one cannot carry both roles.
-
-## Hardware support
-
-Works on **AMD MI355X (gfx950, ROCm 7.2)** — all three workloads, including a native FP8 load
-of the 27B checkpoint (OCP E4M3FN), single-GPU and 2-GPU `device_map` — and on
-**NVIDIA H100 80GB (CUDA 13)** single-GPU with `torch 2.13.0+cu130` and attn `sdpa`.
-
-For multi-GPU use `--device_map auto` (llm) or `--devices cuda:0,cuda:1`
+For multi-GPU pass `--device_map auto` (llm) or `--devices cuda:0,cuda:1`
 (embedding/reranker data-parallel).

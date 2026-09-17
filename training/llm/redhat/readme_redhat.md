@@ -1,115 +1,127 @@
-# training/llm/redhat — OSFT continual fine-tuning via Red Hat's training_hub
+# `training/llm/redhat` — OSFT continual fine-tuning via Red Hat's training_hub
 
-## Overview & when to use
+Continual fine-tuning with **OSFT** (Orthogonal Subspace Fine-Tuning) through Red Hat's
+[`training_hub`](https://github.com/Red-Hat-AI-Innovation-Team/training_hub), single node,
+multi-GPU. OSFT adapts a base or instruct model to a new domain — e.g. observability / OTel
+telemetry — **without catastrophic forgetting**, so pick it over the SFT recipes in this repo
+when you need to add domain knowledge without degrading general capability and without replay
+or data mixing. Works with any HF causal LM that training_hub's dependencies support.
 
-Continual fine-tuning with **OSFT** (Orthogonal Subspace Fine-Tuning) via Red Hat's [`training_hub`](https://github.com/Red-Hat-AI-Innovation-Team/training_hub), on a single-node multi-GPU setup. OSFT adapts a base or instruct model to a new domain — e.g. observability / OTel telemetry — **without catastrophic forgetting**, which makes it ideal for:
+`train_llm_redhat.py` wraps `training_hub.osft` with argument logging, an optional live
+speed/ETA monitor, and an EOS-override staging step.
 
-- Adapting a base model to specialized domains,
-- Adding new knowledge without degrading general capabilities,
-- Fine-tuning without complex replay mechanisms or data mixing.
+**Hardware:** AMD MI355X (ROCm 7.2.4, `torch==2.11.0+rocm7.2`) at 2 and 8 GPUs · NVIDIA H100
+80GB (CUDA 13.0, `torch==2.11.0+cu130`). Same code on both; the install differs and ROCm needs
+two extra steps.
 
-Works with any HuggingFace causal LM supported by training_hub's dependencies. `train_llm_redhat.py` wraps `training_hub.osft` with argument logging, an optional live speed/ETA monitor, and an EOS-override staging step for models whose chat template ends turns with a non-default token.
+## Files
 
-Files in this folder:
-- `train_llm_redhat.py` — the OSFT training entrypoint (wraps `training_hub.osft`).
-- `speed_monitor.py` — optional live speed/ETA reporter (`--speed-steps N`).
+- `train_llm_redhat.py` — the OSFT training entrypoint.
+- `speed_monitor.py` — live speed/ETA reporter (`--speed-steps N`).
 - `check_memory.py` — post-hoc run summary (peak memory, step, duration, loss plot).
-- `data/OTel_LLM_sample_10.jsonl` — 10-row sample dataset (default `--data-path`).
+- `data/OTel_LLM_sample_10.jsonl` — 10-row sample, the default `--data-path`.
 - `requirements_redhat.txt` — this folder's direct deps (training_hub manages the rest).
 
-> **Hardware coverage:** single node, **AMD MI355X (ROCm 7.2.4)** at 2 and 8 GPUs with `torch==2.11.0+rocm7.2`, and **NVIDIA H100 80GB (CUDA 13.0)** at 1 GPU with `torch==2.11.0+cu130`. OSFT training runs on both, with two ROCm-only workarounds that are *reversed* on CUDA — see the platform notes under Install. Multi-GPU on NVIDIA and multi-node (exposed upstream via `nnodes`/`rdzv_*`) are not covered here.
+Python 3.12+, one venv for this folder.
 
-## Install
+## Setup
 
-`training_hub` is on PyPI (upstream: `pip install training-hub`; the base package installs without the CUDA-only GPU extras — see github.com/Red-Hat-AI-Innovation-Team/training_hub). Use Python 3.12+ in a `venv`/`uv` environment:
+### NVIDIA (CUDA 13)
 
-```bash
-python3.12 -m venv ~/.venv && source ~/.venv/bin/activate
-```
-
-### NVIDIA (CUDA)
-
-Install in order — upstream recommends sequential installs because the `[grpo]` extras constrain torch/vllm/transformers and can conflict with `[cuda]` if solved together:
+Install sequentially — the `[grpo]` extras constrain torch/vllm/transformers and can conflict
+with `[cuda]` if solved together. Expect `training-hub[grpo,lora]` to pull torch back to
+`2.11.0+cu130`; keep it, that respects training_hub's pins.
 
 ```bash
+cd training/llm/redhat
+python3.12 -m venv .env_redhat && source .env_redhat/bin/activate
+
 export CUDA_HOME=/usr/local/cuda-13.0
 export PATH=$CUDA_HOME/bin:$PATH
 export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
 
 pip install torch torchvision
 pip install training-hub[grpo,lora]
-pip install training-hub[cuda] --no-build-isolation   # builds flash-attn — the slow/finicky step
-pip install "kernels>=0.12,<0.13"                     # REQUIRED: undo the kernels 0.16 that [cuda] pulls
-pip install -r requirements_redhat.txt                # this folder's extra direct deps
+pip install training-hub[cuda] --no-build-isolation   # builds flash-attn via nvcc; the slow step
+pip install "kernels>=0.12,<0.13"                     # REQUIRED, see below
+pip install -r requirements_redhat.txt
 ```
 
-The flash-attn build in the `[cuda]` step is the one most likely to give trouble — it
-compiles flash-attn, mamba-ssm and causal-conv1d via nvcc, and `CUDA_HOME` must point at your
-toolkit before you start it. To skip that build, use the SDPA route instead:
-`pip install "training-hub[grpo,lora]"` + `pip install "liger-kernel>=0.5.10"` +
+**The `kernels` pin is not optional.** `training-hub[cuda]` transitively pulls `kernels 0.16.0`,
+but `transformers 5.5.0` pins `kernels<0.13,>=0.12.0`, and 0.16 rejects the
+`LayerRepository(...)` call transformers makes with
+`ValueError: Either a revision or a version must be specified` — crashing *every* transformers
+import. `0.12.3` restores it.
+
+flash-attn builds and engages on CUDA, so **do not** set `TESTING=true` here; mini-trainer
+selects `flash_attention_2` on its own. To skip the nvcc build entirely, use the SDPA route
+instead: `pip install "training-hub[grpo,lora]"` + `pip install "liger-kernel>=0.5.10"` +
 `export TESTING=true`, exactly as on ROCm.
 
-**The `kernels` pin is not optional.** `training-hub[cuda]` transitively pulls `kernels 0.16.0`,
-but `transformers 5.5.0` pins `kernels<0.13,>=0.12.0` and its `integrations/hub_kernels.py`
-builds `LayerRepository(repo_id=…, layer_name=…)` with no `revision`/`version` — which
-`kernels 0.16` rejects with `ValueError: Either a revision or a version must be specified`,
-crashing *every* import of transformers. ROCm never hits this because it skips the `[cuda]`
-extra.
+### AMD / ROCm 7.2
 
-**Expect `training-hub[grpo,lora]` to downgrade torch.** A base `pip install torch` lands
-`torch 2.13.0+cu130`; training-hub's `torch>=2.6` pin resolves back to **`torch 2.11.0+cu130`**
-— still CUDA 13, `torch.cuda.is_available()` True. The `[cuda]` extra does not clobber it
-further. Keep 2.11.0+cu130 to respect training_hub's pins; no force-reinstall is needed.
-
-### AMD (ROCm)
-
-Same code path; only the install differs. Skip the `[cuda]` extra entirely — it exists to
-build CUDA flash-attn, and `CUDA_HOME` is not applicable:
+Skip the `[cuda]` extra — it exists to build CUDA flash-attn. Never pip-install flash-attn on
+ROCm.
 
 ```bash
 cd training/llm/redhat
 python3 -m venv .env_redhat && source .env_redhat/bin/activate
 pip install torch==2.11.0 torchvision --index-url https://download.pytorch.org/whl/rocm7.2
 pip install "training-hub[grpo,lora]"      # keeps the ROCm torch (it requires only torch>=2.6)
-pip install "liger-kernel>=0.5.10"         # REQUIRED on ROCm — see quirk 1 below
+pip install "liger-kernel>=0.5.10"         # REQUIRED: the script sets use_liger=True, and
+                                           # upstream ships liger only in the [cuda] extra
 pip install -r requirements_redhat.txt
 ```
 
-Then export `TESTING=true` before every run (quirk 2 below). **Do not pip-install
-flash-attn on ROCm.**
+**Export `TESTING=true` before every run on ROCm.** mini-trainer 0.8.1 hard-requires
+`import flash_attn` for standard causal LMs and only falls back to SDPA when `TESTING=true`.
+PyTorch ROCm's SDPA uses AOTriton flash attention on gfx950.
 
-Follow the upstream repo's README if the install steps have changed.
-
-### Either way
+### Both platforms
 
 ```bash
-# Set these to suit your machine
-export OUTPUT_DIR=/path/to/outputs     # checkpoints / training artifacts
-export HF_HOME=/path/to/hf_cache       # Hugging Face model cache
+ln -sf ../../../dev.env dev.env                 # HF_TOKEN, for gated models
+export OUTPUT_DIR=/path/to/outputs              # checkpoints / training artifacts
+export HF_HOME=/path/to/hf_cache                # Hugging Face model cache
+export HF_DATASETS_CACHE=/dev/shm/hf_datasets   # keep .arrow writes off a network mount
+export RDZV_ENDPOINT=127.0.0.1:29647            # move torchrun off the default :29500
+
+python -c "from training_hub import osft; print('training_hub OK')"
 ```
 
-> **Redirect the HF *datasets* cache off a network mount.** With `HF_HOME` on a shared
-> network mount, `datasets` tries to write its `cache-*.arrow` under `$HF_HOME/datasets/...`
-> and dies with `OSError: [Errno 1] Operation not permitted`. Set
-> `HF_DATASETS_CACHE=/dev/shm/...` (or any writable local dir); `HF_HOME` can stay on the
-> mount for read-only model loads.
+`HF_DATASETS_CACHE` is not optional when `HF_HOME` is on a shared network mount: `datasets`
+writes `cache-*.arrow` under `$HF_HOME/datasets/...` and dies with
+`OSError: [Errno 1] Operation not permitted`. `HF_HOME` itself can stay on the mount for
+read-only model loads.
 
-> **Move the rendezvous port on a shared machine.** `osft_params` defaults
-> `rdzv_endpoint` to `127.0.0.1:29500`, where a concurrent `torchrun` will collide. The
-> script reads `os.environ.get("RDZV_ENDPOINT", "127.0.0.1:29500")`, so
-> `export RDZV_ENDPOINT=127.0.0.1:<your-port>` moves it with no code edit.
+`train_llm_redhat.py` loads `dev.env` before importing training_hub, since
+transformers/datasets resolve tokens and cache locations at import time. Never commit a token.
 
-### Platform notes — AMD MI355X (ROCm 7.2.4)
+## Data
 
-**This path works with changes** — OSFT training via training_hub runs on MI355X /
-ROCm 7.2.4, provided you add the explicit `liger-kernel` install and `TESTING=true` (SDPA)
-described here. Covered at **2 and 8 GPUs** on gfx950, with no code edits and no requirements
-change between the two.
+`--data-path` is a JSONL file of chat conversations — one `{"messages": [...]}` per line, the
+format training_hub/instructlab expects. The bundled sample carries extra metadata columns
+(`flow`, `source_repo`, `source_id`, `source_spec_id`, `source_version`, `unmask`);
+training_hub keys on `messages` and tolerates the extras.
 
-Smoke command (bundled 10-row sample, 1 epoch = 5 steps):
+`--unmask-messages` (default on) trains on all turns; `--no-unmask-messages` gives standard SFT
+on assistant turns only.
+
+**EOS caveat.** instructlab keys label-unmasking on the tokenizer's `eos_token`. If the chat
+template closes the assistant turn with a *different* token, the terminator is never unmasked
+and the model never learns to stop. Gemma 4 closes turns with `<turn|>`, so pass
+`--eos-token "<turn|>"`; the script stages a copy of the model with the corrected EOS (weights
+symlinked, only tokenizer/config regenerated) and trains from that, leaving the base model
+untouched. Models whose template terminator already equals `eos_token` — e.g. LFM2's
+`<|im_end|>` — need no `--eos-token`, and the staging path (which downloads from the Hub) is
+skipped.
+
+## Run
+
+Smoke test on the bundled sample — small batch so 10 rows produce steps:
 
 ```bash
-export TESTING=true    # REQUIRED on ROCm — see quirk 2 below
+export TESTING=true          # ROCm only
 python3 train_llm_redhat.py \
   --model-path google/gemma-4-E4B-it \
   --ckpt-output-dir checkpoints_smoke \
@@ -117,232 +129,13 @@ python3 train_llm_redhat.py \
   --eos-token "<turn|>"
 ```
 
-**Expected output** — finite, decreasing loss; `rocm-smi` mid-run shows every rank active:
-
 ```
-Epoch 1: ──━━━━━━━━  20% │ 1/5 │ loss: 10.7442 │ lr: 5.00e-06 │ 112 tok/s
-Epoch 1: ────────── 100% │ 5/5 │ loss: 6.0593 │ lr: 4.77e-07 │ 2385 tok/s
+Epoch 1:  20% | 1/5 | loss: 10.7442 | lr: 5.00e-06 | 112 tok/s
+Epoch 1: 100% | 5/5 | loss: 6.0593  | lr: 4.77e-07 | 2385 tok/s
 Saved model at 10.0 samples in 162.99 seconds
 ```
 
-**Quirks found on ROCm (both required, neither in the generic AMD steps above):**
-
-1. **`liger-kernel` must be installed explicitly.** The script hardcodes
-   `use_liger=True`, but upstream packages liger only inside the CUDA-only `[cuda]`
-   extra, so the base install lacks it and mini-trainer raises at startup. liger is
-   Triton-based and runs fine on ROCm — `pip install "liger-kernel>=0.5.10"`.
-2. **`export TESTING=true` before running.** mini-trainer 0.8.1 hard-requires
-   `import flash_attn` for standard causal LMs and only falls back to SDPA when
-   `TESTING=true` (one code site, `mini_trainer/setup_model_for_training.py`). With no
-   flash-attn on ROCm this env var is the supported no-code-change route; PyTorch ROCm's
-   SDPA uses AOTriton flash attention on gfx950. (Models mini-trainer classifies as
-   SDPA-only — M-RoPE / timm-vision — don't need it.)
-3. Benign at import time: `torchao` prints `Failed to load ..._C_mxfp8...so` /
-   `_C_cutlass_90a...so` warnings (CUDA-only kernels); harmless on ROCm.
-4. `pip` resolves PyPI `triton 3.7.1` over the wheel-index `triton-rocm 3.6.0`; liger's
-   Triton kernels still compile and run on gfx950.
-5. Checkpoints are full models (an 8B one is ~16 GB) — point `--ckpt-output-dir` at a large
-   disk.
-
-#### 8-GPU run
-
-The recipe scales from 2 to all 8 MI355X GPUs with **no code edits** — but two
-environment/data changes are mandatory (a stale venv GPU pin, and a dataset large enough to
-feed 8 ranks). On a shared machine, run the whole job behind a machine-wide GPU mutex
-(`flock`) so it owns all 8 cards.
-
-```bash
-# inside the runner, AFTER `source .env_redhat/bin/activate`:
-export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7      # ← overrides any stale pin in bin/activate
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export TESTING=true                              # ROCm: SDPA instead of flash-attn
-python3 -c "import torch; assert torch.cuda.device_count()==8"
-
-python3 train_llm_redhat.py \
-  --model-path google/gemma-4-E4B-it \
-  --data-path  $OUT/data_rep_640.jsonl \
-  --ckpt-output-dir $OUT/ckpt8 --data-output-dir $OUT/data_output \
-  --num-epochs 1 --effective-batch-size 64 --nproc-per-node 8 \
-  --max-seq-len 4096 --max-tokens-per-gpu 8192 \
-  --eos-token "<turn|>" --seed 42 --speed-steps 2
-```
-
-**Parallelism.** mini-trainer wraps the model with **FSDP2**
-(`torch.distributed.fsdp.fully_shard`), launched by `torchrun` from the `osft_params`
-single-node block. mini-trainer batches by token budget (`max_tokens_per_gpu`) and derives
-gradient accumulation itself from `effective_batch_size` and the world size.
-
-**Expected output** (`--speed-steps 2`; the run's `training_metrics_0.jsonl` has the full series):
-
-```
-Epoch 1: ─━━━━━━━━━  10% │  1/10 │ loss: 10.8526 │ lr: 5.00e-06 │  5306 tok/s
-Epoch 1: ────━━━━━━  40% │  4/10 │ loss:  5.8742 │ lr: 3.97e-06 │ 37704 tok/s
-Epoch 1: ────────── 100% │ 10/10 │ loss:  4.8896 │ lr: 1.22e-07 │ 18575 tok/s
-Saved model at 640.0 samples in 167.21 seconds
-```
-
-Loss is finite and monotonically decreasing, `grad_norm` collapses, and OSFT itself runs:
-`Reconstructing OSFT weights, this may take a while...` over 294 OSFT parameters, with
-mini-trainer receiving `--osft --osft-unfreeze-rank-ratio=0.3 --osft-upcast-dtype=float32
---use-liger-kernels`.
-
-To confirm the 8 GPUs are yours on a shared box, sample `rocm-smi` **in-band** — inside the
-flock-held runner, so the sample cannot capture another job — and cross-check
-`rocm-smi --showpids` against `pgrep -af` in the same sample: you should see exactly 8
-`python3` holders, all `mini_trainer/train.py` children of `torchrun --nproc-per-node=8`,
-itself a child of your `train_llm_redhat.py` launcher.
-
-**What differs from the 2-GPU run:**
-
-1. **A venv's `bin/activate` may pin `HIP_VISIBLE_DEVICES` / `CUDA_VISIBLE_DEVICES` to a
-   subset** — a leftover from an earlier session. Sourcing the venv and passing
-   `--nproc-per-node 8` without re-exporting these silently runs on fewer GPUs (or fails
-   rendezvous). **Always re-export both after `source …/bin/activate`** and assert
-   `torch.cuda.device_count()`.
-2. **The bundled 10-row sample cannot feed 8 ranks.** Replicate it (e.g. ×64 → 640 rows)
-   **outside the repo**. Nothing is dropped by `max_seq_len=4096` filtering.
-3. `--effective-batch-size 64` (instead of 2) so the global batch divides across 8 ranks.
-4. Outputs redirected off the repo via `--ckpt-output-dir` / `--data-output-dir`; delete the
-   checkpoint afterwards.
-
-**Notes at 8 GPUs:**
-
-- **Checkpointing cannot be turned off from the CLI.** `osft_params` hardcodes
-  `checkpoint_at_epoch=True` and `save_final_checkpoint=True` (there is no flag), so even a
-  1-epoch smoke run writes a full `hf_format/samples_*`. Point `--ckpt-output-dir` at a big
-  disk and delete afterwards, or edit `osft_params` to disable both.
-- **Move the rendezvous port** with `RDZV_ENDPOINT` (see Install) if another `torchrun` may
-  be on `127.0.0.1:29500`.
-- No new packages and no pins change for the 8-GPU path — `requirements_redhat.txt` is
-  unchanged, and `TESTING=true` plus the explicit `liger-kernel` install are still required
-  exactly as at 2 GPUs.
-
-### Platform notes — NVIDIA H100 (CUDA 13.0)
-
-**This path works with changes.** OSFT training via training_hub runs on H100, and unlike
-ROCm the CUDA `[cuda]` extra **does build and engage flash-attn**, so `TESTING=true` is *not*
-needed — but that extra also drags in a `kernels` version that breaks the transformers import
-and must be pinned back (see [Install](#nvidia-cuda)). Covered single-GPU; multi-GPU on
-NVIDIA is not.
-
-**Model choice.** Any fully-cached model works; the smoke below uses `LiquidAI/LFM2.5-350M`
-(arch `lfm2`), which training_hub / mini-trainer / OSFT accept with no code change.
-**No `--eos-token` is needed for it:** LFM2's chat template closes turns with `<|im_end|>`,
-which already equals the tokenizer's `eos_token` (contrast Gemma 4's `<turn|>`), so the
-EOS-staging path — which would `snapshot_download` and fail offline — is correctly skipped.
-
-Smoke command (bundled sample, single GPU, port + GPU pinned for a shared machine;
-3 epochs to make the loss trend obvious on only ~9 unique rows):
-
-```bash
-export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1        # HF_HOME as exported above
-export HF_DATASETS_CACHE=/dev/shm/hf_datasets_cache   # keep datasets' .arrow cache off a network mount
-export CUDA_VISIBLE_DEVICES=7                          # your assigned free GPU
-export RDZV_ENDPOINT=127.0.0.1:29647                  # override the default :29500
-python3 train_llm_redhat.py \
-  --model-path LiquidAI/LFM2.5-350M \
-  --ckpt-output-dir /dev/shm/out/ckpt_smoke \
-  --data-output-dir /dev/shm/out/data_output \
-  --num-epochs 3 --effective-batch-size 2 --nproc-per-node 1 \
-  --max-seq-len 4096 --max-tokens-per-gpu 8192 \
-  --learning-rate 5e-6 --seed 42 --speed-steps 1
-```
-
-**Expected output** — finite, decreasing loss, as recorded in `training_metrics_0.jsonl`:
-
-```
-step  2 epoch 0 loss 5.0361 lr 4.95e-06 grad_norm 217.85
-step  5 epoch 0 loss 2.7385 lr 4.17e-06 grad_norm 60.16
-step 11 epoch 2 loss 1.5709 lr 1.25e-06 grad_norm 16.52
-OSFT Training completed successfully! Most recent checkpoint: .../hf_format/samples_30.0
-```
-
-A full HF checkpoint is written (delete it afterwards — see the checkpointing note above).
-To confirm residency on a shared node, sample `nvidia-smi -i <n>` in-band and check the
-training child of `python3 train_llm_redhat.py` is the VRAM holder — VRAM occupancy is the
-reliable signal, not `util%`.
-
-**flash-attn builds AND engages.** mini-trainer selects `flash_attention_2` on its own
-(flash_attn imports, so its gate passes) — **no `TESTING=true`**. The log shows FA2's
-"only supports fp16/bf16" info-warning because the model is loaded fp32 and the attention
-runs under bf16 autocast; training is unaffected.
-
-**Quirks on CUDA 13 (in addition to the ROCm ones above):**
-
-1. **`kernels` must be pinned to `<0.13`.** The `training-hub[cuda]` extra transitively
-   pulls **`kernels 0.16.0`**, but `transformers 5.5.0` pins `kernels<0.13,>=0.12.0` and
-   its `integrations/hub_kernels.py` builds `LayerRepository(repo_id=…, layer_name=…)` with
-   no `revision`/`version` — which `kernels 0.16` rejects with
-   `ValueError: Either a revision or a version must be specified`, crashing *every* import of
-   transformers. Fix: `pip install "kernels>=0.12,<0.13"` (lands 0.12.3). ROCm never hits
-   this because it skips the `[cuda]` extra, which is what drags `kernels` in.
-2. **Redirect the HF *datasets* cache off a network mount.** With `HF_HOME` on a shared
-   network mount, `datasets` tries to write its `cache-*.arrow` under
-   `$HF_HOME/datasets/...` and dies with `OSError: [Errno 1] Operation not permitted` (the
-   mount rejects the op). Set `HF_DATASETS_CACHE=/dev/shm/...` (or any writable local dir);
-   `HF_HOME` can stay on the mount for read-only model loads.
-3. **`RDZV_ENDPOINT` env hook.** `osft_params` previously hardcoded `rdzv_endpoint=127.0.0.1:29500`;
-   on a shared machine concurrent torchrun jobs collide on that port. The script now reads
-   `os.environ.get("RDZV_ENDPOINT", "127.0.0.1:29500")` — default behavior is unchanged; set
-   `RDZV_ENDPOINT=127.0.0.1:<your-port>` to move it. (This is the only code change; it is
-   NVIDIA-neutral and also helps the ROCm multi-tenant case.)
-4. **The flash-attn build** (flash-attn + mamba-ssm + causal-conv1d via nvcc) succeeds on
-   CUDA 13 with `CUDA_HOME` set and `--no-build-isolation`. To skip it,
-   `pip install "training-hub[grpo,lora]"` + `pip install "liger-kernel>=0.5.10"` +
-   `export TESTING=true` gives the SDPA path, as on ROCm.
-
-**Multi-GPU on NVIDIA is not covered here.** A multi-GPU pass uses `--nproc-per-node N`
-(mini-trainer wraps FSDP2 via `torchrun`), needs `--effective-batch-size` ≥ world size and a
-dataset large enough to feed N ranks (replicate the 10-row sample, exactly as in the MI355X
-8-GPU run), and should set `RDZV_ENDPOINT` to a free port.
-
-### Verify
-
-```bash
-python -c "from training_hub import osft; print('training_hub OK')"
-```
-
-## Environment & secrets
-
-Put a `dev.env` in this folder with your Hub token (needed for gated models):
-
-```
-HF_TOKEN=hf_xxxxxxxxxxxxxxxx
-```
-
-`train_llm_redhat.py` loads it via `load_dotenv("dev.env")` before the training_hub import, since transformers/datasets resolve tokens and cache locations at import time. Never commit `dev.env`.
-
-**Optional — HF cache on a RAM disk:** export before running if you want faster model loads:
-
-```bash
-export HF_HOME=/dev/shm/huggingface
-export HF_HUB_CACHE=$HF_HOME/hub
-```
-
-Make sure the RAM disk is large enough for your model; leave these unset to use the default `~/.cache/huggingface`.
-
-## Data
-
-`--data-path` is a JSONL file of chat conversations — one `{"messages": [...]}` per line, the format training_hub/instructlab expects. The bundled sample `data/OTel_LLM_sample_10.jsonl` (the default) follows this schema and carries extra metadata columns (`flow`, `source_repo`, `source_id`, `source_spec_id`, `source_version`, `unmask`) — some mostly null; training_hub's processing keys on `messages` and tolerates extras. Swap in your own data with `--data-path path/to/train.jsonl`.
-
-`--unmask-messages` (default on) trains on all turns; pass `--no-unmask-messages` for standard SFT (assistant turns only).
-
-**EOS caveat (important for Gemma 4):** instructlab keys label-unmasking on the tokenizer's `eos_token`. If the chat template closes the assistant turn with a *different* token, the terminator never gets unmasked and the model never learns to stop. Gemma 4 closes turns with `<turn|>` (not `<eos>`), so pass `--eos-token "<turn|>"`. The script then stages a copy of the model with the corrected EOS — weights symlinked, only tokenizer/config regenerated — and trains from that; the base model is never modified.
-
-## Run
-
-### Smoke test
-
-A quick end-to-end check on the bundled sample (small batch so 10 rows produce steps):
-
-```bash
-python3 train_llm_redhat.py \
-  --model-path <hf-model-id-or-path> \
-  --ckpt-output-dir checkpoints_smoke \
-  --num-epochs 1 --effective-batch-size 2 --nproc-per-node 1
-```
-
-### Full run
+Full run:
 
 ```bash
 nohup python3 train_llm_redhat.py \
@@ -359,49 +152,87 @@ nohup python3 train_llm_redhat.py \
 tail -f train_llm_redhat.log
 ```
 
-The run's exact arguments are recorded to `logs/<timestamp>/run_args.json`.
+### Scaling to 8 GPUs
+
+No code or requirements change. Three things must be right:
+
+```bash
+# AFTER `source .env_redhat/bin/activate` — a stale pin in bin/activate silently
+# runs you on fewer GPUs or fails rendezvous
+export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7      # ROCm
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export TESTING=true                              # ROCm
+python3 -c "import torch; assert torch.cuda.device_count()==8"
+
+python3 train_llm_redhat.py \
+  --model-path google/gemma-4-E4B-it \
+  --data-path  $OUTPUT_DIR/data_rep_640.jsonl \
+  --ckpt-output-dir $OUTPUT_DIR/ckpt8 --data-output-dir $OUTPUT_DIR/data_output \
+  --num-epochs 1 --effective-batch-size 64 --nproc-per-node 8 \
+  --max-seq-len 4096 --max-tokens-per-gpu 8192 \
+  --eos-token "<turn|>" --seed 42 --speed-steps 2
+```
+
+1. Re-export the device lists after sourcing the venv, and assert the count.
+2. The bundled 10-row sample cannot feed 8 ranks — replicate it (e.g. x64 to 640 rows) outside
+   the repo.
+3. Raise `--effective-batch-size` so the global batch divides across the world size.
+
+On a shared machine hold a machine-wide GPU mutex (`flock`) so the job owns all the cards.
+
+mini-trainer wraps the model with **FSDP2** (`torch.distributed.fsdp.fully_shard`), launched by
+`torchrun` from the `osft_params` single-node block. It batches by token budget
+(`max_tokens_per_gpu`) and derives gradient accumulation itself from `effective_batch_size` and
+the world size.
 
 ## Arguments
 
-Every flag, with defaults (`python train_llm_redhat.py --help` shows the same):
-
 | Flag | Default | Meaning |
 |---|---|---|
-| `--model-path` | *(required)* | Base/instruct model — HF id or local path. |
-| `--data-path` | `data/OTel_LLM_sample_10.jsonl` | Training JSONL. |
-| `--ckpt-output-dir` | *(required)* | Where checkpoints (`hf_format/samples_*`) are written. |
-| `--num-epochs` | 4 | Epochs. |
-| `--unfreeze-rank-ratio` | 0.3 | OSFT adaptation vs preservation (0.2–0.35 typical). |
-| `--effective-batch-size` | 128 | Global batch size (good for >10k-sample datasets). |
-| `--learning-rate` | 5e-6 | Learning rate. |
-| `--max-seq-len` | 4096 | Max sequence length in tokens. |
-| `--max-tokens-per-gpu` | 8192 | Lower on OOM (large/large-vocab models); raise with headroom. |
-| `--nproc-per-node` | 8 | Number of GPUs. |
-| `--data-output-dir` | `data_output` | Processed-data / EOS-staging dir — point at a RAM disk (e.g. `/dev/shm`) for speed. |
-| `--unmask-messages` / `--no-unmask-messages` | on | Train on all turns vs assistant-only (standard SFT). |
-| `--eos-token` | None | EOS override for data processing + checkpoint (see Data). |
-| `--seed` | 42 | Random seed. |
-| `--speed-steps` | 0 | Print a live speed/ETA report every N steps (0 = off). |
-| `--validation-split` | 0.0 | Held-out fraction, [0.0, 1.0); 0.0 disables validation. |
-| `--validation-frequency` | None | Validate every N steps — required when split > 0. |
-| `--save-best-val-loss` | off | Checkpoint whenever validation loss improves. |
+| `--model-path` | *(required)* | Base/instruct model — HF id or local path |
+| `--data-path` | `data/OTel_LLM_sample_10.jsonl` | Training JSONL |
+| `--ckpt-output-dir` | *(required)* | Where checkpoints (`hf_format/samples_*`) are written |
+| `--num-epochs` | 4 | Epochs |
+| `--unfreeze-rank-ratio` | 0.3 | OSFT adaptation vs preservation (0.2-0.35 typical) |
+| `--effective-batch-size` | 128 | Global batch size; must be >= world size |
+| `--learning-rate` | 5e-6 | Learning rate |
+| `--max-seq-len` | 4096 | Max sequence length in tokens |
+| `--max-tokens-per-gpu` | 8192 | Lower on OOM; raise with headroom |
+| `--nproc-per-node` | 8 | Number of GPUs |
+| `--data-output-dir` | `data_output` | Processed-data / EOS-staging dir; a RAM disk is faster |
+| `--unmask-messages` / `--no-unmask-messages` | on | All turns vs assistant-only |
+| `--eos-token` | None | EOS override for data processing + checkpoint (see Data) |
+| `--seed` | 42 | Random seed |
+| `--speed-steps` | 0 | Print a live speed/ETA report every N steps (0 = off) |
+| `--validation-split` | 0.0 | Held-out fraction, [0.0, 1.0); 0.0 disables validation |
+| `--validation-frequency` | None | Validate every N steps — required when split > 0 |
+| `--save-best-val-loss` | off | Checkpoint whenever validation loss improves |
 
 ## Output
 
-Checkpoints are written under `<ckpt-output-dir>/hf_format/samples_*` (plus `samples_*_best_val_loss` when `--save-best-val-loss` is set). On success the script prints the most recent checkpoint path. Run arguments land in `logs/<timestamp>/run_args.json`; the backend writes step metrics to `<ckpt-output-dir>/training_metrics_0.jsonl`.
+Checkpoints go to `<ckpt-output-dir>/hf_format/samples_*` (plus `samples_*_best_val_loss` with
+`--save-best-val-loss`); the script prints the most recent path on success. Run arguments land
+in `logs/<timestamp>/run_args.json`, and the backend writes step metrics to
+`<ckpt-output-dir>/training_metrics_0.jsonl`.
 
-## Monitoring
+Monitoring:
 
-- **Live (`--speed-steps N`)** — `speed_monitor.py` polls `training_metrics_0.jsonl` in the checkpoint dir and prints progress, per-step rate, ETA (epoch + total), peak memory, peak tokens/sec, and last validation loss. Steps-per-epoch is derived as `ceil(num_samples / effective_batch_size)`; the per-step rate comes from the wall-clock span between the first and last logged step, which excludes load/warmup time.
-- **After the fact** — `python check_memory.py <ckpt_output_dir>` prints peak memory, current step, and wall-clock duration, and renders a loss plot via `training_hub.plot_loss`.
+- **Live** (`--speed-steps N`) — `speed_monitor.py` polls `training_metrics_0.jsonl` and prints
+  progress, per-step rate, ETA, peak memory, peak tokens/sec, and last validation loss.
+  Steps-per-epoch is `ceil(num_samples / effective_batch_size)`; the per-step rate spans the
+  first to last logged step, so it excludes load/warmup time.
+- **After the fact** — `python check_memory.py <ckpt_output_dir>` prints peak memory, current
+  step, and duration, and renders a loss plot via `training_hub.plot_loss`.
 
-## Hardware support
+## Notes
 
-- **AMD / ROCm — works.** MI355X + ROCm 7.2.4 (`torch==2.11.0+rocm7.2`) at 2 and 8 GPUs (FSDP2). On AMD, skip the CUDA-specific `[cuda]`/flash-attn install step and add the two ROCm-only steps (`liger-kernel`, `TESTING=true`) — see the MI355X platform notes under Install.
-- **NVIDIA / CUDA — works.** Single-GPU on H100 80GB / CUDA 13.0 (`torch==2.11.0+cu130`); multi-GPU is not covered here. The base PyPI package excludes the CUDA GPU dependencies, which is why the `[cuda]` extra exists.
-
-## Notes & troubleshooting
-
-- **OOM:** reduce `--max-tokens-per-gpu` first (large / large-vocabulary models are memory-hungry), then `--effective-batch-size`. `use_liger` (Liger kernels) and `osft_memory_efficient_init` are already enabled in the script's `osft_params`.
-- For domain adaptation, `--unfreeze-rank-ratio` between 0.2 and 0.3 is a good starting band.
-- The script pins single-node settings (`nnodes=1`) in `osft_params` and defaults the rendezvous endpoint to `127.0.0.1:29500`, overridable with the `RDZV_ENDPOINT` env var. Multi-node would need `nnodes`/`rdzv_*` edited and is untested here.
+- **Checkpointing cannot be disabled from the CLI.** `osft_params` hardcodes
+  `checkpoint_at_epoch=True` and `save_final_checkpoint=True`, so even a 1-epoch smoke run
+  writes a full HF checkpoint (an 8B model is ~16 GB). Point `--ckpt-output-dir` at a large disk
+  and delete afterwards.
+- **OOM:** reduce `--max-tokens-per-gpu` first (large-vocabulary models are memory-hungry), then
+  `--effective-batch-size`. `use_liger` and `osft_memory_efficient_init` are already on.
+- For domain adaptation, start with `--unfreeze-rank-ratio` between 0.2 and 0.3.
+- On ROCm, `torchao` prints `Failed to load ..._C_mxfp8...so` warnings at import; they are
+  CUDA-only kernels and harmless.
+- The script pins `nnodes=1` in `osft_params`. Multi-node needs `nnodes`/`rdzv_*` edited there.

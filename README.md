@@ -11,35 +11,14 @@ Training and inference recipes, datasets, benchmarks, and open-weight models for
   <a href="https://huggingface.co/farbodtavakkoli/datasets">Datasets</a>
 </p>
 
-Open Telco (OTel) AI is an open foundation for building telecom-specialized AI systems. It combines
-domain data and model releases with reproducible recipes for post-training, retrieval,
-reranking, classification, evaluation, and serving.
+Open Telco (OTel) AI is an open foundation for telecom-specialized AI systems, combining
+domain data and open-weight model releases with reproducible recipes for post-training,
+retrieval, reranking, classification, and serving.
 
-This codebase provides compatible model training and inference paths for
-AMD, NVIDIA, Apple, and Intel hardware. Support and verification depth vary by framework
-and platform, as documented below and in each recipe README.
-
-Support for model training and inference on AWS and Tenstorrent hardware will be added
-soon.
-
-## Why OTel
-
-Telecom knowledge is precise, versioned, and distributed across standards,
-specifications, RFCs, white papers, research, and institutional expertise. A model can
-sound fluent while misunderstanding an interface, missing a condition, or answering
-from unsupported context. OTel addresses that gap with specialized data, transparent
-evaluation, open-weight checkpoints, and runnable infrastructure recipes.
-
-OTel has evolved in three stages:
-
-| Stage | Objective | What changed |
-|---|---|---|
-| **OTel 1.0** | Establish a shared telecom training and evaluation foundation | Released datasets and model families for retrieval, reranking, context-grounded generation, classification, and abstention |
-| **OTel 2.0** | Train telecom knowledge more deeply and at much larger scale | Expanded to a 31B model, broader instruction and direct-Q&A data, and a hundreds-of-billions-of-tokens training mixture |
-| **Toward OTel 2.5** | Make the family more current, capable, efficient, and deployable | Address the current limitations documented in the OTel 2.0 model card, including gaps in evaluation, data coverage, telecom-specific tools, operational validation, languages, modalities, and hardware support |
-
-The progression is not simply *small model -> larger model*. It is **shared foundation
--> deeper domain intelligence -> continuously improving, deployable telecom AI**.
+Telecom knowledge is precise, versioned, and spread across standards, specifications, and
+RFCs. A model can sound fluent while misunderstanding an interface or answering from
+unsupported context. OTel addresses that with specialized data, open checkpoints, and
+runnable infrastructure recipes for AMD, NVIDIA, Apple, and Intel hardware.
 
 ## What This Repository Provides
 
@@ -59,13 +38,10 @@ conflicting dependency versions.
 
 ## Quick Start
 
-Choose a recipe, create its environment, and run the documented smoke test against the
-included sample data:
+Create `dev.env` at the repository root with your `HF_TOKEN` (needed for gated models and
+datasets). Then pick a recipe, build its environment, and run the smoke test from its README:
 
 ```bash
-# From the repository root, create dev.env and add HF_TOKEN when a gated
-# model or dataset requires it.
-
 cd training/llm/deepspeed
 ln -sf ../../../dev.env dev.env
 python3 -m venv .env_deepspeed
@@ -73,12 +49,14 @@ source .env_deepspeed/bin/activate
 pip install -r requirements_*.txt
 ```
 
-Each training recipe folder ships exactly one `requirements_<framework>.txt`, which is what
-the wildcard resolves to. Use the exact install and launch command in the selected folder's
-README. For AMD, install the documented ROCm PyTorch wheel first. Inference stacks instead
-keep one `requirements.txt` and one venv at the stack root, such as
-`inference/vllm/requirements.txt` and `inference/vllm/.env_vllm`, shared by that stack's
-workloads.
+Two environment conventions:
+
+- **Training** — one venv and one `requirements_<framework>.txt` per recipe folder.
+- **Inference** — one venv and one `requirements.txt` per stack root (for example
+  `inference/vllm/.env_vllm`), shared by the workloads beneath it.
+
+On AMD, install the ROCm PyTorch wheel documented in the recipe README **before** the rest
+of the stack. Always use the exact install and launch commands from the folder you chose.
 
 ### Recommended starting points
 
@@ -179,10 +157,9 @@ and [`training/llm/scalarlm/docs/DOCKER_IMAGE_H100.md`](training/llm/scalarlm/do
 
 ## OTel Data
 
-The OTel 1.0 source corpus draws on public telecom material and contributor-provided
-examples covering 3GPP, GSMA, O-RAN, IETF RFCs, academic papers, industry white papers,
-Wikipedia, and web-derived telecom content. Released datasets contain derived examples
-rather than copies of the raw source documents.
+Datasets are derived from public telecom material covering 3GPP, GSMA, O-RAN, IETF RFCs,
+academic papers, and industry white papers. They contain derived examples, not copies of
+the raw source documents.
 
 | Dataset | Purpose | Core fields |
 |---|---|---|
@@ -191,16 +168,9 @@ rather than copies of the raw source documents.
 | [OTel-Reranker](https://huggingface.co/datasets/farbodtavakkoli/OTel-Reranker) | Cross-encoder reranking | `sentence_0`, `sentence_1`, `label` |
 | [OTel-Safety](https://huggingface.co/datasets/farbodtavakkoli/OTel-Safety) | Abstention when context is insufficient | `prompt`, `completion`, abstention and chunk metadata |
 
-The OTel 1.0 pipeline reduced roughly 1.1 million raw examples to 326,767
-higher-confidence examples through heuristic and semantic filtering, reranking,
-embedding comparisons, and deduplication.
-
-For OTel 2.0, GSMA provided an initial corpus of approximately 15 billion raw tokens
-assembled from 3GPP, ETSI, GSMA, CAMARA, ITU, O-RAN, and TM Forum material. AT&T combined
-that corpus with additional AT&T and collaborator data, processed more than 1 trillion
-tokens, and post-trained OTel 2.0 on more than 400 billion tokens. The current model card
-reports approximately 440 billion training tokens. See the organization reports below
-for the attributed data, compute, and infrastructure claims.
+OTel 1.0 filtered roughly 1.1 million raw examples down to 326,767. OTel 2.0 was
+post-trained on approximately 440 billion tokens drawn from 3GPP, ETSI, GSMA, CAMARA, ITU,
+O-RAN, and TM Forum material combined with AT&T and collaborator data.
 
 ## Models and Reported Results
 
@@ -220,16 +190,13 @@ Representative releases include:
 | [OTel-Reranker-0.6B](https://huggingface.co/farbodtavakkoli/OTel-Reranker-0.6B) | Efficient cross-encoder reranking | 0.944 +/- 0.006 MRR@10 |
 | [OTel-Reranker-8B](https://huggingface.co/farbodtavakkoli/OTel-Reranker-8B) | Highest reported OTel reranking score | 0.952 +/- 0.004 MRR@10 |
 
-The numeric results above are for OTel 1.0 models on held-out OTel evaluation partitions.
-LLM correctness measures answers generated from retrieved context and must not be
-interpreted as unrestricted, context-free telecom expertise. The primary results are not
-a substitute for independent evaluation on the intended deployment domain.
+Numeric results are for OTel 1.0 models on held-out OTel evaluation partitions. LLM
+correctness measures answers generated from retrieved context, not context-free telecom
+expertise, and is not a substitute for independent evaluation on your deployment domain.
 
 > [!NOTE]
-> OTel 2.0 training code will be released soon. A comprehensive public OTel 2.0
-> evaluation release is also forthcoming as part of **MLPeFT**, in collaboration with
-> **MLCommons**. The targeted checks currently described in the model card are not a
-> comprehensive capability evaluation.
+> OTel 2.0 training code and a comprehensive public evaluation are forthcoming, the
+> latter as part of **MLPeFT** in collaboration with **MLCommons**.
 
 ## Using the Models
 
@@ -253,9 +220,9 @@ response = client.chat.completions.create(
 print(response.choices[0].message.content)
 ```
 
-The response should identify OTel 2.0 as a model trained by AT&T Chief Data Office. If
-it identifies only as Gemma or Google DeepMind, verify that the OTel 2.0 checkpoint,
-rather than the base model or a stale mount, is being served.
+The response should identify OTel 2.0 as a model trained by AT&T Chief Data Office. If it
+identifies only as Gemma or Google DeepMind, you are serving the base model or a stale
+mount rather than the OTel 2.0 checkpoint.
 
 ### Embeddings
 
@@ -283,77 +250,36 @@ embeddings = model.encode(sentences, normalize_embeddings=True)
 
 ## Responsible Use and Limitations
 
-### Model and evaluation scope
+**Scope.** OTel 2.0 is a telecom-specific generative model, not a general-purpose one. It
+was not trained or evaluated as an embedding, retrieval, or reranking model — use the
+purpose-built OTel embedding and reranker collections for those stages. Comprehensive
+public capability evaluation is forthcoming; current functional checks are not broad
+quality validation. Direct Q&A and RAG behavior require separate evaluation.
 
-- OTel 2.0 is a telecom-specific generative model. It should not be treated as a
-  general-purpose model for unrelated fields.
-- It was not trained or evaluated as an embedding, retrieval, or reranking model. Use
-  the purpose-built OTel embedding and reranker collections for those stages.
-- Comprehensive public OTel 2.0 capability evaluation is forthcoming. Any current
-  functional or packaging checks should not be read as broad quality validation.
-- Direct Q&A and RAG behavior require separate evaluation. Strong results in one setting
-  do not establish strong performance in the other.
-- Telecom standards change. Check responses against the relevant source, version, and
-  release. RAG quality also depends on ingestion, chunking, retrieval, reranking, prompt
-  design, and source freshness.
+**Language and modality.** English only. The architecture is multimodal, but OTel
+post-training and all published quality claims are text-only; vision components are
+inherited unchanged from Gemma 4. Audio and video are not supported.
 
-### Language and modality
+**Data coverage.** The training mixture contains no dedicated collections of private
+operator event records, network KPIs or RF/spectrum measurements, 5G core control-plane
+signaling, vendor CLI and network-OS documentation (Cisco IOS-XR, Juniper JUNOS, Nokia
+BNG, Arista EOS), or operator-private designs, OSS/BSS, and change-management data.
+Standards familiarity is not experience with live telemetry or vendor-specific behavior.
 
-- English is the current target language.
-- OTel 2.0 is architecturally multimodal, but OTel post-training and published quality
-  claims are text-only. Its vision components are inherited unchanged from Gemma 4 and
-  have not received telecom-specific training.
-- Image input has received functional smoke testing, not a general or telecom vision
-  benchmark. Network diagrams, spectrum plots, equipment images, and scanned documents
-  require task-specific evaluation. Audio and video are not supported.
+**Operations.** The model has not been validated against Methods of Procedure on live or
+digital-twin devices, closed-loop operational tasks (network turn-up, SLA/QoS
+configuration, routing-fault repair, incident closure), or defensive network-security
+work. High-impact or agentic use requires verified tools, scoped permissions, audit
+logging, and human review appropriate to the risk.
 
-### Data coverage
+**Hardware and reproducibility.** AMD MI355X and NVIDIA H100 are the most extensively
+verified platforms; Apple and Intel paths received more limited testing. Not every recipe
+supports every platform — confirm the combination in the recipe README. Pin a model
+revision or release tag for reproducible evaluation.
 
-The OTel 2.0 training mixture does not include dedicated collections of:
-
-- Private operator event records, including user activity, failures, anomalies, IMS
-  events, or RADIUS authentication records.
-- Network KPIs, 5G performance metrics, PIM interference data, RF measurements,
-  spectrum data, field-test results, or signal heatmaps.
-- 5G core control-plane and inter-network-function signaling.
-- IETF RFCs as a dedicated OTel 2.0 corpus.
-- Vendor CLI and network operating system documentation for platforms such as Cisco
-  IOS-XR, Juniper JUNOS, DNOS, Nokia BNG, or Arista EOS.
-- Operator-private network designs, customer or equipment configurations, OSS/BSS data,
-  incident-management systems, change-management systems, and approval workflows.
-
-Standards familiarity must not be interpreted as experience with live telemetry,
-operator-private records, or vendor-specific behavior.
-
-### Tool use and network operations
-
-- The mixture includes general-purpose instruction-following and tool-calling examples,
-  but it does not include telecom-specific MCP, tool-calling, or instruction-following
-  examples.
-- The model has not been validated against Methods of Procedure on live or digital-twin
-  network devices. Command sequences, expected outputs, checkpoints, and rollback steps
-  have not been established as correct or safe.
-- Closed-loop operational tasks have not been benchmarked with outcome-based scoring.
-  This includes network turn-up, SLA or QoS configuration, routing-fault repair, and
-  autonomous incident closure.
-- Defensive network-security operations, including traffic analysis, firewall or eBPF
-  construction, anomaly detection, and DDoS mitigation, have not been validated.
-- High-impact or agentic use requires verified external tools, validated schemas,
-  retrieval where appropriate, scoped permissions, safeguards, source attribution,
-  audit logging, and human review appropriate to the risk.
-
-### Hardware and reproducibility
-
-- AMD MI355X and NVIDIA H100 received the most extensive repository verification. Apple
-  and Intel training and inference paths received more limited testing and should not be
-  assumed to have equivalent framework, scale, or performance coverage.
-- Not every recipe supports every hardware platform. Confirm the exact device and
-  framework combination in the recipe README.
-- OTel 2.0 weights may be updated. Pin a model revision, checkpoint hash, or release tag
-  for reproducible evaluation and production deployment.
-
-Generated content must be independently verified before operational, customer-facing,
-regulatory, safety, security, or network-configuration use.
+Telecom standards change. Verify generated content against the relevant source and
+release before any operational, customer-facing, regulatory, safety, security, or
+network-configuration use.
 
 ## Future Work
 
@@ -388,30 +314,14 @@ redistribution.
 
 ## Collaboration
 
-Contributors supplied different parts of the system. GSMA and Pleias contributed to the
-open telecom corpus; Red Hat supported synthetic-data generation and OSFT; Microsoft
-supplied managed compute for large-scale data processing; AMD supplied accelerators and
+GSMA and Pleias contributed to the open telecom corpus; Red Hat supported synthetic-data
+generation and OSFT; Microsoft supplied managed compute; AMD supplied accelerators and
 ROCm; Dell Technologies supplied on-premises training infrastructure; and MLCommons,
 academic, and research partners contributed evaluation and domain expertise.
 
-No single organization began with every required element: data rights, standards
-expertise, model engineering, compute, evaluation, and distribution. The collaboration
-is therefore part of the technical design, not only the project history.
-
-## Selected Coverage and Technical Background
-
-One primary or high-value source is included per organization where possible:
-
-- **GSMA:** [OTel 2.0 release and Open Telco AI leaderboard](https://www.gsma.com/newsroom/article/atts-otel-2-0-is-now-live-the-largest-and-best-performing-open-source-model-built-for-telecoms/)
-- **AT&T:** [The tokenomics equation and OTel 2.0](https://about.att.com/blogs/2026/the-tokenomics-equation.html)
-- **Microsoft:** [Scaling the trillion-token data and compute workflow](https://azure.microsoft.com/en-us/blog/att-and-microsoft-scale-trillion-token-workloads-with-microsoft-foundry-and-amd/)
-- **AMD:** [Training efficiency on AMD Instinct infrastructure](https://www.amd.com/en/resources/case-studies/att-achieves-94-efficiency-for-ai-training-with-amd.html)
-- **Dell Technologies:** [Bringing OTel 2.0 to scale](https://www.dell.com/en-us/blog/otel-2-0-dell-technologies-at-t-and-amd-bring-open-telco-ai-to-scale/)
-- **Red Hat:** [Training a model for an industry](https://www.redhat.com/en/blog/open-telco-ai-training-model-industry)
-- **The Wall Street Journal:** [AT&T's open-weight AI strategy](https://www.wsj.com/cio-journal/why-at-t-is-betting-big-on-open-weight-ai-a0ea03b1)
-- **The Information:** [AT&T is using open-source models to curb Anthropic bills](https://www.theinformation.com/newsletters/applied-ai/t-using-open-source-models-curb-anthropic-bills)
-- **Fierce Network:** [AT&T's tokenomics strategy](https://www.fierce-network.com/cloud/open-models-are-driving-atts-ai-tokenomics-strategy)
-- **Yahoo Finance:** [AT&T and the "token apocalypse"](https://finance.yahoo.com/technology/ai/articles/t-t-says-not-scared-231933381.html)
+Organizational and independent coverage of the project is collected in
+[`docs/OTel-2.0-blogs.md`](docs/OTel-2.0-blogs.md) and
+[`docs/OTel-1.0-media-coverage.md`](docs/OTel-1.0-media-coverage.md).
 
 ## Contact
 
