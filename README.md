@@ -2,11 +2,12 @@
 
 Training and inference recipes, datasets, benchmarks, and open-weight models for telecom AI.
 
-The OTel paper was accepted as a **Spotlight at NeurIPS 2026** (Evaluations & Datasets Track). [Read the paper](docs/OTel-NeurIPS-2026.pdf).
+OTel research includes a [NeurIPS 2026 Spotlight paper](docs/OTel-NeurIPS-2026.pdf) in the Evaluations & Datasets Track and a Breakthrough Impact paper accepted to the [ACM AI Leadership Summit 2026](https://arxiv.org/abs/2608.15436).
 
 
 <p align="center">
   <a href="docs/OTel-NeurIPS-2026.pdf">Paper (NeurIPS 2026 Spotlight)</a> |
+  <a href="https://arxiv.org/abs/2608.15436">Paper (ACM AI Leadership Summit 2026 Breakthrough Impact)</a> |
   <a href="https://github.com/farbodtavakkoli/OTel">Code</a> |
   <a href="https://huggingface.co/farbodtavakkoli">Hugging Face</a> |
   <a href="https://huggingface.co/collections/farbodtavakkoli/otel-llm">LLMs</a> |
@@ -205,7 +206,7 @@ evaluation on your deployment domain.
 
 
 > OTel 2.0 training code and a comprehensive public evaluation are forthcoming, the
-> latter as part of **MLPeFT** in collaboration with **MLCommons**.
+> latter as part of **MLPerf** in collaboration with **MLCommons**.
 
 ## Using the Models
 
@@ -251,6 +252,7 @@ embeddings = model.encode(sentences, normalize_embeddings=True)
 | Document | Contents |
 |---|---|
 | [`docs/OTel-NeurIPS-2026.pdf`](docs/OTel-NeurIPS-2026.pdf) | OTel paper — NeurIPS 2026 Spotlight (Evaluations & Datasets Track) |
+| [`OTel ACM paper`](https://arxiv.org/abs/2608.15436) | ACM AI Leadership Summit 2026 — Breakthrough Impact Highlights Track |
 | [`docs/mi355x_training_notes.md`](docs/mi355x_training_notes.md) | ROCm training lessons, scaling, and failure modes |
 | [`docs/mi355x_inference_notes.md`](docs/mi355x_inference_notes.md) | ROCm serving lessons and FP8 findings |
 | [`docs/h100_training_notes.md`](docs/h100_training_notes.md) | CUDA training lessons and the ROCm→CUDA reversals |
@@ -294,7 +296,7 @@ network-configuration use.
 ## Future Work
 
 - Release the OTel 2.0 training implementation and reproducible configuration.
-- Release the comprehensive OTel 2.0 evaluation through MLPeFT in collaboration with
+- Release the comprehensive OTel 2.0 evaluation through MLPerf in collaboration with
   MLCommons.
 - Add and verify training and inference support on AWS infrastructure and Tenstorrent
   hardware.
@@ -312,8 +314,7 @@ redistribution.
 
 ## Citation
 
-The OTel paper was accepted as a **Spotlight at NeurIPS 2026** (Evaluations & Datasets
-Track). [Read the paper](docs/OTel-NeurIPS-2026.pdf). If you use OTel datasets, models, benchmarks, or recipes, please cite:
+If you use OTel datasets, models, benchmarks, or recipes, please cite:
 
 ```bibtex
 @inproceedings{tavakkoli2026otel,
