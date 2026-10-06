@@ -2,7 +2,11 @@
 
 Training and inference recipes, datasets, benchmarks, and open-weight models for telecom AI.
 
+The OTel paper was accepted as a **Spotlight at NeurIPS 2026** (Evaluations & Datasets Track). [Read the paper](docs/OTel-NeurIPS-2026.pdf).
+
+
 <p align="center">
+  <a href="docs/OTel-NeurIPS-2026.pdf">Paper (NeurIPS 2026 Spotlight)</a> |
   <a href="https://github.com/farbodtavakkoli/OTel">Code</a> |
   <a href="https://huggingface.co/farbodtavakkoli">Hugging Face</a> |
   <a href="https://huggingface.co/collections/farbodtavakkoli/otel-llm">LLMs</a> |
@@ -91,7 +95,7 @@ of the stack. Always use the exact install and launch commands from the folder y
 |   |-- tei/                  # Embedding
 |   |-- ktransformers/        # CPU-GPU hybrid MoE serving
 |   `-- tensorrtllm/          # NVIDIA LLM serving
-`-- docs/                     # Hardware platform notes (MI355X and H100) plus project coverage
+`-- docs/                     # OTel paper, hardware platform notes (MI355X and H100), project coverage
 ```
 
 Training is organized by modality because each modality/framework pair has its own
@@ -183,18 +187,23 @@ Representative releases include:
 | Model | Role | Public result or status |
 |---|---|---:|
 | [OTel 2.0 LLM 31B IT](https://huggingface.co/farbodtavakkoli/OTel-2.0-LLM-31B-IT) | Large-scale domain-adapted telecom LLM | Comprehensive public evaluation forthcoming |
-| [OTel-LLM-E4B-IT](https://huggingface.co/farbodtavakkoli/OTel-LLM-E4B-IT) | Context-grounded generation | 91.7% +/- 0.4 correctness |
-| [OTel-LLM-8B-A1B-IT](https://huggingface.co/farbodtavakkoli/OTel-LLM-8B-A1B-IT) | Mid-size context-grounded generation | 88.4% +/- 0.5 correctness |
-| [OTel-Embedding-300M](https://huggingface.co/farbodtavakkoli/OTel-Embedding-300M) | Efficient dense retrieval | 90.9% +/- 0.5 NDCG@10 |
-| [OTel-Embedding-8B](https://huggingface.co/farbodtavakkoli/OTel-Embedding-8B) | Highest reported OTel retrieval score | 93.5% +/- 0.3 NDCG@10 |
-| [OTel-Reranker-0.6B](https://huggingface.co/farbodtavakkoli/OTel-Reranker-0.6B) | Efficient cross-encoder reranking | 0.944 +/- 0.006 MRR@10 |
-| [OTel-Reranker-8B](https://huggingface.co/farbodtavakkoli/OTel-Reranker-8B) | Highest reported OTel reranking score | 0.952 +/- 0.004 MRR@10 |
+| [OTel-LLM-E4B-IT](https://huggingface.co/farbodtavakkoli/OTel-LLM-E4B-IT) | Context-grounded generation (post-paper) | 91.7% +/- 0.4 correctness |
+| [OTel-LLM-8B-A1B-IT](https://huggingface.co/farbodtavakkoli/OTel-LLM-8B-A1B-IT) | Mid-size context-grounded generation (post-paper) | 88.4% +/- 0.5 correctness |
+| [OTel-LLM-27B-IT](https://huggingface.co/farbodtavakkoli/OTel-LLM-27B-IT) | Highest LLM score reported in the paper | 87.8% +/- 0.5 correctness |
+| [OTel-Embedding-300M](https://huggingface.co/farbodtavakkoli/OTel-Embedding-300M) | Efficient dense retrieval | 90.4% +/- 0.6 NDCG@10 |
+| [OTel-Embedding-8B](https://huggingface.co/farbodtavakkoli/OTel-Embedding-8B) | Highest reported OTel retrieval score | 93.1% +/- 0.4 NDCG@10 |
+| [OTel-Reranker-0.6B](https://huggingface.co/farbodtavakkoli/OTel-Reranker-0.6B) | Efficient cross-encoder reranking | 0.938 +/- 0.007 MRR@10 |
+| [OTel-Reranker-8B](https://huggingface.co/farbodtavakkoli/OTel-Reranker-8B) | Highest reported OTel reranking score | 0.947 +/- 0.005 MRR@10 |
 
-Numeric results are for OTel 1.0 models on held-out OTel evaluation partitions. LLM
-correctness measures answers generated from retrieved context, not context-free telecom
-expertise, and is not a substitute for independent evaluation on your deployment domain.
+Numeric results are for OTel 1.0 models on held-out OTel evaluation partitions, as reported
+in the [OTel paper](docs/OTel-NeurIPS-2026.pdf); standard errors use 1,000 bootstrap
+resamples. `OTel-LLM-E4B-IT` and `OTel-LLM-8B-A1B-IT` were released after the paper and use
+the same protocol, but are not part of the paper's results. LLM correctness is the average
+of two judges (GPT-4o mini and Claude Sonnet 3.5) on answers generated from retrieved
+context, not context-free telecom expertise, and is not a substitute for independent
+evaluation on your deployment domain.
 
-> [!NOTE]
+
 > OTel 2.0 training code and a comprehensive public evaluation are forthcoming, the
 > latter as part of **MLPeFT** in collaboration with **MLCommons**.
 
@@ -241,6 +250,7 @@ embeddings = model.encode(sentences, normalize_embeddings=True)
 
 | Document | Contents |
 |---|---|
+| [`docs/OTel-NeurIPS-2026.pdf`](docs/OTel-NeurIPS-2026.pdf) | OTel paper — NeurIPS 2026 Spotlight (Evaluations & Datasets Track) |
 | [`docs/mi355x_training_notes.md`](docs/mi355x_training_notes.md) | ROCm training lessons, scaling, and failure modes |
 | [`docs/mi355x_inference_notes.md`](docs/mi355x_inference_notes.md) | ROCm serving lessons and FP8 findings |
 | [`docs/h100_training_notes.md`](docs/h100_training_notes.md) | CUDA training lessons and the ROCm→CUDA reversals |
@@ -302,13 +312,16 @@ redistribution.
 
 ## Citation
 
+The OTel paper was accepted as a **Spotlight at NeurIPS 2026** (Evaluations & Datasets
+Track). [Read the paper](docs/OTel-NeurIPS-2026.pdf). If you use OTel datasets, models, benchmarks, or recipes, please cite:
+
 ```bibtex
-@misc{otel_models_2026,
-  title  = {OTel: Open Telco AI Datasets, Benchmarks, Models, and Recipes},
-  author = {Tavakkoli, Farbod and others},
-  year   = {2026},
-  note   = {Open Telco (OTel) release},
-  url    = {https://github.com/farbodtavakkoli/OTel}
+@inproceedings{tavakkoli2026otel,
+  title     = {OTel: Open Telco AI Datasets, Benchmarks, and Models},
+  author    = {Tavakkoli, Farbod and Diamos, Gregory and Church, Kenneth and Kanter, David and Austin, Mark and Karim, Imtiaz and Rahman, Mirza Masfiqur and Debbah, Merouane Abdelkader and Nezami, Zeinab and Maatouk, Ali and Tassiulas, Leandros and Ying, Rex and Sorros, Nick and Powell, Louis and Vasiloglou, Nikolaos and Vaswani, Ashish and Singla, Somanshu and Chaluvaraju, Adarsh},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS), Evaluations and Datasets Track},
+  year      = {2026},
+  url       = {https://github.com/farbodtavakkoli/OTel}
 }
 ```
 
@@ -328,4 +341,3 @@ Organizational and independent coverage of the project is collected in
 For questions and project updates, visit
 [Farbod Tavakkoli on GitHub](https://github.com/farbodtavakkoli) or open an issue in this
 repository or contact farbod.tavakkoli@att.com or farbodtavakoli@gmail.com.
-
