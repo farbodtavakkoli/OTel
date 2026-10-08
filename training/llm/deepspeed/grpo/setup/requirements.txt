@@ -1,0 +1,19 @@
+# TRL + DeepSpeed GRPO stack. Install with ./setup.sh (it installs vLLM first, then these).
+# vLLM is installed by setup.sh so it pins torch and the CUDA runtime first.
+
+# TRL 1.12 exec's `vllm serve` and pushes the full merged model over NCCL each step, so the
+# trainer and the rollout server must run the SAME trl version.
+trl==1.12.0
+deepspeed==0.19.6
+
+# LoRA, dataset and device-map plumbing (not transitive deps of vLLM).
+peft
+datasets
+accelerate
+
+# msgpack is a real transitive dep of deepspeed (runtime/pipe/p2p.py imports it unconditionally).
+msgpack
+hjson
+py-cpuinfo
+pydantic
+ninja

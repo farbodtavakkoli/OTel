@@ -1,0 +1,20 @@
+# TRL GRPO image for MI355X (ROCm 7.2, gfx950). Versions and caveats: ../README.md.
+#
+# Derived from grpo-base:mi355 rather than a pip-installed vLLM: no released ROCm vLLM wheel
+# registers Gemma4ForConditionalGeneration, and the base image carries only trl 0.21.0 and no
+# deepspeed. TRL's server mode needs the SAME TRL version on the vllm-serve side and the trainer
+# side (weight-sync protocol), so both run from this one image.
+#
+# Build:
+#   docker build -f training/llm/deepspeed/grpo/setup/Dockerfile.grpo_mi355 \
+#     -t grpo-trl:mi355 training/llm/deepspeed/grpo/setup
+ARG BASE_IMAGE=grpo-base:mi355
+FROM ${BASE_IMAGE}
+
+ARG TRL_VERSION=1.12.0
+ARG DEEPSPEED_VERSION=0.19.6
+
+# --no-deps: never let pip move torch/vllm/transformers that the base image was validated with.
+RUN pip install --no-deps "trl==${TRL_VERSION}" "deepspeed==${DEEPSPEED_VERSION}" \
+ && pip install --no-deps hjson py-cpuinfo pydantic ninja \
+ && python -c "import trl, deepspeed, vllm, transformers, peft; print('trl', trl.__version__, 'deepspeed', deepspeed.__version__, 'vllm', vllm.__version__, 'transformers', transformers.__version__, 'peft', peft.__version__)"

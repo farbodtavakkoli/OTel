@@ -5,8 +5,8 @@
 #
 # Usage:
 #   ./build_image.sh                              # auto-detect target, build + label
-#   TARGET=amd    IMAGE_TAG=mi355-v1.7 ./build_image.sh
-#   TARGET=nvidia IMAGE_TAG=h100-v1.6  ./build_image.sh
+#   TARGET=amd    IMAGE_TAG=mi355-grpo-v1.1 ./build_image.sh
+#   TARGET=nvidia IMAGE_TAG=h100-v1.7  ./build_image.sh
 #
 # Targets:
 #   amd     MI355X (gfx950/ROCm). Runbook: DOCKER_IMAGE_MI355.md.
@@ -43,14 +43,14 @@ fi
 case "$TARGET" in
     amd)
         BASE_NAME=amd;    ARCH_LIST=gfx942; VLLM_DEVICE=rocm
-        DEFAULT_TAG=mi355-v1.7; DEFAULT_STAGE=cray:mi355-build
+        DEFAULT_TAG=mi355-grpo-v1.1; DEFAULT_STAGE=cray:mi355-build
         TITLE="ScalarLM MI355X"
-        DESCRIPTION="ScalarLM training+inference for AMD Instinct MI355X (gfx950/ROCm): NCCL/RCCL collectives, DDP+FSDP+FSDP2 verified on 8 GPUs" ;;
+        DESCRIPTION="ScalarLM training+inference for AMD Instinct MI355X (gfx950/ROCm): NCCL/RCCL collectives, DDP+FSDP+FSDP2 verified on 8 GPUs, GRPO training mode" ;;
     nvidia)
         BASE_NAME=nvidia; ARCH_LIST=9.0;    VLLM_DEVICE=cuda
-        DEFAULT_TAG=h100-v1.6;  DEFAULT_STAGE=cray:h100-build
+        DEFAULT_TAG=h100-v1.7;  DEFAULT_STAGE=cray:h100-build
         TITLE="ScalarLM H100"
-        DESCRIPTION="ScalarLM training+inference for NVIDIA H100 (sm_90/CUDA): NCCL collectives, DDP+FSDP+FSDP2" ;;
+        DESCRIPTION="ScalarLM training+inference for NVIDIA H100 (sm_90/CUDA): NCCL collectives, DDP+FSDP+FSDP2, GRPO training mode" ;;
     *)  echo "ERROR: TARGET must be amd or nvidia (got '$TARGET')"; exit 1 ;;
 esac
 
@@ -70,20 +70,31 @@ echo "==> Target: $TARGET  ->  $IMAGE"
 mkdir -p "$REPO_DIR/vllm"
 
 echo "==> Staging ml/ into repo/ (single source of truth: $ML_DIR)"
+want=$(find "$ML_DIR" -name '*.py' -not -path '*__pycache__*' | wc -l)
 rm -rf "$REPO_DIR/ml"
-rsync -a --exclude='__pycache__' --exclude='*.pyc' "$ML_DIR/" "$REPO_DIR/ml/"
-echo "    $(find "$REPO_DIR/ml" -name '*.py' | wc -l) python files staged"
+rsync -a --inplace --no-times --no-perms --exclude='__pycache__' --exclude='*.pyc' \
+    "$ML_DIR/" "$REPO_DIR/ml/" || true
+got=$(find "$REPO_DIR/ml" -name '*.py' | wc -l)
+echo "    $got python files staged"
+if [ "$got" -ne "$want" ]; then
+    echo "ERROR: staged $got of $want python files from $ML_DIR into $REPO_DIR/ml. Refusing to build." >&2
+    exit 1
+fi
+if ! diff -rq -x '__pycache__' "$ML_DIR" "$REPO_DIR/ml" >/dev/null 2>&1; then
+    echo "ERROR: $REPO_DIR/ml differs from $ML_DIR after staging. Refusing to build." >&2
+    exit 1
+fi
 
-# Record which source revision this image was built from. The vendored tree has
-# no .git of its own, so this is the OUTER repository's HEAD -- which is the
-# correct answer, because that is now where this source lives.
-REVISION="$(git -C "$SCALARLM_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
 DIRTY=""
-# Check the whole scalarlm folder, not just this script's directory: ml/ is what
-# gets baked in, so an uncommitted change there must mark the image dirty.
-if ! git -C "$SCALARLM_DIR" diff --quiet HEAD -- "$SCALARLM_DIR" 2>/dev/null; then
+if [ -n "${REVISION:-}" ]; then
     DIRTY="-dirty"
-    echo "    WARNING: working tree has uncommitted changes; labelling revision as ${REVISION}${DIRTY}"
+    echo "    NOTE: REVISION supplied by caller; labelling revision as ${REVISION}${DIRTY}"
+else
+    REVISION="$(git -C "$SCALARLM_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
+    if ! git -C "$SCALARLM_DIR" diff --quiet HEAD -- "$SCALARLM_DIR" 2>/dev/null; then
+        DIRTY="-dirty"
+        echo "    WARNING: working tree has uncommitted changes; labelling revision as ${REVISION}${DIRTY}"
+    fi
 fi
 
 echo "==> Building $BUILD_STAGE from $REPO_DIR"

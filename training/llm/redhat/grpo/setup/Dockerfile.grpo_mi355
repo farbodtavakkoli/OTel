@@ -1,0 +1,44 @@
+# Red Hat training-hub GRPO environment for AMD MI355X. Versions and caveats: ../README.md.
+#
+#   docker build -f training/llm/redhat/grpo/setup/Dockerfile.grpo_mi355 \
+#     -t grpo-traininghub:mi355 training/llm/redhat/grpo/setup
+#
+# `pip install training-hub[grpo]` is NOT used: its extras pin torch/vLLM/transformers and would
+# replace the image's ROCm stack (the only one that serves Gemma-4).
+ARG BASE_IMAGE=grpo-base:mi355
+FROM ${BASE_IMAGE}
+
+ARG VERL_COMMIT=d040717b21af2e23e8e789a3e354cff2394ae2de
+ARG TRAINING_HUB_COMMIT=70640575c328df6ec04e7a547b3405726f238538
+
+# 1. verl at the commit the verl stack benchmarked (training/llm/verl/grpo), plus pure-python deps.
+RUN cd /opt && git clone https://github.com/volcengine/verl.git && cd verl \
+ && git checkout ${VERL_COMMIT} && pip install --no-deps -e . \
+ && pip install 'ray[default]' hydra-core codetiming pylatexenc math_verify latex2sympy2_extended \
+        uvicorn fastapi pybind11 'git+https://github.com/Ascend/TransferQueue.git@main'
+
+# 2. verl LoRA-sync patch for the ScalarLM vLLM fork (re-derived from training/llm/verl/grpo/verl_scalarlm_vllm_fork_lora.patch).
+COPY verl_scalarlm_vllm_fork_lora_redhat.patch /opt/verl/
+RUN cd /opt/verl && patch -p1 < verl_scalarlm_vllm_fork_lora_redhat.patch
+
+# 3. Metadata-only relabel of the image's untagged vLLM version (verl requires >= 0.18).
+RUN NEWV=0.28.0.dev0+g281955fc6.rocm715 \
+ && D=$(ls -d /opt/venv/lib/python3.12/site-packages/vllm-*.dist-info | head -1) \
+ && cp $D/METADATA $D/METADATA.orig && sed -i "s/^Version: .*/Version: $NEWV/" $D/METADATA \
+ && cp /app/cray/vllm/vllm/_version.py /app/cray/vllm/vllm/_version.py.orig \
+ && sed -i "s/^__version__ = version = .*/__version__ = version = '$NEWV'/" /app/cray/vllm/vllm/_version.py \
+ && sed -i "s/^__version_tuple__ = version_tuple = .*/__version_tuple__ = version_tuple = (0, 28, 0, 'dev0', 'g281955fc6.rocm715')/" /app/cray/vllm/vllm/_version.py
+
+# 4. training_hub (upstream main at the benchmarked commit) + its import-time deps, all --no-deps.
+RUN cd /opt && git clone https://github.com/Red-Hat-AI-Innovation-Team/training_hub.git \
+ && cd training_hub && git checkout ${TRAINING_HUB_COMMIT} && pip install --no-deps -e . \
+ && pip install --no-deps instructlab-training rhai-innovation-mini-trainer deprecated
+
+# 5. accelerate 1.9.0 x transformers 5.12: text-only checkpoints (Llama-3.1-8B-Instruct) fail to load under
+#    init_empty_weights with `unexpected keyword argument '_is_hf_initialized'` (same patch as training/llm/verl/grpo).
+COPY accelerate_init_empty_weights_hf_initialized.patch /opt/
+RUN cd /opt/venv/lib/python3.12/site-packages && patch -p0 < /opt/accelerate_init_empty_weights_hf_initialized.patch
+
+RUN python -c "import training_hub, verl, vllm; from training_hub import lora_grpo; print('training_hub ok, vllm', vllm.__version__)"
+WORKDIR /workspace
+ENTRYPOINT ["sleep", "infinity"]

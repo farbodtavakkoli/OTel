@@ -1,0 +1,31 @@
+# Unsloth GRPO environment for AMD MI355X. Versions, rationale and caveats: ../README.md.
+#
+#   docker build -f training/llm/unsloth/grpo/setup/Dockerfile.grpo_mi355 \
+#     -t grpo-unsloth:mi355 training/llm/unsloth/grpo/setup
+#
+# Unsloth's fast-inference path does not support the gemma4 architecture; avoid this image for
+# large multimodal policies, where that path is known to produce corrupted generations.
+ARG BASE_IMAGE=grpo-base:mi355
+FROM ${BASE_IMAGE}
+
+# --no-deps is deliberate: unsloth 2026.9.2 pins torch<2.12 and transformers<=5.5.0, which would
+# replace the image's ROCm torch and Gemma-4-capable transformers.
+RUN pip install --no-deps unsloth==2026.9.2 unsloth_zoo==2026.9.1 \
+ && pip install --no-deps tyro structlog msgspec hf_transfer sentencepiece protobuf "torchao>=0.13.0" \
+ && pip install --no-deps trl==1.12.0 \
+ && pip install --no-deps "bitsandbytes>=0.50.0"
+
+# unsloth_zoo's vLLM state-dict conversion assumes per_layer_input_gate/projection exist, but
+# vLLM's Gemma-4 decoder sets them to None. The wheel ships vllm_utils.py with CRLF line endings,
+# so normalise before patching.
+COPY unsloth_zoo_vllm_utils_gemma4_31b.patch /opt/unsloth_patch/
+RUN cd /opt/venv/lib/python3.12/site-packages/unsloth_zoo \
+ && cp -n vllm_utils.py vllm_utils.py.bak \
+ && sed -i 's/\r$//' vllm_utils.py \
+ && patch --forward vllm_utils.py < /opt/unsloth_patch/unsloth_zoo_vllm_utils_gemma4_31b.patch
+
+# (unsloth itself cannot be imported without a GPU, so only the package versions are checked here)
+RUN python -c "import trl, vllm; from importlib.metadata import version; print('unsloth', version('unsloth'), 'unsloth_zoo', version('unsloth_zoo'), 'trl', trl.__version__, 'vllm', vllm.__version__)"
+ENV UNSLOTH_GRPO_SEQ_PACKING=0
+WORKDIR /workspace
+ENTRYPOINT ["sleep", "infinity"]

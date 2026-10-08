@@ -1,0 +1,168 @@
+--- a/verl/trainer/ppo/ray_trainer.py
++++ b/verl/trainer/ppo/ray_trainer.py
+@@ -1462,12 +1462,42 @@
+         )
+         next_step_profile = False
+ 
++        # DAPO-style dynamic sampling (algorithm.filter_groups) for the classic trainer.
++        # In this verl revision filter_groups is only consumed by the V1 replay buffer; the classic
++        # loop below accumulates generation batches until `data.train_batch_size` prompt groups with
++        # non-zero reward std exist (or `max_num_gen_batches` is reached, in which case the smaller
++        # batch is trained on instead of raising). Timings accumulate across the generation batches
++        # of one step (`timing_raw` is kept), so timing_s/step, /gen, /rollout_only, /judge are the
++        # per-step sums. Replicas stay awake between generation batches of the same step.
++        fg_cfg = self.config.algorithm.get("filter_groups", None)
++        fg_enable = bool(fg_cfg is not None and fg_cfg.get("enable", False))
++        fg_metric = fg_cfg.get("metric", None) if fg_enable else None
++        fg_max_gen = int(fg_cfg.get("max_num_gen_batches", 0) or 0) if fg_enable else 0
++        if fg_enable:
++            assert fg_metric, "algorithm.filter_groups.metric must be set when filter_groups.enable=True"
++            if fg_metric == "seq_final_reward":
++                assert not self.config.algorithm.use_kl_in_reward, (
++                    "classic-trainer filter_groups computes seq_final_reward from rm_scores before the KL "
++                    "penalty; set use_kl_in_reward=False or use metric=seq_reward"
++                )
++            print(
++                f"[filter_groups] enabled: metric={fg_metric} max_num_gen_batches={fg_max_gen} "
++                f"train_batch_size={self.config.data.train_batch_size}",
++                flush=True,
++            )
++        fg_pending = None  # DataProto of kept trajectories accumulated for the current step
++        fg_num_prompts = 0
++        fg_num_gen = 0
++        fg_gen_stats = []
++        fg_log_path = os.path.join(os.environ.get("GRPO_RUN_DIR", os.getcwd()), "dapo_steps.jsonl")
++
+         for epoch in range(current_epoch, self.config.trainer.total_epochs):
+             for batch_dict in self.train_dataloader:
+                 if hasattr(self.actor_rollout_wg, "async_calls_finalize_fn_exec"):
+                     self.actor_rollout_wg.async_calls_finalize_fn_exec(blocking=False)
+-                metrics = {}
+-                timing_raw = {}
++                if fg_pending is None:
++                    metrics = {}
++                    timing_raw = {}
+ 
+                 with marked_timer("start_profile", timing_raw):
+                     self._start_profiling(
+@@ -1511,11 +1541,14 @@
+                         if curr_step_profile:
+                             self.llm_server_manager.start_profile()
+                         combined_gen_output = self.async_rollout_manager.generate_sequences(combined_gen_batch)
+-                        self.checkpoint_manager.sleep_replicas()
++                        if not fg_enable:
++                            self.checkpoint_manager.sleep_replicas()
+                         if curr_step_profile:
+                             self.llm_server_manager.stop_profile()
+ 
+-                        timing_raw.update(combined_gen_output.meta_info["timing"])
++                        # accumulate (not overwrite) so multi-generation-batch steps report sums
++                        for _tk, _tv in combined_gen_output.meta_info["timing"].items():
++                            timing_raw[_tk] = timing_raw.get(_tk, 0.0) + float(_tv)
+                         combined_gen_output.meta_info.pop("timing", None)
+ 
+                     gen_batch_output = combined_gen_output.slice(0, num_sampled_prompts)
+@@ -1542,6 +1575,103 @@
+ 
+                     if "response_mask" not in batch.batch.keys():
+                         batch.batch["response_mask"] = compute_response_mask(batch)
++
++                    if fg_enable:
++                        fg_num_gen += 1
++                        if fg_metric == "seq_final_reward" or fg_metric == "seq_reward":
++                            assert "rm_scores" in batch.batch, "filter_groups needs rm_scores in the generated batch"
++                            fg_vals = batch.batch["rm_scores"].sum(dim=-1).cpu().numpy()
++                            batch.non_tensor_batch[fg_metric] = fg_vals
++                        else:
++                            fg_vals = np.asarray(batch.non_tensor_batch[fg_metric], dtype=np.float64)
++                        fg_uid2vals = defaultdict(list)
++                        for _uid, _v in zip(batch.non_tensor_batch["uid"], fg_vals):
++                            fg_uid2vals[_uid].append(float(_v))
++                        fg_kept_uids = {u for u, vs in fg_uid2vals.items() if np.std(vs) > 0 or len(vs) == 1}
++                        fg_kept_idx = [i for i, u in enumerate(batch.non_tensor_batch["uid"]) if u in fg_kept_uids]
++                        fg_gen_stats.append(
++                            {
++                                "gen_batch": fg_num_gen,
++                                "groups": len(fg_uid2vals),
++                                "kept_groups": len(fg_kept_uids),
++                                "zero_var_groups": len(fg_uid2vals) - len(fg_kept_uids),
++                            }
++                        )
++                        fg_num_prompts += len(fg_kept_uids)
++                        if fg_kept_idx:
++                            _kept = batch.select_idxs(fg_kept_idx)
++                            _kept.meta_info = {}
++                            if fg_pending is None:
++                                fg_pending = _kept
++                            else:
++                                fg_pending = DataProto.concat([fg_pending, _kept])
++                        fg_prompt_bsz = int(self.config.data.train_batch_size)
++                        print(
++                            f"[filter_groups] step {self.global_steps} gen_batch {fg_num_gen}: "
++                            f"{len(fg_kept_uids)}/{len(fg_uid2vals)} groups informative, "
++                            f"accumulated {fg_num_prompts}/{fg_prompt_bsz}",
++                            flush=True,
++                        )
++                        if fg_num_prompts < fg_prompt_bsz and (fg_max_gen <= 0 or fg_num_gen < fg_max_gen):
++                            continue  # generate another batch (replicas stay awake); timing_raw keeps accumulating
++                        self.checkpoint_manager.sleep_replicas()
++                        fg_traj_bsz = fg_prompt_bsz * rollout_n
++                        fg_pad_groups = 0
++                        if fg_pending is None or len(fg_pending) == 0:
++                            print("[filter_groups] no informative group after max_num_gen_batches; training on the unfiltered last batch", flush=True)
++                            fg_used = batch
++                            fg_pad_groups = len(fg_uid2vals)
++                        elif len(fg_pending) > fg_traj_bsz:
++                            fg_used = fg_pending.slice(0, fg_traj_bsz)
++                        elif len(fg_pending) < fg_traj_bsz:
++                            # Short after max_num_gen_batches: the actor's mini-batch iterator requires the
++                            # trajectory batch to be a multiple of ppo_mini_batch_size per DP rank, so top up
++                            # to exactly train_batch_size prompts with zero-variance groups from the last
++                            # generation batch. Their advantage is 0, so they add no gradient; they only take
++                            # part in the token-mean loss normalisation. Counted in dapo/pad_groups.
++                            _need = (fg_traj_bsz - len(fg_pending)) // rollout_n
++                            _pad_uids = [u for u in dict.fromkeys(batch.non_tensor_batch["uid"]) if u not in fg_kept_uids][:_need]
++                            _pad_idx = [i for i, u in enumerate(batch.non_tensor_batch["uid"]) if u in set(_pad_uids)]
++                            fg_pad_groups = len(_pad_uids)
++                            _pad = batch.select_idxs(_pad_idx)
++                            _pad.meta_info = {}
++                            fg_used = DataProto.concat([fg_pending, _pad])
++                            print(
++                                f"[filter_groups] step {self.global_steps}: {len(fg_pending) // rollout_n} informative "
++                                f"groups after {fg_num_gen} gen batches; padded with {fg_pad_groups} zero-variance groups",
++                                flush=True,
++                            )
++                        else:
++                            fg_used = fg_pending
++                        fg_used.meta_info = dict(batch.meta_info)
++                        batch = fg_used
++                        fg_rec = {
++                            "global_step": self.global_steps,
++                            "num_gen_batches": fg_num_gen,
++                            "prompts_kept_total": fg_num_prompts,
++                            "prompts_used": len(batch) // rollout_n,
++                            "pad_groups": fg_pad_groups,
++                            "trajectories_used": len(batch),
++                            "groups_generated": sum(s["groups"] for s in fg_gen_stats),
++                            "zero_var_groups_generated": sum(s["zero_var_groups"] for s in fg_gen_stats),
++                            "gen_batches": fg_gen_stats,
++                            "rollout_only_s": timing_raw.get("rollout_only"),
++                            "judge_s": timing_raw.get("judge"),
++                            "gen_s": timing_raw.get("gen"),
++                        }
++                        metrics["dapo/num_gen_batches"] = fg_num_gen
++                        metrics["dapo/prompts_used"] = fg_rec["prompts_used"]
++                        metrics["dapo/prompts_kept_total"] = fg_num_prompts
++                        metrics["dapo/pad_groups"] = fg_pad_groups
++                        metrics["dapo/groups_generated"] = fg_rec["groups_generated"]
++                        metrics["dapo/zero_var_frac_generated"] = (
++                            fg_rec["zero_var_groups_generated"] / max(1, fg_rec["groups_generated"])
++                        )
++                        with open(fg_log_path, "a") as _fh:
++                            _fh.write(json.dumps(fg_rec) + "\n")
++                        print(f"[filter_groups] {json.dumps(fg_rec)}", flush=True)
++                        fg_pending, fg_num_prompts, fg_num_gen, fg_gen_stats = None, 0, 0, []
++
+                     # Balance the number of valid tokens across DP ranks.
+                     # NOTE: This usually changes the order of data in the `batch`,
+                     # which won't affect the advantage calculation (since it's based on uid),

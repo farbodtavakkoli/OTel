@@ -25,8 +25,14 @@ class DataLoader:
             epoch=self.epoch,
         )
 
-        self.loader = torch.utils.data.DataLoader(
-            self.dataset, batch_size=self.batch_size
+        self.loader = self._make_loader()
+
+    def _make_loader(self):
+        # Variable-length datasets (grpo) bring their own padding collate; packed ones stack.
+        return torch.utils.data.DataLoader(
+            self.dataset,
+            batch_size=self.batch_size,
+            collate_fn=getattr(self.dataset, "collate_fn", None),
         )
 
     def __iter__(self):
@@ -43,9 +49,7 @@ class DataLoader:
                 tokenizer=self.tokenizer,
                 epoch=self.epoch,
             )
-            self.loader = torch.utils.data.DataLoader(
-                self.dataset, batch_size=self.batch_size
-            )
+            self.loader = self._make_loader()
             self.iterator = iter(self.loader)
 
             try:

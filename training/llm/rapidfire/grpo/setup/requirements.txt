@@ -1,0 +1,31 @@
+# RapidFire AI GRPO stack. Install with ./setup.sh (it installs vLLM first, then these).
+# RapidFire wraps TRL's GRPOTrainer, so the topology matches the trl_deepspeed stack.
+
+# rapidfireai itself is installed --no-deps by setup.sh: 0.16.1 pins datasets==3.6.0 and trl==0.21.0
+# (via its extras), both of which conflict with the trl this stack runs and with the vLLM torch.
+# Everything below is what rapidfireai actually needs at run time.
+trl==1.12.0
+bitsandbytes==0.50.2
+
+# RapidFire's fit path logs every step to an mlflow server. 3.16.0 is the floor that accepts
+# pandas>=3 / pyarrow>=25; earlier versions cap pandas<3 and cannot be installed alongside vLLM.
+mlflow>=3.16.0
+
+# LoRA, dataset and device-map plumbing (not transitive deps of vLLM).
+peft
+datasets
+accelerate
+
+# rapidfireai's own imports: the dispatcher API and its run-tracking front end.
+flask
+flask-cors
+waitress
+trackio
+tensorboard
+dill<0.3.9
+jq
+
+# rapidfireai.Experiment imports IPython at module scope (it is built for notebook use), so this is
+# required even when driving it from a script.
+ipython
+ipywidgets

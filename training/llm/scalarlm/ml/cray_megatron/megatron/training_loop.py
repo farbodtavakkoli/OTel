@@ -13,6 +13,7 @@ from cray_megatron.megatron import stop_flag
 from cray_megatron.megatron.diffusion_corruption import corrupt_canvas
 from cray_megatron.megatron.dataset.diffusion_canvas import anchor_token_id
 from cray_megatron.megatron.determinism import apply_seed
+from cray_megatron.megatron.grpo_loss import grpo_loss
 from cray_megatron.megatron.doc_mask import (
     doc_mask_decision,
     is_multimodal,
@@ -213,6 +214,9 @@ class TrainingLoop:
 
         self.training_state = TrainingState()
 
+        # Per-micro-batch GRPO stats of the current step; summarised by _log_grpo_step().
+        self._grpo_step_stats = []
+
     def train(self):
         # Must run before load_model() so every global-RNG draw is deterministic.
         apply_seed(get_job_config().get("seed"))
@@ -259,6 +263,8 @@ class TrainingLoop:
         self.training_state.scheduler = get_scheduler(
             self.training_state.optimizer, max_steps
         )
+
+        self._maybe_carry_optimizer_state()
 
         if does_any_checkpoint_exist():
             self.resume_from_checkpoint()
@@ -348,6 +354,7 @@ class TrainingLoop:
             # Print training step info with averaged loss
             step_time = time.time() - step_start_time
             self.print_training_step_info(avg_accumulated_loss, step_time)
+            self._log_grpo_step()
 
             self.on_step_end(step)
 
@@ -367,6 +374,34 @@ class TrainingLoop:
                 break
 
         self.on_train_end()
+
+    def _maybe_carry_optimizer_state(self):
+        ckpt = self.training_state.model_info.pop("init_adapter_checkpoint", None)
+        if ckpt is None or not get_job_config().get("init_optimizer_from_adapter", False):
+            return
+        model = self.training_state.model_info["model"]
+        if hasattr(model, "load_unwrapped_optimizer"):
+            logger.warning(
+                "init_optimizer_from_adapter: skipped — sharded strategy; optimizer starts fresh"
+            )
+            return
+        saved = ckpt.get("optimizer_state_dict") or {}
+        current = self.training_state.optimizer.state_dict()
+        n_saved = sum(len(g["params"]) for g in saved.get("param_groups", []))
+        n_live = sum(len(g["params"]) for g in current["param_groups"])
+        if n_saved != n_live or not saved.get("state"):
+            logger.warning(
+                "init_optimizer_from_adapter: skipped — saved optimizer covers %d params, live "
+                "has %d (or no state); optimizer starts fresh", n_saved, n_live,
+            )
+            return
+        current["state"] = saved["state"]
+        self.training_state.optimizer.load_state_dict(current)
+        steps = {int(s["step"]) for s in saved["state"].values() if "step" in s}
+        logger.info(
+            "init_optimizer_from_adapter: carried AdamW state for %d params (optimizer step %s)",
+            n_live, sorted(steps)[:3],
+        )
 
     def _stop_requested_on_any_rank(self, local_stop):
         group = self._loss_process_group()
@@ -460,6 +495,12 @@ class TrainingLoop:
         # Sequence classification: labels are class indices, no packed-doc masking.
         if get_job_config()["training_mode"] == "classification":
             return self._classification_training_step_accumulate(
+                batch, accum_step, gradient_accumulation_steps
+            )
+
+        # GRPO: clipped policy-gradient surrogate over sampled completions, no labels.
+        if get_job_config()["training_mode"] == "grpo":
+            return self._grpo_training_step_accumulate(
                 batch, accum_step, gradient_accumulation_steps
             )
 
@@ -600,6 +641,87 @@ class TrainingLoop:
 
         # Local, unreduced, detached. The caller sums these and reduces once.
         return loss.detach()
+
+    def _grpo_training_step_accumulate(
+        self, batch, accum_step, gradient_accumulation_steps
+    ):
+        device = self.training_state.model_info["distribution_strategy"]["device"]
+        model = self.training_state.model_info["model"]
+        model_config = self.training_state.model_info.get("model_config")
+        grpo_cfg = get_job_config().get("grpo") or {}
+        clip_eps = float(grpo_cfg.get("clip_eps", 0.2))
+        kl_beta = float(grpo_cfg.get("kl_beta", 0.0))
+        if kl_beta > 0.0:
+            raise NotImplementedError(
+                "grpo.kl_beta > 0 needs a reference-policy pass; only beta == 0 is implemented"
+            )
+
+        start_time = time.time()
+
+        input_ids = batch["input_ids"].to(device)
+        attention_mask = batch["attention_mask"].to(device)
+        completion_mask = batch["completion_mask"].to(device)
+        old_logprobs = batch["old_logprobs"].to(device)
+        advantages = batch["advantage"].to(device)
+
+        forward_kwargs = {"input_ids": input_ids, "attention_mask": attention_mask}
+        if is_multimodal(model_config):
+            forward_kwargs["mm_token_type_ids"] = torch.zeros_like(input_ids)
+
+        logits = model(**forward_kwargs).logits  # [B, L, V], model dtype
+
+        # Position t predicts token t+1: shift, then gather the sampled token's log-prob.
+        targets = input_ids[:, 1:]
+        mask = completion_mask[:, 1:]
+        logp_new = _selected_logprobs(logits[:, :-1], targets)  # [B, L-1] fp32
+        del logits
+
+        old = old_logprobs[:, 1:]
+        on_policy = torch.isnan(old)
+        if bool(on_policy[mask.bool()].any()) and not getattr(self, "_grpo_on_policy_warned", False):
+            self._grpo_on_policy_warned = True
+            logger.warning(
+                "grpo: rows without old_logprobs present — using detached current log-probs "
+                "(ratio == 1, single on-policy pass) for them"
+            )
+        logp_old = torch.where(on_policy, logp_new.detach(), old)
+
+        loss, stats = grpo_loss(
+            logp_new, logp_old, advantages, mask, clip_eps=clip_eps, kl_beta=kl_beta
+        )
+
+        scaled_loss = loss / gradient_accumulation_steps
+        # Always call backward, even on NaN/Inf: it frees the saved activations.
+        scaled_loss.backward()
+
+        stats["time_s"] = time.time() - start_time
+        stats["seq_len"] = int(input_ids.shape[1])
+        self._grpo_step_stats.append(stats)
+        if is_main_rank():
+            logger.info(
+                f"  grpo micro-batch {accum_step + 1}/{gradient_accumulation_steps} "
+                f"- step {self.training_state.current_step} - loss {stats['loss']:.5f} "
+                f"- mean ratio {stats['mean_ratio']:.4f} - clip frac {stats['clip_frac']:.4f} "
+                f"- tokens {stats['tokens']} - rows {stats['sequences']} x {stats['seq_len']} "
+                f"- time {stats['time_s']:.3f}s"
+            )
+        return loss.detach()
+
+    def _log_grpo_step(self):
+        s = self._grpo_step_stats
+        self._grpo_step_stats = []
+        if not s or not is_main_rank():
+            return
+        tokens = sum(x["tokens"] for x in s)
+        w = [x["tokens"] / max(tokens, 1) for x in s]
+        logger.info(
+            f"GRPO step {self.training_state.current_step}: "
+            f"loss {sum(x['loss'] for x in s) / len(s):.5f} "
+            f"mean_ratio {sum(wi * x['mean_ratio'] for wi, x in zip(w, s)):.4f} "
+            f"clip_frac {sum(wi * x['clip_frac'] for wi, x in zip(w, s)):.4f} "
+            f"tokens {tokens} sequences {sum(x['sequences'] for x in s)} "
+            f"micro_batches {len(s)}"
+        )
 
     def _diffusion_training_step_accumulate(
         self, batch, accum_step, gradient_accumulation_steps
@@ -807,6 +929,7 @@ class TrainingLoop:
                 callback.on_step_end(step)
 
     def on_train_end(self):
+
         logger.info(
             f"Training finished successfully after {time.time() - self.training_state.start_time} seconds"
         )
@@ -857,6 +980,7 @@ class TrainingLoop:
 
     @main_rank_only
     def save_checkpoint(self, model_state_dict, optimizer_state_dict, cuda_rng_state):
+
         checkpoint = {
             "model_state_dict": model_state_dict,
             # Gathered by the caller on every rank; this method is @main_rank_only.
@@ -954,6 +1078,7 @@ def get_callbacks(trainer):
 
 
 class TimeoutCallback:
+
     def __init__(self, trainer):
         self.trainer = trainer
         job_config = get_job_config()
@@ -997,6 +1122,7 @@ class CheckpointCallback:
 
 
 class CudaMemoryCallback:
+
     def __init__(self, trainer):
         self.trainer = trainer
         job_config = get_job_config()
@@ -1136,6 +1262,24 @@ def filter_checkpoint(model, state_dict):
             saved_params[name] = state_dict[name]
 
     return saved_params
+
+
+def _row_logprobs(logits_row, targets_row):
+    return torch.log_softmax(logits_row.float(), dim=-1).gather(
+        -1, targets_row.unsqueeze(-1)
+    ).squeeze(-1)
+
+
+def _selected_logprobs(logits, targets):
+    from torch.utils.checkpoint import checkpoint
+
+    rows = []
+    for b in range(logits.shape[0]):
+        if logits.requires_grad:
+            rows.append(checkpoint(_row_logprobs, logits[b], targets[b], use_reentrant=False))
+        else:
+            rows.append(_row_logprobs(logits[b], targets[b]))
+    return torch.stack(rows, dim=0)
 
 
 def _load_trained_parameters(wrapped_model, state_dict):

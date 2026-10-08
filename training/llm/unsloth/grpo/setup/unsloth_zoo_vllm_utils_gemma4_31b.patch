@@ -1,0 +1,17 @@
+--- vllm_utils.py.bak	2026-09-07 19:46:02.326087055 +0000
++++ vllm_utils.py	2026-09-07 19:46:02.349087222 +0000
+@@ -1188,12 +1188,12 @@
+             )
+         pass
+ 
+-        if hasattr(layer, "per_layer_input_gate"):
++        if getattr(layer, "per_layer_input_gate", None) is not None:  # unsloth-bench patch: vLLM sets None for Gemma-4 31B
+             get_state_dict(
+                 f"{vllm_text_model_prefix}.layers.{kk}.per_layer_input_gate",
+                 0, state_dict, layer.per_layer_input_gate,
+             )
+-        if hasattr(layer, "per_layer_projection"):
++        if getattr(layer, "per_layer_projection", None) is not None:  # unsloth-bench patch: vLLM sets None for Gemma-4 31B
+             get_state_dict(
+                 f"{vllm_text_model_prefix}.layers.{kk}.per_layer_projection",
+                 0, state_dict, layer.per_layer_projection,

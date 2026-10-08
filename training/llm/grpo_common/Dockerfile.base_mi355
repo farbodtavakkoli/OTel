@@ -1,0 +1,20 @@
+# grpo-base: ROCm torch + vLLM fork + training pins, no ScalarLM. Build with common/build_base_image.sh (see README.md).
+ARG VLLM_STAGE=grpo-base-vllm-stage:mi355
+FROM ${VLLM_STAGE}
+
+ARG INSTALL_ROOT=/app/cray
+ENV PYTHONPATH="${INSTALL_ROOT}/vllm"
+
+COPY ./infra/requirements-megatron.txt ${INSTALL_ROOT}/requirements-megatron.txt
+COPY ./requirements.txt ${INSTALL_ROOT}/requirements.txt
+
+# --no-deps for the megatron pins so they do not drag transitive versions over the ones
+# vLLM installed; the import check fails the build if the pins disagree (transformers
+# validates tokenizers/safetensors at import).
+RUN uv pip install --no-deps --no-compile --no-cache-dir -r ${INSTALL_ROOT}/requirements-megatron.txt \
+ && uv pip install --no-compile --no-cache-dir -r ${INSTALL_ROOT}/requirements.txt \
+ && uv pip install --no-compile --no-cache-dir scikit-learn \
+ && python -c "import torch, vllm, transformers, tokenizers, peft; print('torch', torch.__version__, 'vllm', vllm.__version__, 'transformers', transformers.__version__, 'peft', peft.__version__)"
+
+WORKDIR /workspace
+ENTRYPOINT ["sleep", "infinity"]

@@ -1,0 +1,45 @@
+# Axolotl GRPO benchmark image for MI355X (ROCm 7.2, gfx950).
+#
+# Why a derived image and not a plain pip venv:
+#   * a pip venv (torch 2.12.1+rocm7.2, axolotl 0.18.0, trl 1.8.0) has no vLLM. There is no
+#     pip-installable ROCm vLLM that registers Gemma4ForConditionalGeneration; the only one available
+#     is the source checkout inside grpo-base:mi355 (/app/cray/vllm; training/llm/grpo_common/Dockerfile.base_mi355).
+#   * axolotl's `axolotl vllm-serve` (and its LoRA-aware `axolotl.scripts.vllm_serve_lora`, auto-selected
+#     by `trl.vllm_lora_sync: true`) is an in-process vLLM `LLM()` server built on TRL's
+#     `trl.scripts.vllm_serve` protocol, and the trainer's `VLLMClient` must speak the same protocol,
+#     so server and trainer run from ONE image with ONE trl version.
+#   * axolotl 0.18.0 pins trl==1.8.0; TRL 1.8 still ships the in-process server (`WeightSyncWorkerExtension`,
+#     `/generate/`, `/init_communicator/`) that vllm_serve_lora subclasses. TRL 1.12 (used by the trl_deepspeed
+#     stack) removed it (1.12 exec's `vllm serve` + dev-mode endpoints), so 1.12 is NOT usable with axolotl 0.18.
+#   * accelerate 1.9.0 in the base image lacks `ParallelismConfig` that axolotl imports -> 1.13.0 (axolotl's pin).
+#
+# Everything is installed with --no-deps so torch / vLLM / transformers / peft of the base image stay exactly
+# as validated (transformers stays 5.12.1 although axolotl pins 5.14.1; the gemma4 modelling code is present).
+#
+# Build from the repository root. The build context must be on a local, exec-capable disk; a noexec
+# network mount will not do:
+#   docker build -f training/llm/axolotl/grpo/setup/Dockerfile.grpo_mi355 -t grpo-axolotl:mi355 training/llm/axolotl/grpo/setup
+ARG BASE_IMAGE=grpo-base:mi355
+FROM ${BASE_IMAGE}
+
+ARG AXOLOTL_VERSION=0.18.0
+ARG TRL_VERSION=1.8.0
+ARG ACCELERATE_VERSION=1.13.0
+
+RUN pip install --no-deps "axolotl==${AXOLOTL_VERSION}" "trl==${TRL_VERSION}" "accelerate==${ACCELERATE_VERSION}" \
+ && pip install --no-deps addict fire art python-dotenv==1.0.1 immutabledict==4.2.0 fastcore posthog==6.7.11 \
+      schedulefree==1.4.1 axolotl-contribs-lgpl==0.0.7 axolotl-contribs-mit==0.0.6 backoff termcolor \
+ && python -c "import axolotl, trl, accelerate, vllm, transformers, peft, torch; print('axolotl', axolotl.__version__, 'trl', trl.__version__, 'accelerate', accelerate.__version__, 'vllm', vllm.__version__, 'transformers', transformers.__version__, 'peft', peft.__version__, 'torch', torch.__version__)" \
+ && python -c "from axolotl.cli.main import cli; from axolotl.cli.vllm_serve import do_vllm_serve; import axolotl.scripts.vllm_serve_lora; from axolotl.core.trainers.grpo import GRPOStrategy; print('axolotl GRPO imports OK')"
+
+# axolotl.loaders.adapter imports bitsandbytes at module level (even for plain LoRA); 0.50.0 is the first wheel with a
+# ROCm-7.2 binary. Not used by this recipe beyond the import.
+RUN pip install --no-deps bitsandbytes==0.50.0 && python -c "import bitsandbytes; from axolotl.loaders.adapter import load_adapter; print('bitsandbytes', bitsandbytes.__version__)"
+
+# axolotl ALWAYS patches Gemma4TextAttention.forward with a fused RMSNorm+RoPE Triton kernel
+# (axolotl/monkeypatch/models/gemma4/fused_attn.py, unconditional for model_type gemma4) which imports
+# liger_kernel.ops.utils; liger-kernel is pure python + Triton (the image ships triton 3.7.1 for ROCm).
+RUN pip install --no-deps liger-kernel==0.8.0 && python -c "import liger_kernel, axolotl.kernels.gemma4_fused_rope; print('liger-kernel', liger_kernel.__version__ if hasattr(liger_kernel,'__version__') else 'ok')"
+
+# axolotl phones home by default; keep the benchmark offline.
+ENV AXOLOTL_DO_NOT_TRACK=1 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 TOKENIZERS_PARALLELISM=false

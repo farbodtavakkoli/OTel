@@ -1,0 +1,44 @@
+diff --git a/verl/utils/vllm/utils.py b/verl/utils/vllm/utils.py
+index 8898ee9..f99a2fa 100644
+--- a/verl/utils/vllm/utils.py
++++ b/verl/utils/vllm/utils.py
+@@ -124,6 +124,39 @@ class VLLMHijack:
+ 
+         do_hijack(LRUCacheWorkerLoRAManager, "_load_adapter", hijack__load_adapter)
+ 
++        # ScalarLM vLLM fork (supermassive-intelligence/vllm-fork): the worker uses
++        # vllm.tokenformer.hybrid_adapter_manager.HybridAdapterManager, whose add_adapter()
++        # and PTWorkerLoRAManager._load_adapter() open lora_request.lora_path on disk before
++        # the upstream _load_adapter is reached. Route in-memory TensorLoRARequests around
++        # that path-based classification so verl's adapter sync works unchanged.
++        try:
++            from vllm.tokenformer.hybrid_adapter_manager import HybridAdapterManager, PTWorkerLoRAManager
++        except ImportError:
++            return
++
++        _orig_hybrid_add = HybridAdapterManager.add_adapter
++        _orig_pt_load = PTWorkerLoRAManager._load_adapter
++
++        def hijack__hybrid_add_adapter(self, lora_request):
++            if isinstance(lora_request, TensorLoRARequest):
++                if self._lora is None:
++                    raise RuntimeError("TensorLoRARequest received but the vLLM worker was started without enable_lora")
++                self._kinds[lora_request.adapter_id] = "lora"
++                try:
++                    return self._lora.add_adapter(lora_request)
++                except Exception:
++                    self._kinds.pop(lora_request.adapter_id, None)
++                    raise
++            return _orig_hybrid_add(self, lora_request)
++
++        def hijack__pt_load_adapter(self, lora_request):
++            if isinstance(lora_request, TensorLoRARequest):
++                return hijack__load_adapter(self, lora_request)
++            return _orig_pt_load(self, lora_request)
++
++        do_hijack(HybridAdapterManager, "add_adapter", hijack__hybrid_add_adapter)
++        do_hijack(PTWorkerLoRAManager, "_load_adapter", hijack__pt_load_adapter)
++
+ 
+ def is_version_ge(pkg: str = "vllm", minver: str = "0.7.3"):
+     """check if the package version is greater than or equal to the minimum version"""

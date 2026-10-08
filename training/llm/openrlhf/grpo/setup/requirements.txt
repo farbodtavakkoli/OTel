@@ -1,0 +1,24 @@
+# OpenRLHF GRPO stack. Install with ./setup.sh (it installs vLLM first, then these).
+# vLLM is installed by setup.sh so it pins torch and the CUDA runtime first.
+
+# openrlhf is installed --no-deps by setup.sh: its own pins would replace the vLLM torch.
+# 0.11.0 is the benchmarked version and needs the LoRA-sync patch setup.sh applies.
+
+deepspeed==0.19.5
+ray[default]==2.55.0
+
+# LoRA, dataset and device-map plumbing (not transitive deps of vLLM).
+peft
+datasets
+accelerate
+
+# Pure-python deps openrlhf's --no-deps install skips. msgpack is a real transitive dep of
+# deepspeed and ray: deepspeed/runtime/pipe/p2p.py imports it unconditionally.
+msgpack
+hjson
+py-cpuinfo
+pylatexenc
+transformers-stream-generator
+
+# openrlhf's trainer imports torchdata.stateful_dataloader at module level; not a vLLM dep.
+torchdata==0.11.0

@@ -1,0 +1,41 @@
+# RapidFire AI GRPO benchmark image for MI355X (ROCm 7.2, gfx950).
+#
+# Why a derived image and not RapidFire's own `rapidfireai init --train` venv route:
+#   * `init --train` pins trl 0.21.0 / transformers 4.57.6 and force-installs a CPU/CUDA torch
+#     (README.md). transformers 4.57 cannot load Gemma-4 and trl 0.21 has no server-mode
+#     client for this vLLM; and there is no pip-installable ROCm vLLM that knows Gemma-4.
+#   * grpo-base:mi355 (training/llm/grpo_common/Dockerfile.base_mi355) is the only available image whose vLLM registers
+#     Gemma4ForConditionalGeneration. TRL server mode needs the SAME trl version on the rollout server
+#     and the trainer, so both run from this one image.
+#   * RapidFire's GRPO is TRL's GRPOTrainer underneath, so rapidfireai is layered on with --no-deps and its
+#     pure-python deps are added under a constraints file frozen from the base image (base_constraints.txt):
+#     nothing that already exists in the image (torch, vLLM, transformers, numpy, datasets, mlflow, ...) can move.
+#   * bitsandbytes 0.50.2 (--no-deps, CPU-only on ROCm) is added because RapidFire's shared-memory model transfer imports it
+#     unconditionally (fit/utils/shm_manager.py, only for isinstance checks against Linear4bit etc.); without it the
+#     run fails with ModuleNotFoundError. No quantisation is used.
+#   * `rapidfireai init --train` is NOT run: all it does beyond pip is write $RF_HOME/rf_mode.txt="fit"
+#     (rapidfireai/cli.py:256). The marker is written directly. RF_HOME stays at the default /root/rapidfireai.
+#
+# Build from the repository root. The three wheels named in the COPY line are not in the repository;
+# download them into the context folder first. The context must be on a local, exec-capable disk;
+# a noexec network mount will not do:
+#   python3 -m pip download --no-deps rapidfireai==0.16.1 trl==1.12.0 bitsandbytes==0.50.2 -d training/llm/rapidfire/grpo/setup
+#   docker build -f training/llm/rapidfire/grpo/setup/Dockerfile.rapidfire_mi355 -t grpo-rapidfire:mi355 training/llm/rapidfire/grpo/setup
+ARG BASE_IMAGE=grpo-base:mi355
+FROM ${BASE_IMAGE}
+
+ARG TRL_VERSION=1.12.0
+ARG RAPIDFIRE_VERSION=0.16.1
+ARG BNB_WHEEL=bitsandbytes-0.50.2-py3-none-manylinux_2_24_x86_64.whl
+
+COPY base_constraints.txt trl-${TRL_VERSION}-py3-none-any.whl rapidfireai-${RAPIDFIRE_VERSION}-py3-none-any.whl ${BNB_WHEEL} /tmp/ctx/
+
+# --no-deps: never let pip move torch/vllm/transformers that the base image was validated with.
+RUN pip install --no-deps /tmp/ctx/trl-${TRL_VERSION}-py3-none-any.whl /tmp/ctx/rapidfireai-${RAPIDFIRE_VERSION}-py3-none-any.whl \
+ && pip install -c /tmp/ctx/base_constraints.txt ipython trackio waitress \
+ && pip install --no-deps /tmp/ctx/${BNB_WHEEL} \
+ && mkdir -p /root/rapidfireai && echo -n fit > /root/rapidfireai/rf_mode.txt \
+ && python -c "import trl, rapidfireai, vllm, transformers, peft, torch, mlflow; print('trl', trl.__version__, 'rapidfireai', rapidfireai.__version__, 'vllm', vllm.__version__, 'transformers', transformers.__version__, 'peft', peft.__version__, 'torch', torch.__version__, 'mlflow', mlflow.__version__)" \
+ && python -c "from rapidfireai.automl import RFGRPOConfig, RFModelConfig, RFLoraConfig, RFGridSearch, List; from rapidfireai import Experiment; print('rapidfireai fit configs OK')" \
+ && python -c "import importlib.util as u; assert u.find_spec('kernels') is None, 'kernels must be absent for RapidFire shm model transfer'; print('kernels absent OK')" \
+ && pip freeze > /opt/rapidfire_image_freeze.txt

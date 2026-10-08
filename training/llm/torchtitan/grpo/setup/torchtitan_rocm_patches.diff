@@ -1,0 +1,53 @@
+diff --git a/torchtitan/experiments/rl/actors/generator.py b/torchtitan/experiments/rl/actors/generator.py
+index 2022f642a..db88e458d 100644
+--- a/torchtitan/experiments/rl/actors/generator.py
++++ b/torchtitan/experiments/rl/actors/generator.py
+@@ -902,7 +902,16 @@ class VLLMGenerator(Actor, Configurable):
+                 backend=(
+                     AttentionBackendEnum.FLEX_ATTENTION
+                     if isinstance(attention_backend, FlexAttention.Config)
+-                    else AttentionBackendEnum.CUSTOM
++                    # GRPO-benchmark patch (ROCm): the CUSTOM backend calls
++                    # torch.nn.attention.varlen with a paged block_table, which the
++                    # ROCm flash kernel rejects ("mha_varlen_fwd: block_table_ must be
++                    # nullopt", measured on MI355X / torch 2.15 nightly). vLLM's own
++                    # ROCm Triton backend handles the paged KV cache natively.
++                    else (
++                        AttentionBackendEnum.TRITON_ATTN
++                        if torch.version.hip is not None
++                        else AttentionBackendEnum.CUSTOM
++                    )
+                 ),
+             ),
+             # Enables RequestOutput.metrics, so generator metrics can be returned
+diff --git a/torchtitan/experiments/rl/actors/trainer.py b/torchtitan/experiments/rl/actors/trainer.py
+index eb69bf14e..78bf97b6b 100644
+--- a/torchtitan/experiments/rl/actors/trainer.py
++++ b/torchtitan/experiments/rl/actors/trainer.py
+@@ -456,6 +456,11 @@ class PolicyTrainer(Actor, Configurable):
+                 "trainer/grad_norm/mean": float(grad_norm.item()),
+                 "trainer/lr": current_lr,
+                 "trainer/policy_version": float(self.policy_version),
++                # GRPO-benchmark patch: peak allocated memory on this trainer rank,
++                # reported so the benchmark record has a measured `peak_mem_gb`.
++                "trainer/peak_mem_gb/max": float(
++                    torch.cuda.max_memory_allocated() / (1024**3)
++                ),
+             },
+         )
+ 
+diff --git a/torchtitan/experiments/rl/train.py b/torchtitan/experiments/rl/train.py
+index 2287483ae..d97c978d4 100644
+--- a/torchtitan/experiments/rl/train.py
++++ b/torchtitan/experiments/rl/train.py
+@@ -129,6 +129,10 @@ class PerHostProvisioner:
+         self.next_gpu += num_gpus
+ 
+         env = {"CUDA_VISIBLE_DEVICES": ",".join(str(g) for g in gpu_ids)}
++        # GRPO-benchmark patch (ROCm): the HIP runtime ignores CUDA_VISIBLE_DEVICES
++        # when the parent already narrowed the node with ROCR_VISIBLE_DEVICES (measured on
++        # MI355X / ROCm 7.2.4), while HIP_VISIBLE_DEVICES nests under ROCR correctly.
++        env["HIP_VISIBLE_DEVICES"] = env["CUDA_VISIBLE_DEVICES"]
+         if extra_env:
+             env.update(extra_env)
+         return env

@@ -7,6 +7,7 @@ from cray_megatron.collectives.main_rank_only import is_main_rank, log_if_main_r
 from cray_infra.training.distributed import get_size, get_rank, allgather, allreduce
 
 from adapters.add_adapters_to_model import add_adapters_to_model
+from adapters.init_adapter_from import maybe_init_adapter_from
 
 from cray_infra.util.get_job_config import get_job_config
 from cray_infra.util.get_config import get_config
@@ -321,6 +322,13 @@ def materialize_model(model_info):
     logger.info(
         f"create_tokenformer_model latency: {total_time:.2f}s ({total_time/60:.1f} minutes)"
     )
+
+    # `init_adapter_from`: continue an earlier job's adapter instead of a zero-initialised one.
+    # Before freeze/dtype/sharding so every strategy shards the loaded weights, not fresh ones.
+    init_ckpt = maybe_init_adapter_from(model_info["model"])
+    if init_ckpt is not None:
+        # Kept for the training loop, which may also carry the optimizer moments over.
+        model_info["init_adapter_checkpoint"] = init_ckpt
 
     # Applied AFTER the adapter so it also freezes adapter params on excluded towers.
     apply_freeze_layer_keywords(model_info["model"], job_config)

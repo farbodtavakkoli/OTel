@@ -64,6 +64,15 @@ class DiffusionConfig(BaseModel):
     # (byte-identical to prior runs). See NaraConfig.
     nara: Optional[NaraConfig] = None
 
+class GrpoConfig(BaseModel):
+    # GRPO (training_mode: "grpo") — clipped policy-gradient surrogate over sampled
+    # completions, one dataset row per completion (ml/cray_megatron/megatron/grpo_loss.py,
+    # dataset/load_grpo_dataset.py). Nested like lora_config — MUST be declared here or
+    # pydantic's extra="ignore" silently drops it.
+    clip_eps: float = 0.2     # PPO clip window [1 - eps, 1 + eps] on the token ratio
+    kl_beta: float = 0.0      # KL-to-reference coefficient; only 0.0 (no ref model) is implemented
+
+
 class ClassificationConfig(BaseModel):
     # Sequence-classification training (training_mode: "classification"). Only read
     # when training_mode == "classification"; ignored otherwise. Nested block like
@@ -122,7 +131,7 @@ class JobConfig(BaseModel):
 
     max_token_block_size: int = 16777216 # 16 mega tokens
 
-    training_mode: str = "language_model"  # or "embedding" / "classification"
+    training_mode: str = "language_model"  # or "embedding" / "classification" / "grpo"
 
     # Optimizer. "adamw" (default) matches historical behavior; "sgd" and "rmsprop"
     # are also constructed over trainable parameters only. An unknown value logs a
@@ -174,6 +183,18 @@ class JobConfig(BaseModel):
     # Adapters
     adapter_type: str = "tokenformer"
     lora_config: Optional[LoraConfig] = LoraConfig()
+
+    # Continue an EARLIER job's adapter instead of starting a zero-initialised one: a job
+    # hash (sibling directory under the jobs root), a job directory, or a checkpoint_<step>.pt.
+    # Its latest checkpoint's model_state_dict is strictly loaded into the freshly created
+    # adapter before sharding (ml/adapters/init_adapter_from.py). This is what lets an outer
+    # RL loop (GRPO) keep training ONE adapter across many ScalarLM jobs. None = fresh adapter.
+    init_adapter_from: Optional[str] = None
+    # Also carry that job's AdamW moments (non-sharded strategies only). Off = fresh optimizer.
+    init_optimizer_from_adapter: bool = False
+
+    # GRPO knobs; only read when training_mode == "grpo".
+    grpo: Optional[GrpoConfig] = None
 
     # DiffusionGemma-only canvas denoising config (nested, like lora_config).
     # None for every non-diffusion model; is_diffusion() gates whether it is read.

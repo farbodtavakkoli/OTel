@@ -1,0 +1,51 @@
+# verl GRPO environment for AMD MI355X (../README.md, "Setup"). Base: grpo-base:mi355
+# (training/llm/grpo_common/Dockerfile.base_mi355), the only available ROCm image whose vLLM registers
+# Gemma4ForConditionalGeneration (torch 2.12+rocm7.15, transformers 5.12.1, peft 0.19.1).
+# verl is installed --no-deps so none of those are replaced.
+#
+#   docker build -f training/llm/verl/grpo/setup/Dockerfile.grpo_mi355 -t grpo-verl:mi355 training/llm/verl/grpo/setup
+#
+# Run with --network host (judge on 127.0.0.1:8100), --device /dev/kfd and ONLY the render
+# nodes of the GPUs the run may use; do not set HIP/CUDA_VISIBLE_DEVICES (vLLM-ROCm errors when
+# they disagree). ../README.md has the full `docker run`.
+ARG BASE_IMAGE=grpo-base:mi355
+FROM ${BASE_IMAGE}
+
+ARG VERL_COMMIT=d040717b21af2e23e8e789a3e354cff2394ae2de
+
+# 1. verl from git at the benchmarked commit, plus the pure-python deps the image lacks.
+RUN cd /opt && git clone https://github.com/volcengine/verl.git && cd verl \
+ && git checkout ${VERL_COMMIT} \
+ && pip install --no-deps -e . \
+ && pip install 'ray[default]' hydra-core codetiming pylatexenc math_verify latex2sympy2_extended \
+        uvicorn fastapi pybind11 'git+https://github.com/Ascend/TransferQueue.git@main'
+
+# 2. Metadata-only relabel of the image's vLLM version. It was built without git tags, so
+#    setuptools-scm stamped it 0.1.dev…; verl hard-fails on vllm < 0.18. No code changes;
+#    originals are kept as *.orig.
+RUN NEWV=0.28.0.dev0+g281955fc6.rocm715 \
+ && D=$(ls -d /opt/venv/lib/python3.12/site-packages/vllm-*.dist-info | head -1) \
+ && cp $D/METADATA $D/METADATA.orig && sed -i "s/^Version: .*/Version: $NEWV/" $D/METADATA \
+ && cp /app/cray/vllm/vllm/_version.py /app/cray/vllm/vllm/_version.py.orig \
+ && sed -i "s/^__version__ = version = .*/__version__ = version = '$NEWV'/" /app/cray/vllm/vllm/_version.py \
+ && sed -i "s/^__version_tuple__ = version_tuple = .*/__version_tuple__ = version_tuple = (0, 28, 0, 'dev0', 'g281955fc6.rocm715')/" /app/cray/vllm/vllm/_version.py \
+ && python -c "import vllm; print('vllm', vllm.__version__)"
+
+# 3. verl patch: the ScalarLM vLLM fork's HybridAdapterManager opens LoRA paths before verl's
+#    hijack; this patch keeps verl's LoRA hot-load working.
+COPY verl_scalarlm_vllm_fork_lora.patch /opt/verl/
+RUN cd /opt/verl && git apply verl_scalarlm_vllm_fork_lora.patch
+
+# 4. Optional: DAPO-style dynamic sampling for the classic trainer. Inactive unless
+#    algorithm.filter_groups.enable=True; included for completeness, not a validated feature.
+COPY verl_classic_trainer_filter_groups.patch /opt/verl/
+RUN cd /opt/verl && patch -p1 < verl_classic_trainer_filter_groups.patch
+
+# 5. accelerate 1.9.0 x transformers 5.12: text-only checkpoints (Llama-3.1) fail to load under
+#    init_empty_weights with `unexpected keyword argument '_is_hf_initialized'`; see the patch header.
+COPY accelerate_init_empty_weights_hf_initialized.patch /opt/
+RUN cd /opt/venv/lib/python3.12/site-packages && patch -p0 < /opt/accelerate_init_empty_weights_hf_initialized.patch
+
+RUN python -c "import verl, vllm, transformers, peft, ray; print(verl.__version__, vllm.__version__, transformers.__version__, peft.__version__, ray.__version__)"
+WORKDIR /workspace
+ENTRYPOINT ["sleep", "infinity"]

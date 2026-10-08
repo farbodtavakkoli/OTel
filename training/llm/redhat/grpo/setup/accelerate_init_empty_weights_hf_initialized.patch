@@ -1,0 +1,26 @@
+accelerate 1.9.0 `init_empty_weights` vs transformers 5.12 `_is_hf_initialized`
+==============================================================================
+accelerate's `register_empty_parameter` re-creates every registered Parameter as
+`param_cls(tensor, **param.__dict__)`. transformers 5.12's loader sets the attribute
+`_is_hf_initialized = True` on parameters it has filled, so for text-only checkpoints loaded
+under `init_empty_weights` (verl's FSDP engine, Llama-3.1-8B-Instruct) the re-creation fails with
+`TypeError: Parameter.__new__() got an unexpected keyword argument '_is_hf_initialized'`.
+Gemma-4 does not hit it (its `AutoModelForImageTextToText` path never enters the hook). Fix:
+strip the attribute from the kwargs and restore it on the new Parameter. Applied with:
+  cd /opt/venv/lib/python3.12/site-packages && patch -p0 < this_file
+--- accelerate/big_modeling.py
++++ accelerate/big_modeling.py
+@@ -130,8 +130,11 @@
+         old_register_parameter(module, name, param)
+         if param is not None:
+             param_cls = type(module._parameters[name])
+-            kwargs = module._parameters[name].__dict__
++            kwargs = dict(module._parameters[name].__dict__)
++            hf_init = kwargs.pop("_is_hf_initialized", None)
+             kwargs["requires_grad"] = param.requires_grad
+             module._parameters[name] = param_cls(module._parameters[name].to(device), **kwargs)
++            if hf_init is not None:
++                module._parameters[name]._is_hf_initialized = hf_init
+ 
+     def register_empty_buffer(module, name, buffer, persistent=True):
+         old_register_buffer(module, name, buffer, persistent=persistent)

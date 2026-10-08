@@ -1,0 +1,29 @@
+# OpenRLHF GRPO environment for AMD MI355X (README.md, "Environment").
+# Base: grpo-base:mi355 (training/llm/grpo_common/Dockerfile.base_mi355: vLLM with Gemma-4, torch 2.12+rocm7.15,
+# transformers 5.12.1, peft 0.19.1). Everything is installed --no-deps so OpenRLHF's [vllm] extra
+# cannot replace the ROCm torch with a CUDA wheel.
+#
+# Build from the repository root; the context is this setup/ folder, which holds the patch applier
+# and the patch the COPY below needs:
+#   docker build -f training/llm/openrlhf/grpo/setup/Dockerfile.grpo_mi355 -t grpo-openrlhf:mi355 training/llm/openrlhf/grpo/setup
+#
+# Run with --network host, --device /dev/kfd and only the render nodes of the GPUs the run may
+# use (Ray rewrites *_VISIBLE_DEVICES per worker, so device-level isolation is the safe form).
+ARG BASE_IMAGE=grpo-base:mi355
+FROM ${BASE_IMAGE}
+
+# 1. OpenRLHF + DeepSpeed + Ray, --no-deps (load-bearing), then the pure-python deps they import.
+RUN pip install --no-deps openrlhf==0.11.0 deepspeed==0.19.5 hjson py-cpuinfo \
+        nvidia-ml-py pynvml python-dotenv loralib jsonlines 'ray[default]==2.55.0' \
+ && pip install --no-deps pylatexenc isort transformers-stream-generator
+
+# 2. Patch OpenRLHF 0.11.0. Stock 0.11.0 never syncs LoRA weights to vLLM (the rollout policy
+#    silently stays at the base model); the patch broadcasts merged base+LoRA weights under HF
+#    names, adds regex LoRA targets (keeps a VLM's vision tower frozen) and accepts the untagged
+#    vLLM dev version. The resulting diff is openrlhf_0.11.0_lora_vllm_sync.patch.
+COPY patch_openrlhf_lora_sync.py openrlhf_0.11.0_lora_vllm_sync.patch /opt/openrlhf_patch/
+RUN python /opt/openrlhf_patch/patch_openrlhf_lora_sync.py
+
+RUN python -c "import openrlhf, deepspeed, ray, vllm, transformers; from importlib.metadata import version; print('openrlhf', version('openrlhf'), 'deepspeed', deepspeed.__version__, 'ray', ray.__version__, 'vllm', vllm.__version__, 'transformers', transformers.__version__)"
+WORKDIR /workspace
+ENTRYPOINT ["sleep", "infinity"]

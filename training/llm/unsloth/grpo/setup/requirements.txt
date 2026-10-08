@@ -1,0 +1,21 @@
+# Unsloth GRPO stack. Install with ./setup.sh (it installs vLLM first, then these).
+# Unsloth colocates an in-process vLLM engine with the trainer on ONE GPU.
+
+# unsloth/unsloth_zoo are installed --no-deps by setup.sh: they pin torch<2.12 and
+# transformers<=5.5.0, which would replace the versions vLLM needs.
+trl==1.12.0
+bitsandbytes>=0.50.0
+torchao>=0.13.0
+
+# LoRA, dataset and device-map plumbing (not transitive deps of vLLM).
+peft
+datasets
+accelerate
+
+# Pure-python deps unsloth's --no-deps install skips.
+tyro
+structlog
+msgspec
+hf_transfer
+sentencepiece
+protobuf

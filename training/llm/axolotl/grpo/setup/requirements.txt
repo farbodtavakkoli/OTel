@@ -1,0 +1,34 @@
+# Axolotl GRPO stack. Install with ./setup.sh (it installs vLLM first, then these).
+
+# axolotl 0.18 requires TRL 1.8: its LoRA-aware rollout server subclasses TRL 1.8's in-process
+# server, which TRL 1.12 removed. Do not "upgrade" trl for this stack.
+trl==1.8.0
+accelerate==1.13.0
+bitsandbytes==0.50.0
+liger-kernel==0.8.0
+
+# LoRA and dataset plumbing (not transitive deps of vLLM).
+peft
+datasets
+
+# Pure-python deps axolotl's --no-deps install skips. evaluate is imported at module level by
+# axolotl/utils/callbacks/__init__.py, which axolotl.cli.train reaches.
+evaluate==0.4.6
+colorama==0.4.6
+distro==1.9.0
+python-dotenv==1.0.1
+immutabledict==4.2.0
+posthog==6.7.11
+schedulefree==1.4.1
+addict
+fire
+art
+fastcore
+backoff
+termcolor
+
+# axolotl imports these unconditionally through accelerate's launcher, even when none of them is
+# enabled in the config.
+wandb
+deepspeed
+torchao

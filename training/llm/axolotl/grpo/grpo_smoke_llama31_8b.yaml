@@ -1,0 +1,96 @@
+# Axolotl GRPO smoke config, 8B text-only policy: 2 steps, G=4, 8 prompts x 4 completions,
+# 256 max completion tokens, LoRA r=16/alpha=32, no warm-up. Use this to check the stack runs.
+# Run with: train_llm_grpo_axolotl.py --config grpo_smoke_llama31_8b.yaml
+# $GRPO_SHARED_DIR below is expanded by the launcher; --model/--data/--output-dir override the
+# matching fields. The reward, dataset transform, plugin and serve module live in utils.py.
+
+base_model: $GRPO_SHARED_DIR/models/unsloth--Meta-Llama-3.1-8B-Instruct
+# model_type "llama" resolves to LlamaForCausalLM (no multimodal wrapper, no Gemma-4 fused-attention patch); EOS ids for
+# the truncation rule ({128001, 128008, 128009}) come from the tokenizer/generation_config via the plugin.
+tokenizer_type: AutoTokenizer
+chat_template: tokenizer_default
+
+rl: grpo
+plugins:
+  - utils.GRPOBenchPlugin              # per-step timers, steps.jsonl, summary.json, TRL-1.8 shims
+
+# rollout server (read by `axolotl vllm-serve`)
+vllm:
+  host: 127.0.0.1
+  port: 8131
+  gpu_memory_utilization: 0.85
+  dtype: bfloat16
+  max_model_len: 8192
+  enable_prefix_caching: true
+  serve_module: utils                  # utils.main: axolotl.scripts.vllm_serve_lora + vLLM version relabel
+
+# LoRA r=16 on attention + MLP projections of every decoder layer (text-only model, no prefix: 32 x 7 = 224 modules)
+adapter: lora
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.0
+lora_target_modules: '.*\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$'
+lora_mlp_kernel: false
+lora_qkv_kernel: false
+lora_o_kernel: false
+
+# TRL GRPOConfig passthrough
+trl:
+  use_vllm: true
+  vllm_mode: server
+  vllm_server_host: 127.0.0.1
+  vllm_server_port: 8131
+  vllm_server_timeout: 600
+  use_data_producer: true        # required for vllm_lora_sync (FastAsyncGRPOConfig field); async_prefetch stays off
+  async_prefetch: false          # -> synchronous loop: sync -> rollout -> judge -> train, one batch at a time
+  vllm_lora_sync: true           # adapter-only sync (save_pretrained to shared dir + /set_lora_adapter/), no NCCL
+  vllm_sync_interval: 1          # every optimizer step (on-policy)
+  num_generations: 4
+  max_completion_length: 256
+  temperature: 1.0
+  top_p: 1.0
+  beta: 0.0
+  num_iterations: 1
+  skip_zero_advantage_batches: false   # axolotl default true skips fwd/bwd on zero-advantage micro-batches; off for comparability
+  reward_num_workers: 1                # reward on the main thread (one score_batch call per generation batch)
+  reroll_max_groups: 0                 # disable axolotl's deferred re-roll of zero-signal prompts (default 1 from 50% of steps)
+  reroll_start_fraction: 1.0
+  replay_buffer_size: 0
+  reward_funcs:
+    - utils.judge_reward               # -> grpo_common/judge_reward.py::score_batch, one call per generation batch
+  log_completions: false
+
+datasets:
+  - path: $GRPO_SHARED_DIR/runs/axolotl/data/grpo_prompts.jsonl   # rows: messages + ground_truth (../../grpo_common/README.md); --data overrides
+    ds_type: json
+    type: utils.grpo_transform         # messages -> prompt; ground_truth passes through to the reward
+    split: train
+skip_prepare_dataset: true             # no long-sequence dropping; every row stays
+dataset_prepared_path: $GRPO_SHARED_DIR/runs/axolotl/smoke_llama31_8b/prepared   # the script sets <output_dir>/prepared
+val_set_size: 0.0
+sequence_len: 8192
+dataset_num_proc: 1
+dataloader_num_workers: 0
+
+# 8 completions per micro-batch x 4 accumulation = 32 completions (8 prompts x G=4) per optimizer step
+micro_batch_size: 8
+gradient_accumulation_steps: 4
+max_steps: 2
+learning_rate: 1.0e-5
+optimizer: adamw_torch
+lr_scheduler: constant
+warmup_steps: 0
+weight_decay: 0.0
+max_grad_norm: 1.0
+seed: 42
+
+bf16: true
+tf32: false
+attn_implementation: sdpa
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+
+output_dir: $GRPO_SHARED_DIR/runs/axolotl/smoke_llama31_8b   # --output-dir overrides
+logging_steps: 1
+save_strategy: "no"                    # the final adapter is still written to output_dir by axolotl

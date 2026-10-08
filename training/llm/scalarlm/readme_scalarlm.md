@@ -197,6 +197,40 @@ batches are logged with a traceback and skipped; results contain only successful
 - Inference: `scalarlm_inference/runs/<timestamp>/inference_results.json` with
   ground-truth, prompt, and generated response per record.
 
+## GRPO
+
+`ml/` adds a `grpo` training mode and an `init_adapter_from` option, so one LoRA adapter is carried across jobs and hot loaded into the running vLLM between cycles. Existing modes are unchanged. `train_llm_grpo_scalarlm.py` (with `utils.py` and `train_job_entrypoint_gpu_pinned.sh`) is the outer loop: each cycle samples completions through the server, scores them with the shared judge in [`../grpo_common`](../grpo_common/README.md), computes group advantages and submits one training job that continues the previous adapter.
+
+The image must carry the GRPO mode (`mi355-grpo-v1.1` or newer). Check for `/app/cray/ml/cray_megatron/megatron/grpo_loss.py` inside it before trusting a tag.
+
+```bash
+python3 -m venv $GRPO_ENV_DIR/env_scalarlm
+$GRPO_ENV_DIR/env_scalarlm/bin/pip install repo/sdk transformers tokenizers jinja2 numpy requests
+../grpo_common/judge_server.sh start
+$GRPO_ENV_DIR/env_scalarlm/bin/python train_llm_grpo_scalarlm.py \
+  --model $GRPO_SHARED_DIR/models/<org>--<name> --data $GRPO_SHARED_DIR/data/grpo_prompts.jsonl \
+  --output-dir <run> --steps 2 --warmup-steps 0 --prompt-batch-size 8 --group-size 4 --max-tokens 256 \
+  --keep-zero-spread --start-server --render-nodes /dev/dri/renderD<a> /dev/dri/renderD<b> \
+  --image farbodatdocker/scalarlm:mi355-grpo-v1.1 --verify
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--objective` | `grpo` | `rft` is rejection sampling SFT, not GRPO |
+| `--steps` / `--prompt-batch-size` / `--group-size` | 20 / 32 / 8 | cycles, prompts per cycle, completions per prompt |
+| `--render-nodes` | required with `--start-server` | first entry is the vLLM GPU, the rest train; device paths on ROCm, indices on CUDA |
+| `--trainer-gpus` / `--gpu-mem-util` | 1 / 0.85 | use about 0.35 with a single render node |
+| `--keep-zero-spread` | off | also train groups whose rewards are all equal |
+| `--verify` | off | checks adapter continuation, PEFT export and a generate through the hot loaded adapter |
+
+Notes:
+
+1. Run the launcher from this folder: the SDK ships the adjacent `ml/` with every job.
+2. `--model` must be a local directory named `<org>--<name>`; the launcher builds an offline HF cache entry for it.
+3. `train_job_entrypoint_gpu_pinned.sh` is mounted over the image entrypoint so training never lands on the vLLM GPU.
+4. Jobs are keyed by `sha256(train_args)`; each cycle adds `sampling_seed = seed + cycle` to stay distinct.
+5. An image without the GRPO mode returns no log probs and silently falls back to ratio 1. Treat that as a wrong image.
+
 ## Server image
 
 One source tree, one `ml/` recipe, two images built by the same `repo/Dockerfile`.
@@ -204,6 +238,7 @@ Runbooks: `docs/DOCKER_IMAGE_MI355.md` (AMD) and `docs/DOCKER_IMAGE_H100.md` (NV
 
 | Tag | Hardware |
 |---|---|
+| `farbodatdocker/scalarlm:mi355-grpo-v1.1` | AMD MI355X, gfx950 / ROCm 7.2.4, adds GRPO |
 | `farbodatdocker/scalarlm:mi355-v1.7` | AMD MI355X — gfx950 / ROCm 7.2.4 |
 | `farbodatdocker/scalarlm:h100-v1.6` | NVIDIA H100 — sm_90 / CUDA 13 |
 
@@ -216,8 +251,8 @@ Build either from source (the script auto-detects the vendor; set `TARGET` to be
 
 ```bash
 cd docs
-TARGET=amd    IMAGE_TAG=mi355-v1.7 ./build_image.sh
-TARGET=nvidia IMAGE_TAG=h100-v1.6  ./build_image.sh
+TARGET=amd    IMAGE_TAG=mi355-grpo-v1.1 ./build_image.sh
+TARGET=nvidia IMAGE_TAG=h100-v1.7  ./build_image.sh
 ```
 
 Read an image's source revision from its `org.opencontainers.image.revision` label with

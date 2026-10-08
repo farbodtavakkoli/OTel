@@ -37,6 +37,10 @@ runnable infrastructure recipes for AMD, NVIDIA, Apple, and Intel hardware.
 - Dataset cards, model cards, and benchmark results published alongside the
   [Hugging Face releases](https://huggingface.co/farbodtavakkoli).
 
+A GRPO benchmark harness runs nine stacks against one shared judge, reward and dataset:
+`training/llm/grpo_common` plus a `grpo/` folder in each stack, with ScalarLM GRPO in
+`training/llm/scalarlm`.
+
 This is a recipe collection, not one monolithic framework. Environments are intentionally
 isolated because packages such as Unsloth, PyLate, DeepSpeed, vLLM, and SGLang can require
 conflicting dependency versions.
@@ -68,6 +72,7 @@ of the stack. Always use the exact install and launch commands from the folder y
 | Goal | Start here |
 |---|---|
 | Chat SFT, DPO, or GRPO | `training/llm/deepspeed` |
+| Judge based GRPO across stacks | `training/llm/grpo_common`, then `training/llm/verl/grpo` or `training/llm/scalarlm` |
 | Standard bi-encoder training | `training/embedding/sentence_transformers` |
 | Cross-encoder reranking | `training/reranker/sentence_transformers` |
 | Multi-class telecom classification | `training/classification/deepspeed` |
@@ -83,6 +88,8 @@ of the stack. Always use the exact install and launch commands from the folder y
 .
 |-- training/
 |   |-- llm/                  # 21 framework-specific LLM recipes
+|   |   |-- <framework>/grpo/ # GRPO benchmark stack for that framework
+|   |   `-- grpo_common/      # shared judge, reward, data and ROCm base image for GRPO
 |   |-- embedding/            # Sentence Transformers, Tevatron, PyLate
 |   |-- reranker/             # Sentence Transformers, FlagEmbedding
 |   `-- classification/       # DeepSpeed sequence classification
@@ -149,6 +156,9 @@ The latest available project images are:
 ```bash
 # AMD Instinct MI355X
 docker pull farbodatdocker/scalarlm:mi355-v1.7
+
+# AMD Instinct MI355X with the GRPO training mode
+docker pull farbodatdocker/scalarlm:mi355-grpo-v1.1
 
 # NVIDIA H100
 docker pull farbodatdocker/scalarlm:h100-v1.6
@@ -253,6 +263,7 @@ embeddings = model.encode(sentences, normalize_embeddings=True)
 |---|---|
 | [`docs/OTel-NeurIPS-2026.pdf`](docs/OTel-NeurIPS-2026.pdf) | OTel paper — NeurIPS 2026 Spotlight (Evaluations & Datasets Track) |
 | [`OTel ACM paper`](https://arxiv.org/abs/2608.15436) | ACM AI Leadership Summit 2026 — Breakthrough Impact Highlights Track |
+| [`docs/grpo_method.md`](docs/grpo_method.md) · [`docs/grpo_findings.md`](docs/grpo_findings.md) · [`docs/grpo_porting.md`](docs/grpo_porting.md) | GRPO loop, stack comparison results, and ROCm to CUDA porting |
 | [`docs/mi355x_training_notes.md`](docs/mi355x_training_notes.md) | ROCm training lessons, scaling, and failure modes |
 | [`docs/mi355x_inference_notes.md`](docs/mi355x_inference_notes.md) | ROCm serving lessons and FP8 findings |
 | [`docs/h100_training_notes.md`](docs/h100_training_notes.md) | CUDA training lessons and the ROCm→CUDA reversals |
@@ -299,9 +310,7 @@ network-configuration use.
 - Release the comprehensive OTel 2.0 evaluation through MLPerf in collaboration with
   MLCommons.
 - Add and verify training and inference support on AWS infrastructure and Tenstorrent
-  hardware.
-- Compare and benchmark every compatible training stack for GRPO and multi-node
-  training under a common methodology.
+  hardware, and benchmark multi node training under a common methodology.
 - Benchmark inference throughput, latency, memory use, and efficiency on AMD Ryzen
   systems.
 

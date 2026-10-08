@@ -1,0 +1,21 @@
+# TorchTitan RL (TitanRL) GRPO stack. Install with ./setup/setup.sh.
+#
+# This stack is the outlier: full-parameter (no LoRA path) and it has no Gemma-4 model
+# definition, so it runs Qwen3-4B. torchtitan is run from a source checkout, not pip-installed.
+#
+# torch is pinned by vLLM, which setup.sh installs first. torchtitan's own requirements files
+# are installed from the checkout; only the extras below need pinning here.
+
+# vLLM 0.29.0 requires apache-tvm-ffi==0.1.11, while torchtitan's requirements pull 0.1.13.
+# tilelang and tokenspeed-mla also cap it at <=0.1.11.
+apache-tvm-ffi==0.1.11
+
+# torchstore pins torchmonarch==0.4.1, which downgrades the version TitanRL needs; setup.sh
+# reinstalls 0.6.0 --no-deps afterwards. `pip check` then reports that mismatch by design.
+torchmonarch==0.6.0
+
+# FlexAttention compiles an inductor kernel at run time and needs ninja on PATH.
+ninja
+
+# The --verify checkpoint reload uses device_map.
+accelerate

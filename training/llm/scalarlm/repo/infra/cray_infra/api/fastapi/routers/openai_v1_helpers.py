@@ -34,6 +34,11 @@ _COMPLETION_ALLOWED_KEYS = (
     "seed",
     "presence_penalty",
     "frequency_penalty",
+    # Sampling log-probs and the exact sampled token ids (vLLM `return_token_ids`): what an
+    # RL loop (GRPO) needs as old_logprobs / training tokens. The proxy streams vLLM's body
+    # back verbatim, so the response fields need no handling here.
+    "logprobs",
+    "return_token_ids",
 )
 
 _CHAT_ALLOWED_KEYS = (

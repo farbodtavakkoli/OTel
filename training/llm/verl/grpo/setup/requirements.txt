@@ -1,0 +1,37 @@
+# verl GRPO stack. Install with ./setup/setup.sh (it installs vLLM first, then these).
+# Only the pins that matter are listed; everything else resolves transitively.
+
+# vLLM is installed by setup.sh, not here: it must go in first so it pins torch and the
+# CUDA runtime. This stack pins 0.28.0 (see setup.sh for why); the shared default in
+# grpo_common/setup_common.sh is 0.29.0. The two do not agree about which release first registers
+# Gemma4ForConditionalGeneration, so see docs/PORTING.md section 3 before staging a multimodal
+# policy here.
+
+# verl itself is a git checkout at the benchmarked commit, installed -e --no-deps by setup.sh:
+#   https://github.com/volcengine/verl @ d040717b21af2e23e8e789a3e354cff2394ae2de
+
+# tensordict 0.13.0 is required, not merely preferred. On 0.14.x the per-rank `metrics` dict is
+# stored as a NonTensorStack, so verl's tu.get() returns a list and ray_trainer.py's
+# tu.get(output, "metrics")["mfu"] raises TypeError at the first old-log-prob pass.
+tensordict==0.13.0
+
+# verl's ray_trainer imports torchdata.stateful_dataloader at module level; it is not a vLLM dep.
+torchdata==0.11.0
+
+# LoRA, dataset and device-map plumbing. Not transitive deps of vLLM, but the GRPO path needs all
+# three: peft builds and reloads the adapter, datasets backs verl's dataloader, accelerate is used
+# by the --verify reload (device_map).
+peft
+datasets
+accelerate
+
+# verl runtime deps that its --no-deps install skips.
+ray[default]
+hydra-core
+codetiming
+pylatexenc
+math_verify
+latex2sympy2_extended
+uvicorn
+fastapi
+pybind11

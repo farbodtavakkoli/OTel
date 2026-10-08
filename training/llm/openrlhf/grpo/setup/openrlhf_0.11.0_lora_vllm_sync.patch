@@ -1,0 +1,85 @@
+--- a/openrlhf/actor.py	2026-09-07 19:36:51.974507618 +0000
++++ b/openrlhf/models/actor.py	2026-09-07 19:36:52.001507783 +0000
+@@ -177,6 +177,14 @@
+             if lora_rank > 0:
+                 # https://github.com/huggingface/peft/issues/137
+                 self.model.enable_input_require_grads()
++                # [grpo-bench lora-sync patch] single 're:<regex>' entry -> regex string for PEFT (fullmatch)
++                if (
++                    isinstance(target_modules, (list, tuple))
++                    and len(target_modules) == 1
++                    and isinstance(target_modules[0], str)
++                    and target_modules[0].startswith("re:")
++                ):
++                    target_modules = target_modules[0][3:]
+                 lora_config = LoraConfig(
+                     task_type=TaskType.CAUSAL_LM,
+                     r=lora_rank,
+--- a/openrlhf/ppo_actor.py	2026-09-07 19:36:51.976507630 +0000
++++ b/openrlhf/trainer/ray/ppo_actor.py	2026-09-07 19:42:59.040769591 +0000
+@@ -472,6 +472,37 @@
+ 
+         sync_fn = _handle_cuda_ipc if self.use_cuda_ipc else _broadcast_param
+ 
++        # [grpo-bench lora-sync patch] LoRA actor: broadcast merged (base + delta) weights of LoRA-wrapped
++        # modules under their Hugging Face names; frozen modules are unchanged in vLLM.
++        try:
++            from peft import PeftModel
++            from peft.tuners.lora import LoraLayer
++        except ImportError:  # pragma: no cover
++            PeftModel = LoraLayer = None
++        if PeftModel is not None and isinstance(model, PeftModel):
++            assert self.strategy.args.ds.zero_stage != 3, "LoRA merged-weight sync supports ZeRO-0/1/2 only"
++            lora_modules = []
++            for mod_name, module in model.named_modules():
++                if isinstance(module, LoraLayer) and getattr(module, "active_adapters", None):
++                    hf_name = mod_name[len("base_model.model."):] if mod_name.startswith("base_model.model.") else mod_name
++                    lora_modules.append((hf_name + ".weight", module))
++            num_params = len(lora_modules)
++            if torch.distributed.get_rank() == 0:
++                print(f"[grpo-bench lora-sync patch] syncing {num_params} merged LoRA module weights to vLLM")
++            for name, module in lora_modules:
++                count += 1
++                merged = module.base_layer.weight.data.clone()
++                for adapter in module.active_adapters:
++                    if adapter in module.lora_A:
++                        merged += module.get_delta_weight(adapter).to(merged.dtype)
++                sync_fn(merged, count, num_params)
++                del merged
++            if cache_reset_refs:
++                ray.get(cache_reset_refs)
++            torch.cuda.empty_cache()
++            torch_dist_barrier_and_cuda_sync()
++            return
++
+         # VLM: only sync trainable (language model) params — vision encoder is frozen.
+         params_to_sync = [
+             (n, p) for n, p in model.named_parameters() if p.requires_grad or not getattr(self.actor, "is_vlm", False)
+@@ -504,7 +535,8 @@
+             import vllm
+             from packaging import version as pkg_version
+ 
+-            if pkg_version.parse(vllm.__version__) < pkg_version.parse("0.16"):
++            _vllm_ver = "999" if str(vllm.__version__).startswith("0.1.dev") else vllm.__version__
++            if pkg_version.parse(_vllm_ver) < pkg_version.parse("0.16"):
+                 os.environ["NCCL_CUMEM_ENABLE"] = "0"
+ 
+         self._setup_distributed(strategy)
+--- a/openrlhf/vllm_engine.py	2026-09-07 19:42:59.013769424 +0000
++++ b/openrlhf/trainer/ray/vllm_engine.py	2026-09-07 19:42:59.040769591 +0000
+@@ -88,11 +88,13 @@
+             print(f"creating LLM with bundle_indices={bundle_indices}")
+ 
+     def _configure_vllm_env(self, version, vllm, full_determinism: bool):
+-        assert version.parse(vllm.__version__) > version.parse(
++        # [grpo-bench lora-sync patch] untagged main build ('0.1.devN+g<sha>') counts as newest
++        _vllm_ver = "999" if str(vllm.__version__).startswith("0.1.dev") else vllm.__version__
++        assert version.parse(_vllm_ver) > version.parse(
+             "0.8.5"
+         ), "Streaming VLLM version must be greater than 0.8.5"
+ 
+-        if version.parse(vllm.__version__) >= version.parse("0.9.0"):
++        if version.parse(_vllm_ver) >= version.parse("0.9.0"):
+             os.environ["VLLM_ALLOW_INSECURE_SERIALIZATION"] = "1"
+ 
+         if full_determinism:

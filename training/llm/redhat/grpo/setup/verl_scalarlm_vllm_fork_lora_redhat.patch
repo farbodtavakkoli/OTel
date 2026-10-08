@@ -1,0 +1,59 @@
+verl LoRA in-memory sync vs. the ScalarLM vLLM fork (farbodatdocker/scalarlm:mi355-v1.6)
+========================================================================================
+Functionally equivalent to the verl stack's own patch,
+stacks/verl/verl_scalarlm_vllm_fork_lora.patch, re-derived for this tree.
+
+Why: verl syncs the LoRA adapter trainer -> vLLM in memory by monkey-patching
+`LRUCacheWorkerLoRAManager._load_adapter` to accept a `TensorLoRARequest`
+(`VLLMHijack.hijack()` in verl/utils/vllm/utils.py). The ScalarLM fork replaces the worker
+LoRA manager with `vllm/tokenformer/hybrid_adapter_manager.py::PTWorkerLoRAManager` (and
+`HybridAdapterManager` when tokenformer is enabled too). Both override the entry points and
+call `get_adapter_absolute_path(lora_request.lora_path)` / `load_adapter_from_pt()` on disk
+*before* verl's patched method is reached, so the sync dies with
+`OfflineModeIsEnabled ... snapshot_download("simon_lora_path")`.
+
+Fix: route `TensorLoRARequest`s straight to verl's tensor loader on those two classes; any
+other request keeps the fork's behaviour. Guarded by try/except ImportError so it is a no-op
+on upstream vLLM. Applied with: cd /opt/verl && patch -p1 < this_file
+
+--- a/verl/utils/vllm/utils.py
++++ b/verl/utils/vllm/utils.py
+@@ -123,6 +123,38 @@ class VLLMHijack:
+ 
+         do_hijack(LRUCacheWorkerLoRAManager, "_load_adapter", hijack__load_adapter)
+ 
++        # --- ScalarLM vLLM fork (farbodatdocker/scalarlm:mi355-v1.6) ---------------------
++        # The fork replaces the worker LoRA manager with PTWorkerLoRAManager (and wraps it
++        # in HybridAdapterManager when tokenformer is enabled). Both open lora_path on disk
++        # before the hijacked LRUCacheWorkerLoRAManager._load_adapter runs, which breaks
++        # verl's in-memory TensorLoRARequest sync. Route tensor requests straight to the
++        # loader above; leave every other request on the fork's own path.
++        try:
++            from vllm.tokenformer.hybrid_adapter_manager import HybridAdapterManager, PTWorkerLoRAManager
++        except ImportError:
++            return
++
++        _fork_pt_load_adapter = PTWorkerLoRAManager._load_adapter
++
++        def hijack_pt__load_adapter(self, lora_request):
++            if isinstance(lora_request, TensorLoRARequest):
++                return hijack__load_adapter(self, lora_request)
++            return _fork_pt_load_adapter(self, lora_request)
++
++        do_hijack(PTWorkerLoRAManager, "_load_adapter", hijack_pt__load_adapter)
++
++        _fork_hybrid_add_adapter = HybridAdapterManager.add_adapter
++
++        def hijack_hybrid_add_adapter(self, lora_request):
++            if isinstance(lora_request, TensorLoRARequest):
++                if self._lora is None:
++                    raise RuntimeError("TensorLoRARequest needs a LoRA-enabled HybridAdapterManager")
++                self._kinds[lora_request.adapter_id] = "lora"
++                return self._lora.add_adapter(lora_request)
++            return _fork_hybrid_add_adapter(self, lora_request)
++
++        do_hijack(HybridAdapterManager, "add_adapter", hijack_hybrid_add_adapter)
++
+ 
+ def is_version_ge(pkg: str = "vllm", minver: str = "0.7.3"):
+     """check if the package version is greater than or equal to the minimum version"""
