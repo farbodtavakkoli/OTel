@@ -10,25 +10,24 @@ gates are in [`DOCKER_IMAGE_MI355.md`](DOCKER_IMAGE_MI355.md).
 
 | Tag | Hardware |
 |---|---|
-| `farbodatdocker/scalarlm:h100-v1.6` | NVIDIA H100 / Hopper (`sm_90`) |
+| `farbodatdocker/scalarlm:h100-v1.7` | NVIDIA H100 / Hopper (`sm_90`), includes GRPO |
 | `farbodatdocker/scalarlm:mi355-v1.8` | AMD MI355X (ROCm) — see the other runbook |
 
 ```bash
-docker pull farbodatdocker/scalarlm:h100-v1.6
+docker pull farbodatdocker/scalarlm:h100-v1.7
 ```
 
-`h100-v1.6` supports `ddp`, `fsdp` and `pytorch_fsdp` training, classification at
-`batch_size > 1`, and LoRA. It shares one `ml/` training recipe with `mi355-v1.7`. Earlier
-`h100-*` tags predate the unified tree and the `mpirun -> torchrun` launcher — use
-`h100-v1.6`.
+`h100-v1.7` supports `ddp`, `fsdp` and `pytorch_fsdp` training, classification at
+`batch_size > 1`, LoRA, and the GRPO training mode. It shares one `ml/` training recipe with
+`mi355-v1.8`, and replaces both `h100-v1.6` and `h100-grpo-v1.0`. Use `h100-v1.7`.
 
 Identify a pulled image by its digest or revision label, not by the tag:
 
 ```bash
-docker inspect farbodatdocker/scalarlm:h100-v1.6 \
+docker inspect farbodatdocker/scalarlm:h100-v1.7 \
   --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
-# h100-v1.6 -> 06cc2f624aa1233b7a6b5edbff5080d6140f0bdb
-# digest    -> sha256:1aaa99bd4da5df7e30e91f892a701ebb1f3e857bf2e54958c741536c25ef6b64
+# h100-v1.7 -> 0b99841b6dba38085738442f0276033c6b3bdb5e
+# digest    -> sha256:91b77deb6694c6f0fa930e98a1408d3113be8cce3cbfec5801eaa21edf00a27a
 ```
 
 Helm chart:
@@ -36,7 +35,7 @@ Helm chart:
 ```yaml
 image:
   repository: farbodatdocker/scalarlm
-  tag: h100-v1.6          # NVIDIA H100 / Hopper; use mi355-v1.8 for AMD MI355X
+  tag: h100-v1.7          # NVIDIA H100 / Hopper; use mi355-v1.8 for AMD MI355X
   pullPolicy: Always
 ```
 
@@ -49,7 +48,7 @@ docker run -d --name scalarlm --gpus '"device=0"' --ipc host --shm-size=64g \
   -e SCALARLM_MODEL=Qwen/Qwen3-0.6B -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 \
   --cap-add SYS_PTRACE -p 8000:8000 -p 8001:8001 \
   -v /path/to/hf-cache:/root/.cache/huggingface \
-  farbodatdocker/scalarlm:h100-v1.6
+  farbodatdocker/scalarlm:h100-v1.7
 
 curl http://localhost:8000/v1/health
 # {"api":"up","vllm":"up","all":"up"}
@@ -83,32 +82,33 @@ The gate list is shared with the AMD image (see `DOCKER_IMAGE_MI355.md`). Run ga
 the runner script, not `pytest` directly:
 
 ```bash
-./run_unit_tests.sh h100-v1.6              # expect: 811 passed, 2 deselected
-WITH_CMD=1 ./run_unit_tests.sh h100-v1.6   # also runs the two cmd/ tests: 813 passed
+./run_unit_tests.sh h100-v1.7              # expect: 827 passed, 2 deselected
+WITH_CMD=1 ./run_unit_tests.sh h100-v1.7   # also runs the two cmd/ tests: 829 passed
 ```
 
 A bare `python3 -m pytest test/unit` reports 18 failures on either vendor's image; they are
 harness artefacts (the FSDP tests need the `torchrun` rendezvous variables, and two read
 `cmd/test_command.sh`, which the Dockerfile does not ship). The script handles both.
 
-Results on 8xH100 for `h100-v1.6`:
+Results on 8xH100 for `h100-v1.7`:
 
 | Gate | Check | Result |
 |---|---|---|
-| 0a | corrections present in image | baked `/app/cray/ml` byte-identical to the tree at the revision label — 41 `.py` files |
+| 0a | corrections present in image | baked `/app/cray/ml` byte-identical to the tree at the revision label, 44 `.py` files |
 | 0b | `sm_90` kernels | `sm_90` in `torch.cuda.get_arch_list()`, capability `(9,0)`, matmul runs |
-| 1 | unit suite in-image | 811 passed, 2 deselected (`WITH_CMD=1`: 813 passed) |
+| 1 | unit suite in-image | 827 passed, 2 deselected, 16 of them GRPO (`WITH_CMD=1`: 829 passed) |
 | 2 | collective correctness — `python3 -m pytest test/infra/distribution_strategy -q` | 14 passed |
-| 3 | end-to-end, image as **both** server and client | per-step losses bit-identical across tags |
+| 3 | end-to-end, image as **both** server and client | `ddp`, `fsdp`, `pytorch_fsdp`: 30 per-step losses bit-identical to `h100-v1.6` |
 | 4 | serving regression — `python3 -m pytest test/integration/api/test_slurm_api.py -q` | 5 passed |
 | 5 | legacy collective jobs, 8 ranks | 5/5 `RESULT: ... passed` |
+| GRPO | `train_llm_grpo_scalarlm.py --verify`, Qwen3 1.7B, 2 cycles | exit 0, judge failures 0, old log probs 32/32 per cycle, continuation, PEFT and served adapter proofs pass |
 
 Gates 3-5 need a running server. Run gate 3 with no `ml/` in the client's working
 directory, so the client uses the image's own baked copy. Gate 2's count is
 vendor-specific: several tests under `test/infra/distribution_strategy` are marked
 `arch="rocm"` and are collected only on the AMD image.
 
-Known failure on `h100-v1.6`:
+Known failure on `h100-v1.7`, unchanged from `h100-v1.6`:
 `test/integration/api/test_vllm_api.py::test_lora_adapter_endpoints` — vLLM returns 500
 rather than 4xx for a nonexistent adapter path.
 
@@ -119,7 +119,7 @@ One command: it stages `ml/` into `repo/`, builds the `nvidia` target of `repo/D
 
 ```bash
 cd training/llm/scalarlm/docs
-TARGET=nvidia ./build_image.sh                 # or: TARGET=nvidia IMAGE_TAG=h100-v1.6 ./build_image.sh
+TARGET=nvidia ./build_image.sh                 # or: TARGET=nvidia IMAGE_TAG=h100-v1.7 ./build_image.sh
 ```
 
 The Dockerfile uses BuildKit `RUN --mount` cache syntax, so the host needs `docker buildx`
@@ -143,7 +143,7 @@ namespace:
 
 ```dockerfile
 # my-scalarlm/Dockerfile
-FROM farbodatdocker/scalarlm:h100-v1.6
+FROM farbodatdocker/scalarlm:h100-v1.7
 
 COPY ml/ /app/cray/ml/                  # overlay your own ml/ tree
 ENV SCALARLM_MODEL=Qwen/Qwen3-0.6B      # bake a default model

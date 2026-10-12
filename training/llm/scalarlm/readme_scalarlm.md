@@ -201,7 +201,7 @@ batches are logged with a traceback and skipped; results contain only successful
 
 `ml/` adds a `grpo` training mode and an `init_adapter_from` option, so one LoRA adapter is carried across jobs and hot loaded into the running vLLM between cycles. Existing modes are unchanged. `train_llm_grpo_scalarlm.py` (with `utils.py` and `train_job_entrypoint_gpu_pinned.sh`) is the outer loop: each cycle samples completions through the server, scores them with the shared judge in [`../grpo_common`](../grpo_common/README.md), computes group advantages and submits one training job that continues the previous adapter.
 
-The image must carry the GRPO mode (`mi355-v1.8` or newer). Check for `/app/cray/ml/cray_megatron/megatron/grpo_loss.py` inside it before trusting a tag.
+The image must carry the GRPO mode (`mi355-v1.8`, `h100-v1.7` or newer). Check for `/app/cray/ml/cray_megatron/megatron/grpo_loss.py` inside it before trusting a tag.
 
 ```bash
 python3 -m venv $GRPO_ENV_DIR/env_scalarlm
@@ -212,6 +212,18 @@ $GRPO_ENV_DIR/env_scalarlm/bin/python train_llm_grpo_scalarlm.py \
   --output-dir <run> --steps 2 --warmup-steps 0 --prompt-batch-size 8 --group-size 4 --max-tokens 256 \
   --keep-zero-spread --start-server --render-nodes /dev/dri/renderD<a> /dev/dri/renderD<b> \
   --image farbodatdocker/scalarlm:mi355-v1.8 --verify
+```
+
+On H100, give the judge a CUDA vLLM image and its own GPU, and pass GPU indices:
+
+```bash
+export GRPO_PLATFORM=cuda
+JUDGE_IMAGE=<cuda-vllm-image> JUDGE_GPU=7 JUDGE_MODEL_DIR=<judge-dir> ../grpo_common/judge_server.sh start
+$GRPO_ENV_DIR/env_scalarlm/bin/python train_llm_grpo_scalarlm.py \
+  --model $GRPO_SHARED_DIR/models/<org>--<name> --data $GRPO_SHARED_DIR/data/grpo_prompts.jsonl \
+  --output-dir <run> --steps 2 --warmup-steps 0 --prompt-batch-size 8 --group-size 4 --max-tokens 256 \
+  --keep-zero-spread --start-server --render-nodes 0 1 \
+  --image farbodatdocker/scalarlm:h100-v1.7 --verify
 ```
 
 | Flag | Default | Meaning |
@@ -239,11 +251,11 @@ Runbooks: `docs/DOCKER_IMAGE_MI355.md` (AMD) and `docs/DOCKER_IMAGE_H100.md` (NV
 | Tag | Hardware |
 |---|---|
 | `farbodatdocker/scalarlm:mi355-v1.8` | AMD MI355X, gfx950 / ROCm 7.2.4, includes GRPO |
-| `farbodatdocker/scalarlm:h100-v1.6` | NVIDIA H100 — sm_90 / CUDA 13 |
+| `farbodatdocker/scalarlm:h100-v1.7` | NVIDIA H100, sm_90 / CUDA 13, includes GRPO |
 
 ```bash
 docker pull farbodatdocker/scalarlm:mi355-v1.8     # AMD MI355X
-docker pull farbodatdocker/scalarlm:h100-v1.6      # NVIDIA H100
+docker pull farbodatdocker/scalarlm:h100-v1.7      # NVIDIA H100
 ```
 
 Build either from source (the script auto-detects the vendor; set `TARGET` to be explicit):
@@ -266,7 +278,7 @@ docker run -d --name scalarlm --gpus '"device=0"' --ipc host --shm-size=64g \
   -e SCALARLM_MAX_GPUS_PER_NODE=8 \
   --cap-add SYS_PTRACE -p 8000:8000 -p 8001:8001 \
   -v /path/to/hf-cache:/root/.cache/huggingface \
-  farbodatdocker/scalarlm:h100-v1.6
+  farbodatdocker/scalarlm:h100-v1.7
 # curl http://localhost:8000/v1/health -> {"api":"up","vllm":"up","all":"up"}
 ```
 
