@@ -56,7 +56,7 @@ Q0: What GPU runtimes support ROCm?
 SANITY: PASS
 ```
 
-**Compared to the fp32 transformers reference**, cosine values agree within **4e-3** (due to bf16 batch-composition noise), and document rankings are identical.
+**Compared to the fp32 transformers reference**, cosine values agree within **~1e-2** (max 0.0106 measured on an M2 Max; bf16 vs fp32 precision), and document rankings are identical.
 
 ## Arguments
 

@@ -71,16 +71,21 @@ def main():
 
     chat(base_url, args)  # warm-up: prompt-cache fill and Metal kernel compilation
     resp, elapsed = chat(base_url, args)
-    text = resp["choices"][0]["message"]["content"]
+    message = resp["choices"][0]["message"]
+    text = message.get("content") or ""
+    reasoning = message.get("reasoning") or ""
     usage = resp.get("usage", {})
     comp = usage.get("completion_tokens", 0)
     print(f"endpoint      : {base_url}/v1/chat/completions")
     print(f"model         : {args.model}")
     print(f"prompt_tokens : {usage.get('prompt_tokens')}")
     print(f"output_tokens : {comp}")
-    print(f"latency       : {elapsed:.2f}s (~{comp / elapsed:.1f} tok/s end-to-end, warm prompt cache)")
+    print(f"latency       : {elapsed:.2f}s (~{comp / max(elapsed, 1e-6):.1f} tok/s end-to-end, warm prompt cache)")
+    if reasoning:
+        print("reasoning:")
+        print(reasoning.strip())
     print("--- generated text ---")
-    print(text.strip())
+    print(text.strip() or "(no content: the model produced only reasoning; raise --max_tokens)")
 
     if args.out:
         os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)

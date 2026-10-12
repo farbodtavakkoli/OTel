@@ -18,7 +18,7 @@ pip install torch safetensors                      # conversion only; not in req
 python convert_otel_e4b.py --mlx_path ./OTel-LLM-E4B-IT-4bit
 ```
 
-This step downloads the source checkpoint to `$HF_HOME` (~31 GB, requires ~11 GB peak RAM for the largest shard), converts, quantizes, and cleans up temp files. Use `--no_quantize` to output bf16 MLX weights (8 GB).
+This step downloads the source checkpoint to `$HF_HOME` (~31 GB; peak RAM measured at ~18–20 GB on an M2 Max, so use a Mac with ≥ 24 GB to convert — serving the result needs only ~5 GB), converts, quantizes, and cleans up temp files. Use `--no_quantize` to output bf16 MLX weights (8 GB).
 
 ## Environment & secrets
 

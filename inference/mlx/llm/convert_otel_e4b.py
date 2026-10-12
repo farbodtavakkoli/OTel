@@ -3,7 +3,7 @@
 The published checkpoint is six PyTorch .bin shards (31 GB; the vision and audio towers of
 Gemma4ForConditionalGeneration are included and fp32 in places). mlx_lm.convert reads
 safetensors only, so this script rewrites the shards to bf16 safetensors one shard at a time
-(peak RAM ~ the largest shard, 11 GB) and then quantizes. Only the text model is kept.
+(peak RAM measured at ~18-20 GB; the largest shard alone is 11 GB) and then quantizes. Only the text model is kept.
 
     python convert_otel_e4b.py --mlx_path ./OTel-LLM-E4B-IT-4bit
 
