@@ -81,6 +81,7 @@ of the stack. Always use the exact install and launch commands from the folder y
 | Correctness baseline | `inference/transformers` |
 | Local or GGUF deployment | `inference/llamacpp` or `inference/ollama` |
 | Local API with reranking | `inference/lemonade` |
+| Apple silicon (Mac) inference | `inference/mlx` |
 
 ## Repository Map
 
@@ -102,7 +103,8 @@ of the stack. Always use the exact install and launch commands from the folder y
 |   |-- ollama/               # LLM and embedding
 |   |-- tei/                  # Embedding
 |   |-- ktransformers/        # CPU-GPU hybrid MoE serving
-|   `-- tensorrtllm/          # NVIDIA LLM serving
+|   |-- tensorrtllm/          # NVIDIA LLM serving
+|   `-- mlx/                  # Apple silicon (Metal) LLM, embedding, reranker
 `-- docs/                     # OTel paper, hardware platform notes (MI355X and H100), project coverage
 ```
 
@@ -132,6 +134,7 @@ the workloads beneath it.
 | TEI | No | Yes | Limited | Dedicated embedding service |
 | KTransformers | MoE | No | No | CPU-GPU expert offload on supported systems |
 | TensorRT-LLM | Yes | No | No | NVIDIA-specific optimized serving |
+| MLX | Yes | Yes | Yes | Apple silicon: served LLM, in-process embedding and reranking |
 
 ## Hardware Support
 
@@ -139,7 +142,7 @@ the workloads beneath it.
 |---|---|
 | **AMD Instinct MI355X** (ROCm 7.2) | Training and inference. TensorRT-LLM is NVIDIA-only; the KTransformers ROCm kernel path works but its serving layer is blocked by CUDA-pinned dependencies. |
 | **NVIDIA H100** (CUDA 13) | Training and inference. `training/llm/primus` is AMD-only by design. |
-| **Apple silicon** | Selected paths via MPS, Metal, MLX, and CPU backends — confirm support in the recipe README first. |
+| **Apple silicon** | Inference through `inference/mlx`. Training paths via MPS/CPU are selected and unverified — confirm support in the recipe README first. |
 | **Intel hardware** | Selected paths via XPU, SYCL, AMX, and CPU backends — support varies by framework and device. |
 
 Not every framework supports every platform. Confirm the exact device and framework
