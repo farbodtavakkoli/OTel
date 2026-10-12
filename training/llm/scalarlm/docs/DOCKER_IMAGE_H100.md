@@ -11,7 +11,7 @@ gates are in [`DOCKER_IMAGE_MI355.md`](DOCKER_IMAGE_MI355.md).
 | Tag | Hardware |
 |---|---|
 | `farbodatdocker/scalarlm:h100-v1.6` | NVIDIA H100 / Hopper (`sm_90`) |
-| `farbodatdocker/scalarlm:mi355-v1.7` | AMD MI355X (ROCm) — see the other runbook |
+| `farbodatdocker/scalarlm:mi355-v1.8` | AMD MI355X (ROCm) — see the other runbook |
 
 ```bash
 docker pull farbodatdocker/scalarlm:h100-v1.6
@@ -36,7 +36,7 @@ Helm chart:
 ```yaml
 image:
   repository: farbodatdocker/scalarlm
-  tag: h100-v1.6          # NVIDIA H100 / Hopper; use mi355-v1.7 for AMD MI355X
+  tag: h100-v1.6          # NVIDIA H100 / Hopper; use mi355-v1.8 for AMD MI355X
   pullPolicy: Always
 ```
 

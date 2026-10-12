@@ -5,7 +5,7 @@
 #
 # Usage:
 #   ./build_image.sh                              # auto-detect target, build + label
-#   TARGET=amd    IMAGE_TAG=mi355-grpo-v1.1 ./build_image.sh
+#   TARGET=amd    IMAGE_TAG=mi355-v1.8 ./build_image.sh
 #   TARGET=nvidia IMAGE_TAG=h100-v1.7  ./build_image.sh
 #
 # Targets:
@@ -43,7 +43,7 @@ fi
 case "$TARGET" in
     amd)
         BASE_NAME=amd;    ARCH_LIST=gfx942; VLLM_DEVICE=rocm
-        DEFAULT_TAG=mi355-grpo-v1.1; DEFAULT_STAGE=cray:mi355-build
+        DEFAULT_TAG=mi355-v1.8; DEFAULT_STAGE=cray:mi355-build
         TITLE="ScalarLM MI355X"
         DESCRIPTION="ScalarLM training+inference for AMD Instinct MI355X (gfx950/ROCm): NCCL/RCCL collectives, DDP+FSDP+FSDP2 verified on 8 GPUs, GRPO training mode" ;;
     nvidia)

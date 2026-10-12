@@ -157,11 +157,8 @@ ScalarLM client recipe under `training/llm/scalarlm`.
 The latest available project images are:
 
 ```bash
-# AMD Instinct MI355X
-docker pull farbodatdocker/scalarlm:mi355-v1.7
-
-# AMD Instinct MI355X with the GRPO training mode
-docker pull farbodatdocker/scalarlm:mi355-grpo-v1.1
+# AMD Instinct MI355X, includes the GRPO training mode
+docker pull farbodatdocker/scalarlm:mi355-v1.8
 
 # NVIDIA H100
 docker pull farbodatdocker/scalarlm:h100-v1.6

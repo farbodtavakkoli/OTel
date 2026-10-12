@@ -565,7 +565,7 @@ def parse_args():
     s = p.add_argument_group("server")
     s.add_argument("--api-url", default=os.environ.get("SCALARLM_API_URL", "http://127.0.0.1:8000"))
     s.add_argument("--start-server", action="store_true", help="start the ScalarLM container, wait for health, stop it on exit")
-    s.add_argument("--image", default=os.environ.get("SCALARLM_IMAGE", "farbodatdocker/scalarlm:mi355-grpo-v1.1"))
+    s.add_argument("--image", default=os.environ.get("SCALARLM_IMAGE", "farbodatdocker/scalarlm:mi355-v1.8"))
     s.add_argument("--container-name", default="scalarlm-grpo")
     s.add_argument("--render-nodes", nargs="+", default=None,
                    help="/dev/dri/renderD* of the GPUs to pass in: vLLM first, training GPU(s) after (see README)")

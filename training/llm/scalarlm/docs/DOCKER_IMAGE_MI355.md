@@ -10,22 +10,22 @@ endpoint, with this folder's `ml/` recipe baked in. Client usage is in
 
 | Tag | Hardware |
 |---|---|
-| `farbodatdocker/scalarlm:mi355-v1.7` | AMD MI355X, gfx950 / ROCm 7.2.4 |
+| `farbodatdocker/scalarlm:mi355-v1.8` | AMD MI355X, gfx950 / ROCm 7.2.4, includes GRPO |
 
 58.9 GB on disk, ~15 GB compressed over the wire.
 
 ```bash
-docker pull farbodatdocker/scalarlm:mi355-v1.7
+docker pull farbodatdocker/scalarlm:mi355-v1.8
 ```
 
 There is deliberately one MI355X tag, so the tag does not tell you what is inside. The
 source revision is recorded as an OCI label — cite that hash, not the tag, in a bug report:
 
 ```bash
-docker inspect farbodatdocker/scalarlm:mi355-v1.7 \
+docker inspect farbodatdocker/scalarlm:mi355-v1.8 \
   --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
-# mi355-v1.7 -> b9f27453b38839f4287a8e8e01cc323402085763
-# digest     -> sha256:0f9ebeee1f8871b280f421ec915ea5f66cbeeaa74b6db38b8a9ab1793846961e
+# mi355-v1.8 -> 11a91b22f13200ca145b4181b8befe7b5152fa1d
+# digest     -> sha256:ea5023849edee2a2ad6d6a647f358dbd78305db9c125622ff2d27e2d63f93a20
 ```
 
 `org.opencontainers.image.created` gives the build timestamp. If you rebuild and republish
@@ -44,14 +44,14 @@ docker run -d --name scalarlm --init \
   -e SCALARLM_MODEL=Qwen/Qwen3-0.6B \
   -e SCALARLM_MAX_GPUS_PER_NODE=8 \
   -v "$PWD/models:/root/.cache/huggingface" \
-  farbodatdocker/scalarlm:mi355-v1.7
+  farbodatdocker/scalarlm:mi355-v1.8
 
 curl -s localhost:8000/v1/health
 # {"api":"up","vllm":"up","megatron":"up","all":"up"}
 ```
 
 Passing a script still overrides the default, so existing invocations keep working:
-`docker run ... farbodatdocker/scalarlm:mi355-v1.7 /app/cray/scripts/start_one_server.sh`.
+`docker run ... farbodatdocker/scalarlm:mi355-v1.8 /app/cray/scripts/start_one_server.sh`.
 
 ### AMD flags that are not optional
 
@@ -85,7 +85,7 @@ For multi-GPU training submit `gpus: 8, nodes: 1` in `train_args`.
 ```yaml
 image:
   repository: farbodatdocker/scalarlm
-  tag: mi355-v1.7          # AMD MI355X / gfx950; use the H100 tag for NVIDIA
+  tag: mi355-v1.8          # AMD MI355X / gfx950; use the H100 tag for NVIDIA
   pullPolicy: Always
 ```
 
@@ -114,7 +114,7 @@ debugging anything else.
 An overlay can only reach `ml/`:
 
 ```dockerfile
-FROM farbodatdocker/scalarlm:mi355-v1.7
+FROM farbodatdocker/scalarlm:mi355-v1.8
 COPY ml/ /app/cray/ml/          # changes the DEFAULT for clients that have no ml/
 ```
 
@@ -132,7 +132,7 @@ rocminfo | grep -m1 gfx            # gfx950
 git status --short                 # empty, or the image is labelled -dirty
 
 cd training/llm/scalarlm/docs
-./build_image.sh                          # or: IMAGE_TAG=mi355-v1.7 ./build_image.sh
+./build_image.sh                          # or: IMAGE_TAG=mi355-v1.8 ./build_image.sh
 ```
 
 Building by hand, do the three things the script does — stage `ml/` into `repo/ml/`
@@ -165,7 +165,7 @@ this image — it reports 0 bundles for every library, including the working
 
 ```bash
 docker run --rm --device=/dev/kfd --device=/dev/dri --group-add video \
-  farbodatdocker/scalarlm:mi355-v1.7 python -c "
+  farbodatdocker/scalarlm:mi355-v1.8 python -c "
 import torch
 print(torch.cuda.get_device_name(0))          # AMD Instinct MI355X
 print('gfx950' in torch.cuda.get_arch_list()) # True
@@ -181,11 +181,12 @@ BUILDDIR=$(mktemp -d)
 cat > "$BUILDDIR/Dockerfile" <<EOF
 FROM cray:mi355-build
 CMD ["/app/cray/scripts/start_one_server.sh"]
-LABEL org.opencontainers.image.authors="Farbod Tavakkoli"
+LABEL org.opencontainers.image.authors="Farbod Tavakkoli <farbodtavakoli@gmail.com>"
+LABEL maintainer="Farbod Tavakkoli <farbodtavakoli@gmail.com>"
 LABEL org.opencontainers.image.source="https://github.com/farbodtavakkoli/OTel"
 LABEL org.opencontainers.image.revision="$(git rev-parse HEAD)"
 EOF
-docker build -t farbodatdocker/scalarlm:mi355-v1.7 "$BUILDDIR"
+docker build -t farbodatdocker/scalarlm:mi355-v1.8 "$BUILDDIR"
 rm -rf "$BUILDDIR"
 ```
 
@@ -200,7 +201,7 @@ Run these against the built image with no source mounts unless noted.
 |---|---|---|
 | 0a | corrections present in image | all AMD fixes + all H100 ports found |
 | 0b | gfx950 kernels | the functional probe above: MI355X matmul + `gfx950` in the arch list |
-| 1 | unit suite in-image — `./run_unit_tests.sh <tag>` | 811 passed, 2 deselected (`WITH_CMD=1`: 813 passed) |
+| 1 | unit suite in-image — `./run_unit_tests.sh <tag>` | 827 passed, 2 deselected (`WITH_CMD=1`: 829 passed) |
 | 2 | collective correctness — `python3 -m pytest test/infra/distribution_strategy -q` | passes |
 | 3 | end-to-end, image as both server and client | losses match the fingerprints below |
 | 4 | serving regression — `python3 -m pytest test/integration/api/test_slurm_api.py -q` | 5 passed |
@@ -252,7 +253,7 @@ are crossed — check which one the client uploaded before debugging anything el
 ```bash
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 docker login -u farbodatdocker          # paste a Personal Access Token, not the password
-docker push farbodatdocker/scalarlm:mi355-v1.7
+docker push farbodatdocker/scalarlm:mi355-v1.8
 ```
 
 The push is resumable — re-run it on a drop. If Docker runs as root on your host, prefix
