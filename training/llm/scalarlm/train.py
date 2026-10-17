@@ -221,7 +221,7 @@ def get_dataset(config):
 
 def build_train_args(config):
     return {
-        # --- scheduling / shape ---
+        # Scheduling / shape
         "max_steps": config.max_steps,
         "learning_rate": config.learning_rate,
         "gpus": config.gpus,
@@ -230,7 +230,7 @@ def build_train_args(config):
         "max_token_block_size": config.max_token_block_size,
         "steps_per_checkpoint": config.steps_per_checkpoint,
 
-        # --- mode / adapter ---
+        # Mode / adapter
         "training_mode": config.training_mode,
         "adapter_type": config.adapter_type,
 

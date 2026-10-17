@@ -77,7 +77,7 @@ class PyTorchFSDP(nn.Module):
 
         self.model = model
 
-    # -- construction helpers ------------------------------------------------
+    # Construction helpers
 
     def _transformer_stacks(self, model):
         stacks = []
@@ -102,7 +102,7 @@ class PyTorchFSDP(nn.Module):
                 fully_shard(layer, **self._fully_shard_kwargs)
             logger.info("Applied fully_shard to %d transformer blocks in %s", len(stack), name)
 
-    # -- distribution-strategy interface -------------------------------------
+    # Distribution strategy interface
 
     def forward(self, *args, **kwargs):
         return self.model(*args, **kwargs)
