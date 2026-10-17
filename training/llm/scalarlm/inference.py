@@ -44,6 +44,9 @@ def format_conversation_inference(example, model_type):
     elif model_type.lower() == "gemma3":
         return f"<start_of_turn>user\n{prompt}<end_of_turn>\n\n\n<start_of_turn>model"
 
+    elif model_type.lower() == "gemma4":
+        return f"<bos><|turn>user\n{prompt}<turn|>\n<|turn>model\n<|channel>thought\n<channel|>"
+
     elif model_type.lower() == "rnj-1":
         return f"<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n"
 

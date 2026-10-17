@@ -1,13 +1,44 @@
 ARG NEURON_BASE
+ARG NEURON_TRAIN_BASE
+FROM ${NEURON_TRAIN_BASE} AS train
+
 FROM ${NEURON_BASE}
 
 ARG INSTALL_ROOT=/app/cray
+ENV BASE_NAME=trainium
+
+RUN apt-get update -y && apt-get install -y --no-install-recommends \
+        slurm-wlm libslurm-dev gcc libarchive13t64 libpython3.12t64 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY ./requirements.txt ${INSTALL_ROOT}/requirements.txt
+RUN pip freeze 2>/dev/null | grep -v ' @ ' | grep '==' > /tmp/base-constraints.txt && \
+    pip install --no-cache-dir -c /tmp/base-constraints.txt -r ${INSTALL_ROOT}/requirements.txt && \
+    pip install --no-cache-dir -c /tmp/base-constraints.txt typing-inspect pyyaml && \
+    pip install --no-cache-dir --no-deps fastapi-utils==0.8.0
+
+COPY --from=train /opt/venv /opt/venv
+COPY --from=train /opt/neuron-beta /opt/neuron-beta
 
 COPY ./infra ${INSTALL_ROOT}/infra
 COPY ./sdk ${INSTALL_ROOT}/sdk
 COPY ./ml ${INSTALL_ROOT}/ml
-
-ENV PYTHONPATH="${INSTALL_ROOT}/infra:${INSTALL_ROOT}/sdk:${INSTALL_ROOT}/ml"
-ENV NEURON_RT_VIRTUAL_CORE_SIZE=2
+COPY ./scripts ${INSTALL_ROOT}/scripts
 
 WORKDIR ${INSTALL_ROOT}
+
+RUN mkdir -p ${INSTALL_ROOT}/jobs ${INSTALL_ROOT}/nfs && \
+    ${INSTALL_ROOT}/infra/slurm_src/compile.sh && \
+    sed '/^set -Eeuoxa pipefail$/a source /app/cray/scripts/neuron_train_env.sh' \
+        ${INSTALL_ROOT}/scripts/train_job_entrypoint.sh > ${INSTALL_ROOT}/scripts/train_job_entrypoint_neuron.sh && \
+    chmod +x ${INSTALL_ROOT}/scripts/train_job_entrypoint_neuron.sh
+
+ENV PYTHONPATH="${PYTHONPATH}:${INSTALL_ROOT}/infra:${INSTALL_ROOT}/sdk:${INSTALL_ROOT}/ml"
+ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/lib/slurm"
+ENV SLURM_CONF=${INSTALL_ROOT}/nfs/slurm.conf
+ENV VLLM_TARGET_DEVICE=neuron
+ENV SCALARLM_DTYPE=bfloat16
+ENV NEURON_RT_VIRTUAL_CORE_SIZE=2
+ENV SCALARLM_TRAIN_JOB_ENTRYPOINT=${INSTALL_ROOT}/scripts/train_job_entrypoint_neuron.sh
+
+ENTRYPOINT []

@@ -25,9 +25,12 @@ from vllm.entrypoints.openai.models.serving import (
     OpenAIServingModels,
 )
 
-from vllm.entrypoints.openai.engine.protocol import (
-    ErrorResponse,
-)
+try:
+    from vllm.entrypoints.openai.engine.protocol import (
+        ErrorResponse,
+    )
+except ImportError:
+    from vllm.entrypoints.serve.engine.protocol import ErrorResponse
 
 from vllm.entrypoints.openai.chat_completion.protocol import (
     ChatCompletionRequest,
@@ -209,6 +212,8 @@ def clear_finished_tasks(tasks):
 
 async def get_batch_size(app):
     vllm_engine_client = app.state.engine_client
+    if not hasattr(vllm_engine_client, "get_current_kv_cache_size"):
+        return get_config()["generate_batch_size"]
     current_kv_cache_size = await vllm_engine_client.get_current_kv_cache_size()
 
     config = get_config()

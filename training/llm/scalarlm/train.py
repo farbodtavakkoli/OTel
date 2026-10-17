@@ -51,7 +51,7 @@ def parse_args():
     parser.add_argument('--lora_dropout', default = 0.05, type=float)
     parser.add_argument('--target_modules', default = ['q_proj', 'k_proj', 'v_proj', 'o_proj'],
                         nargs='+',
-                        choices=['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj'])
+                        choices=['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj', 'all-linear'])
     parser.add_argument('--use_rslora', default=False, type=_str2bool,
                         help='Rank-stabilized LoRA (alpha/sqrt(r) scaling); the merge step reads the same flag')
     parser.add_argument('--sampling_seed', default=42, type=int,
@@ -95,6 +95,8 @@ def parse_args():
     # default of 1 otherwise silently caps the job to a single GPU.
     parser.add_argument('--gpus', default = 1, type=int)
     parser.add_argument('--nodes', default = 2, type=int)
+    parser.add_argument('--llm_name', default=None)
+    parser.add_argument('--reshard_after_forward', action='store_true')
 
     return parser.parse_args()
 
@@ -237,7 +239,7 @@ def build_train_args(config):
             "r": config.r,
             "lora_alpha": config.lora_alpha,
             "lora_dropout": config.lora_dropout,
-            "target_modules": config.target_modules,
+            "target_modules": "all-linear" if config.target_modules == ["all-linear"] else config.target_modules,
             "use_rslora": config.use_rslora,
         },
         "sampling_seed": config.sampling_seed,
@@ -275,6 +277,10 @@ def main():
     dataset = get_dataset(config)
 
     train_args = build_train_args(config)
+    if config.llm_name:
+        train_args["llm_name"] = config.llm_name
+    if config.reshard_after_forward:
+        train_args["reshard_after_forward"] = True
     
     status = llm.train(
         dataset,

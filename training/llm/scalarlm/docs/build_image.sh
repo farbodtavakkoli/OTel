@@ -54,15 +54,15 @@ case "$TARGET" in
     trainium)
         BASE_NAME=trainium; ARCH_LIST=""; VLLM_DEVICE=neuron
         DEFAULT_TAG=trainium2-v1.0; DEFAULT_STAGE=cray:trainium2-build
-        DOCKERFILE="$REPO_DIR/Dockerfile.trainium"; IMAGE_CMD='["bash"]'
-        : "${NEURON_BASE:?set NEURON_BASE to an image with the Neuron PyTorch training stack}"
+        DOCKERFILE="$REPO_DIR/Dockerfile.trainium"
+        : "${NEURON_BASE:?set NEURON_BASE to a Neuron vLLM serving image}"
+        : "${NEURON_TRAIN_BASE:?set NEURON_TRAIN_BASE to a Neuron PyTorch training image with /opt/venv}"
         TITLE="ScalarLM Trainium2"
-        DESCRIPTION="ScalarLM LoRA training for AWS Trainium2 (Neuron PyTorch): neuron collectives, FSDP2 and HSDP" ;;
+        DESCRIPTION="ScalarLM training+inference for AWS Trainium2: Neuron vLLM serving, Neuron PyTorch LoRA training via Slurm, FSDP2 and HSDP" ;;
     *)  echo "ERROR: TARGET must be amd, nvidia or trainium (got '$TARGET')"; exit 1 ;;
 esac
 
 DOCKERFILE="${DOCKERFILE:-$REPO_DIR/Dockerfile}"
-IMAGE_CMD="${IMAGE_CMD:-[\"/app/cray/scripts/start_one_server.sh\"]}"
 IMAGE_REPO="${IMAGE_REPO:-farbodatdocker/scalarlm}"
 IMAGE_TAG="${IMAGE_TAG:-$DEFAULT_TAG}"
 IMAGE="$IMAGE_REPO:$IMAGE_TAG"
@@ -116,6 +116,7 @@ docker build --network=host --platform linux/amd64 \
     --build-arg TORCH_CUDA_ARCH_LIST="$ARCH_LIST" \
     --build-arg VLLM_TARGET_DEVICE="$VLLM_DEVICE" \
     ${NEURON_BASE:+--build-arg NEURON_BASE="$NEURON_BASE"} \
+    ${NEURON_TRAIN_BASE:+--build-arg NEURON_TRAIN_BASE="$NEURON_TRAIN_BASE"} \
     -f "$DOCKERFILE" \
     -t "$BUILD_STAGE" \
     "$REPO_DIR"
@@ -128,7 +129,7 @@ MAINTAINER_EMAIL="${MAINTAINER_EMAIL:-farbodtavakoli@gmail.com}"
 
 cat > "$BUILDDIR/Dockerfile" <<EOF
 FROM $BUILD_STAGE
-CMD ${IMAGE_CMD}
+CMD ["/app/cray/scripts/start_one_server.sh"]
 LABEL org.opencontainers.image.title="${TITLE}"
 LABEL org.opencontainers.image.description="${DESCRIPTION}"
 LABEL org.opencontainers.image.revision="${REVISION}${DIRTY}"

@@ -1,19 +1,31 @@
 # Set vLLM environment variables BEFORE any vLLM imports
 import inspect
 import os
+import shlex
+import sys
 import torch
 
 from cray_infra.util.get_config import get_config
 from cray_infra.huggingface.get_hf_token import get_hf_token
 
-from vllm.entrypoints.openai.api_server import build_app, decorate_logs, \
-    init_app_state, setup_server, \
-    build_async_engine_client, get_uvicorn_log_config
+from vllm.entrypoints.openai.api_server import build_app, \
+    init_app_state, setup_server, build_async_engine_client
+try:
+    from vllm.entrypoints.openai.api_server import decorate_logs, get_uvicorn_log_config
+except ImportError:
+    from vllm.utils.system_utils import decorate_logs
+    from vllm.entrypoints.launchers.utils.server_utils import get_uvicorn_log_config
 
 from vllm.tool_parsers import ToolParserManager
-from vllm.entrypoints.launcher import serve_http
+try:
+    from vllm.entrypoints.launcher import serve_http
+except ImportError:
+    from vllm.entrypoints.launchers.launcher import serve_http
 
-from vllm.entrypoints.openai.cli_args import make_arg_parser
+try:
+    from vllm.entrypoints.openai.cli_args import make_arg_parser
+except ImportError:
+    from vllm.entrypoints.launchers.cli_args import make_arg_parser
 from vllm.utils.argparse_utils import FlexibleArgumentParser
 
 # NOTE: `log_non_default_args` used to be imported here from
@@ -67,12 +79,21 @@ async def create_vllm(server_status, port):
     )
     parser = make_arg_parser(parser)
     args = build_vllm_cli_args(config)
+    neuron = os.environ.get("VLLM_TARGET_DEVICE") == "neuron"
+    if neuron:
+        os.environ.pop("NKI_COMPILER_FRONTEND", None)
+        drop = ("--enable-lora", "--enable-tokenformer", "--gpu-memory-utilization",
+                "--max-model-len", "--enable-auto-tool-choice", "--tool-call-parser",
+                "--dtype", "--limit-mm-per-prompt")
+        args = [a for a in args if a.split("=")[0] not in drop]
 
     # Extra SCALARLM_VLLM_ARGS are passed via environment variable, and should override config values
     extra_args = os.environ.get("SCALARLM_VLLM_ARGS", "")
 
     if extra_args:
-        extra_args_list = extra_args.split()
+        extra_args_list = shlex.split(extra_args) if neuron else extra_args.split()
+        if neuron:
+            sys.argv += [a for a in extra_args_list if a.startswith("--optimization-level")]
 
         # Remove them if they are already in the args list to avoid duplicates
         for extra_arg in extra_args_list:

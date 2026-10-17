@@ -228,7 +228,29 @@ def get_gpu_count():
     gpu_count = 0
     if torch.cuda.is_available():
         gpu_count = torch.cuda.device_count()
+    elif get_neuron_devices():
+        gpu_count = 4 * len(get_neuron_devices())
     return gpu_count
+
+
+def write_neuron_core_links(hostname, core_indexes):
+    links_dir = os.path.join(os.path.dirname(shared_gres_config_path), "neuron_cores")
+    os.makedirs(links_dir, exist_ok=True)
+    devices = sorted(get_neuron_devices(), key=lambda name: int(name[len("neuron"):]))
+    lines = ""
+    for index in core_indexes:
+        link = os.path.join(links_dir, f"core{index}")
+        if os.path.lexists(link):
+            os.remove(link)
+        os.symlink(os.path.join("/dev", devices[index // 4]), link)
+        lines += f"NodeName={hostname} Name=gpu File={link}\n"
+    return lines
+
+
+def get_neuron_devices():
+    if not os.path.exists("/dev"):
+        return []
+    return [f for f in os.listdir("/dev") if f.startswith("neuron") and f[len("neuron"):].isdigit()]
 
 
 def save_node_info(node_info):
@@ -452,6 +474,9 @@ def write_gres_config(cluster_info):
     gres_config = ""
     for node in cluster_info["all_nodes"]:
         gpu_indexes = node["gpu_indexes"][: min(max_gpus_per_node, node["gpu_count"])]
+        if node["gpu_type"] == "neuron":
+            gres_config += write_neuron_core_links(node["hostname"], gpu_indexes)
+            continue
         for index in gpu_indexes:
             if node["gpu_type"] == "amd":
                 # renderD*, not card* — ROCm drives the render node (see
@@ -533,6 +558,8 @@ def get_gpu_indexes():
     # handle the case where the card is an arbtirary number
     if torch.version.hip:
         return get_amd_render_node_indexes()
+    elif not torch.cuda.is_available() and get_neuron_devices():
+        return list(range(get_gpu_count()))
     else:
         prefix = "/dev"
         card_name = "nvidia"
@@ -557,6 +584,8 @@ def get_gpu_indexes():
 def get_gpu_type():
     if torch.version.hip:
         return "amd"
+    elif not torch.cuda.is_available() and get_neuron_devices():
+        return "neuron"
     else:
         return "nvidia"
 
