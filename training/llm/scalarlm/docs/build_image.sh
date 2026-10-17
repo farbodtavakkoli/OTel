@@ -51,9 +51,18 @@ case "$TARGET" in
         DEFAULT_TAG=h100-v1.7;  DEFAULT_STAGE=cray:h100-build
         TITLE="ScalarLM H100"
         DESCRIPTION="ScalarLM training+inference for NVIDIA H100 (sm_90/CUDA): NCCL collectives, DDP+FSDP+FSDP2, GRPO training mode" ;;
-    *)  echo "ERROR: TARGET must be amd or nvidia (got '$TARGET')"; exit 1 ;;
+    trainium)
+        BASE_NAME=trainium; ARCH_LIST=""; VLLM_DEVICE=neuron
+        DEFAULT_TAG=trainium2-v1.0; DEFAULT_STAGE=cray:trainium2-build
+        DOCKERFILE="$REPO_DIR/Dockerfile.trainium"; IMAGE_CMD='["bash"]'
+        : "${NEURON_BASE:?set NEURON_BASE to an image with the Neuron PyTorch training stack}"
+        TITLE="ScalarLM Trainium2"
+        DESCRIPTION="ScalarLM LoRA training for AWS Trainium2 (Neuron PyTorch): neuron collectives, FSDP2 and HSDP" ;;
+    *)  echo "ERROR: TARGET must be amd, nvidia or trainium (got '$TARGET')"; exit 1 ;;
 esac
 
+DOCKERFILE="${DOCKERFILE:-$REPO_DIR/Dockerfile}"
+IMAGE_CMD="${IMAGE_CMD:-[\"/app/cray/scripts/start_one_server.sh\"]}"
 IMAGE_REPO="${IMAGE_REPO:-farbodatdocker/scalarlm}"
 IMAGE_TAG="${IMAGE_TAG:-$DEFAULT_TAG}"
 IMAGE="$IMAGE_REPO:$IMAGE_TAG"
@@ -106,6 +115,8 @@ docker build --network=host --platform linux/amd64 \
     --build-arg BASE_NAME="$BASE_NAME" \
     --build-arg TORCH_CUDA_ARCH_LIST="$ARCH_LIST" \
     --build-arg VLLM_TARGET_DEVICE="$VLLM_DEVICE" \
+    ${NEURON_BASE:+--build-arg NEURON_BASE="$NEURON_BASE"} \
+    -f "$DOCKERFILE" \
     -t "$BUILD_STAGE" \
     "$REPO_DIR"
 
@@ -117,7 +128,7 @@ MAINTAINER_EMAIL="${MAINTAINER_EMAIL:-farbodtavakoli@gmail.com}"
 
 cat > "$BUILDDIR/Dockerfile" <<EOF
 FROM $BUILD_STAGE
-CMD ["/app/cray/scripts/start_one_server.sh"]
+CMD ${IMAGE_CMD}
 LABEL org.opencontainers.image.title="${TITLE}"
 LABEL org.opencontainers.image.description="${DESCRIPTION}"
 LABEL org.opencontainers.image.revision="${REVISION}${DIRTY}"
@@ -134,6 +145,6 @@ echo "==> Built $IMAGE"
 echo "    revision: $(docker inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
 echo "    size:     $(docker images --format '{{.Size}}' "$IMAGE" | head -1)"
 echo
-RUNBOOK=DOCKER_IMAGE_MI355.md; [ "$TARGET" = nvidia ] && RUNBOOK=DOCKER_IMAGE_H100.md
+RUNBOOK=DOCKER_IMAGE_MI355.md; [ "$TARGET" = nvidia ] && RUNBOOK=DOCKER_IMAGE_H100.md; [ "$TARGET" = trainium ] && RUNBOOK=readme_scalarlm.md
 echo "Next: run the acceptance gates in $RUNBOOK before publishing."
 echo "At minimum, one FSDP and one DDP run whose final loss matches the fingerprints there."

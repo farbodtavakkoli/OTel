@@ -51,7 +51,8 @@ def _create_nara_model(model, device, job_config, nara_cfg, train_lm_head):
         logger.info("lm_head weight set to trainable")
 
     add_methods(model)  # unwrap_model -> filter_checkpoint saves requires_grad params
-    model = model.to(device)
+    if getattr(device, "type", None) != "neuron":
+        model = model.to(device)
     logger.info(
         f"create_nara_model completed in {time.time() - start:.2f}s, "
         f"{n_trainable} trainable NaRA params"
@@ -98,7 +99,8 @@ def create_lora_model(model, device, train_lm_head=False):
 
     lora_model = get_peft_model(model, LoraConfig(**lora_config))
     add_methods(lora_model)
-    lora_model = lora_model.to(device)
+    if getattr(device, "type", None) != "neuron":
+        lora_model = lora_model.to(device)
     step2_time = time.time() - step2_start
     logger.info(
         f"LoRA adapter module insertion completed: {step2_time:.2f}s ({step2_time/60:.1f} minutes)"

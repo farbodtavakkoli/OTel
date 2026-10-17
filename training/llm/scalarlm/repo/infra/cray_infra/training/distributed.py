@@ -58,6 +58,8 @@ def _local_rank() -> int:
 
 
 def _cuda_device() -> torch.device:
+    if not torch.cuda.is_available() and hasattr(torch, "neuron"):
+        return torch.device("neuron")
     return torch.device("cuda", _local_rank())
 
 
@@ -86,6 +88,9 @@ def init():
     )
     if dist.is_initialized():
         _trace("init() skipped, already initialized")
+        return
+    if not torch.cuda.is_available() and hasattr(torch, "neuron"):
+        dist.init_process_group(backend="neuron")
         return
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA/ROCm is required for distributed training")

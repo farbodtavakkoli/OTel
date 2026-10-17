@@ -29,7 +29,7 @@ def parse_args():
     parser.add_argument('--training_mode', default = 'language_model',
                         choices=['language_model', 'embedding', 'classification'])
     parser.add_argument('--model_type', default='qwen3',
-                        help='Chat-template family for special-token formatting (gemma3, qwen3, llama3, '
+                        help='Chat-template family for special-token formatting (gemma3, gemma4, qwen3, llama3, '
                              'rnj-1, olmo3, mistral, gpt-oss_reasoning, gpt-oss_it, lfm, phi4)')
     parser.add_argument('--gradient_calculation', default='output_tokens',
                         choices=['output_tokens', 'entire_sequence'],
@@ -112,6 +112,11 @@ def format_conversation(example, model_type):
 
     elif model_type.lower() == "gemma3":
         return f"<start_of_turn>user\n{prompt}<end_of_turn>\n<start_of_turn>model\n{completion}<end_of_turn>"
+
+    elif model_type.lower() == "gemma4":
+        prompt_part = f"<bos><|turn>user\n{prompt}<turn|>\n<|turn>model\n<|channel>thought\n<channel|>" if prompt else ""
+        completion_part = f"{completion}<turn|>" if completion else ""
+        return prompt_part + completion_part
 
     elif model_type.lower() == "rnj-1":
         return f"<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n{completion}<|eot_id|>"

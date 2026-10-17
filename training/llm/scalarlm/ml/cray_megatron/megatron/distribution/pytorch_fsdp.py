@@ -15,7 +15,11 @@ _MIN_TRANSFORMER_BLOCKS = 4
 
 
 def _mesh_device_type():
-    return "cuda" if torch.cuda.is_available() else "cpu"
+    if torch.cuda.is_available():
+        return "cuda"
+    if hasattr(torch, "neuron"):
+        return "neuron"
+    return "cpu"
 
 
 def build_hsdp_mesh():
@@ -75,15 +79,17 @@ class PyTorchFSDP(nn.Module):
 
     # -- construction helpers ------------------------------------------------
 
-    def _transformer_stack(self, model):
-        for _, module in model.named_modules():
+    def _transformer_stacks(self, model):
+        stacks = []
+        for name, module in model.named_modules():
             if isinstance(module, nn.ModuleList) and len(module) > _MIN_TRANSFORMER_BLOCKS:
-                return module
-        return None
+                if not any(name.startswith(prefix + ".") for prefix, _ in stacks):
+                    stacks.append((name, module))
+        return stacks
 
     def _apply_fsdp(self, model):
-        stack = self._transformer_stack(model)
-        if stack is None:
+        stacks = self._transformer_stacks(model)
+        if not stacks:
             logger.warning(
                 "No ModuleList with more than %d children found; sharding only the "
                 "root module. Check that this is the intended model architecture.",
@@ -91,9 +97,10 @@ class PyTorchFSDP(nn.Module):
             )
             return
 
-        for layer in stack:
-            fully_shard(layer, **self._fully_shard_kwargs)
-        logger.info("Applied fully_shard to %d transformer blocks", len(stack))
+        for name, stack in stacks:
+            for layer in stack:
+                fully_shard(layer, **self._fully_shard_kwargs)
+            logger.info("Applied fully_shard to %d transformer blocks in %s", len(stack), name)
 
     # -- distribution-strategy interface -------------------------------------
 

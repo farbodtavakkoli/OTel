@@ -73,6 +73,8 @@ def get_device():
             return torch.device(f"cuda:{selected_gpu}")
 
         return torch.cuda.current_device()
+    elif hasattr(torch, "neuron"):
+        return torch.device("neuron")
     else:
         return torch.device("cpu")
 
