@@ -19,6 +19,7 @@ LoRA / tokenformer / full-parameter training on FSDP or DDP.
 
 **Hardware:** the client is pure Python and runs anywhere. The server image is built for
 AMD MI355X (gfx950 / ROCm 7.2.4, RCCL) or NVIDIA H100 (sm_90 / CUDA 13, NCCL).
+The same `ml/` also trains on AWS Trainium2; see [Trainium2](#trainium2).
 
 ## Files
 
@@ -305,6 +306,72 @@ Run flags that matter on both vendors:
 - On AMD, `--device=/dev/kfd --device=/dev/dri --group-add video` replaces `--gpus`.
 - Serve fine-tuned adapters at tensor-parallel size 1. Tensor parallelism works for the
   base model, but vLLM's TP path rejects the hot-reloaded un-sharded adapter state dict.
+
+
+## Trainium2
+
+The same `ml/` and job config train on AWS Trainium2. Only the image differs. The
+Trainium2 image trains with `torchrun`; it has no API, Slurm or vLLM, so `train.py`,
+`inference.py` and GRPO do not apply.
+
+Build it from a base image that holds the Neuron PyTorch training stack. Neither image is
+published.
+
+```bash
+cd docs
+TARGET=trainium NEURON_BASE=<neuron-pytorch-image> ./build_image.sh
+```
+
+Write a job config (any `JobConfig` field) next to the data. Format the data with
+`format_for_scalarlm` from `train.py` and `--model_type gemma4`.
+
+```yaml
+job_directory: /job/out
+training_data_path: /job/train.jsonl
+dataset_hash: my_dataset_v1
+llm_name: google/gemma-4-31B-it
+max_steps: 50
+learning_rate: 1e-4
+max_token_block_size: 1024
+gradient_checkpointing: true
+distribution_strategy: pytorch_fsdp
+reshard_after_forward: true
+adapter_type: lora
+lora_config:
+  r: 32
+  lora_alpha: 32
+  target_modules: '.*language_model.*\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$'
+```
+
+Run one rank per logical NeuronCore (4 per device):
+
+```bash
+docker run --rm \
+  --device=/dev/neuron0 --device=/dev/neuron1 --device=/dev/neuron2 --device=/dev/neuron3 \
+  --shm-size=64g --ulimit memlock=-1 \
+  -v /opt/aws/neuron/lib:/opt/aws/neuron/lib:ro \
+  -v /path/to/hf-cache:/root/.cache/huggingface \
+  -v "$PWD:/job" \
+  -e CRAY_TRAINING_JOB_CONFIG_PATH=/job/config.yaml -e NEURON_RT_NUM_CORES=16 -e HF_HUB_OFFLINE=1 \
+  farbodatdocker/scalarlm:trainium2-v1.0 \
+  torchrun --nproc_per_node 16 ml/cray_megatron/main.py
+```
+
+Notes:
+
+1. Mount the host Neuron runtime as shown. Pass devices numbered from `/dev/neuron0`
+   inside the container (`--device=/dev/neuron12:/dev/neuron0`); the runtime finds no
+   cores under other numbers.
+2. `reshard_after_forward: true` is required for Gemma4 31B on 4 devices; without it the
+   FSDP all gather runs out of device memory.
+3. On 16 devices set `hsdp_shard_size: 16`. Plain FSDP over 64 ranks returns wrong values
+   from a Neuron copy once an all gather exceeds 2^31 elements.
+4. Step 0 compiles for 5 to 10 minutes. Mount a cache directory and set
+   `TORCH_NEURONX_NEFF_CACHE_DIR` to reuse it.
+5. Tested with Gemma4 31B LoRA r32, sequence 1024, batch 1 per rank, on 4 devices: about
+   122 s per step and 13 GiB peak per core. Other models are untested.
+6. To serve a fine tune, merge it with `ml/adapters/merge_lora_and_push.py` and serve the
+   merged model with vLLM on Neuron. The Neuron backend cannot load adapters at run time.
 
 ## Notes
 
