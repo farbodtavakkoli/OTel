@@ -351,18 +351,21 @@ Notes:
 
 1. Each logical NeuronCore is one Slurm `gpu`, 4 per device. `SCALARLM_MAX_GPUS_PER_NODE`
    sets how many cores training may use; training takes the last cores so vLLM keeps the
-   first devices.
+   first devices. Run one training job at a time: every job takes the same last cores.
 2. Pass devices under their host names (`--device=/dev/neuron12`); renumbering them breaks
    device discovery.
 3. `--llm_name` sets the training checkpoint (BF16) when vLLM serves a different one, such
    as an FP8 copy. Without it the job trains the served model.
 4. `--target_modules all-linear` adapts only the language decoder of a multimodal model.
-   The Gemma4 vision tower uses a layer type LoRA cannot wrap.
+   The Gemma4 vision tower uses a layer type LoRA cannot wrap. Pass `all-linear` alone,
+   not mixed with module names.
 5. `--reshard_after_forward` is required for Gemma4 31B on 4 devices; without it the FSDP
    all gather runs out of device memory. On 16 training devices also set
    `hsdp_shard_size: 16`.
 6. The first vLLM start and step 0 of training compile for minutes; mount the compile
-   caches to reuse them.
+   caches to reuse them. Write `--optimization-level=2` with `=` in `SCALARLM_VLLM_ARGS`;
+   the spaced form is not passed to the Neuron plugin, which then compiles at a slower
+   level.
 7. The Neuron vLLM backend cannot load adapters at run time, so `--model_name <job hash>`
    and GRPO do not work. Merge the adapter from `ml/` with
    `python -m adapters.merge_lora_and_push --job-dir <job> --repo-id <id> --dry-run --output-dir <dir>`,
