@@ -1,6 +1,6 @@
 # ScalarLM — Open Source Training & Inference Stack
 
-[![License: CC0-1.0](https://img.shields.io/badge/License-CC0%201.0-lightgrey.svg)](https://creativecommons.org/publicdomain/zero/1.0/)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 
 ScalarLM is an open-source platform for **closed-loop LLM experimentation** — running a model and post-training it against live feedback in the same deployment, across GPU hardware from any vendor, at scales from a single workstation to multi-node Kubernetes clusters.
