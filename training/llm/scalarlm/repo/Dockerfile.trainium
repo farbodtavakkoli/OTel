@@ -1,6 +1,8 @@
 ARG NEURON_BASE
 ARG NEURON_TRAIN_BASE
 FROM ${NEURON_TRAIN_BASE} AS train
+RUN rm -rf /opt/neuron-beta/torch_neuron_eager/.git /opt/neuron-beta/torch_neuron_eager/.github \
+        /opt/neuron-beta/torch_neuron_eager/Dockerfile.pull
 
 FROM ${NEURON_BASE}
 
