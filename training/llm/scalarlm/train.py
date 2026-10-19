@@ -163,7 +163,6 @@ def format_for_scalarlm(example, config):
         # Full sequence gradient: everything in 'output'
         return {'input': '', 'output': full_text}
 
-# Loading data for either language model or embedding training
 def get_dataset(config):
     import random
     SEED = 42
