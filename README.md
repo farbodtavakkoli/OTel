@@ -29,7 +29,7 @@ runnable infrastructure recipes for AMD, NVIDIA, Apple, and Intel hardware.
 
 - **27 self-contained training recipes** spanning LLM post-training, embedding,
   reranking, and classification.
-- **9 inference stacks** covering LLM generation, embeddings, and reranking.
+- **11 inference stacks** covering LLM generation, embeddings, and reranking.
 - **SFT, CPT, DPO, GRPO, PPO, OSFT, LoRA, QLoRA, and DoRA** examples.
 - A local sample, pinned requirements, runnable entry point, and detailed README in
   every recipe folder.
@@ -82,6 +82,7 @@ of the stack. Always use the exact install and launch commands from the folder y
 | Local or GGUF deployment | `inference/llamacpp` or `inference/ollama` |
 | Local API with reranking | `inference/lemonade` |
 | Apple silicon (Mac) inference | `inference/mlx` |
+| Tenstorrent Blackhole Galaxy serving | `inference/tenstorrent` |
 
 ## Repository Map
 
@@ -104,7 +105,8 @@ of the stack. Always use the exact install and launch commands from the folder y
 |   |-- tei/                  # Embedding
 |   |-- ktransformers/        # CPU-GPU hybrid MoE serving
 |   |-- tensorrtllm/          # NVIDIA LLM serving
-|   `-- mlx/                  # Apple silicon (Metal) LLM, embedding, reranker
+|   |-- mlx/                  # Apple silicon (Metal) LLM, embedding, reranker
+|   `-- tenstorrent/          # Tenstorrent tt-inference-server LLM serving
 `-- docs/                     # OTel paper, hardware platform notes (MI355X and H100), project coverage
 ```
 
@@ -135,6 +137,7 @@ the workloads beneath it.
 | KTransformers | MoE | No | No | CPU-GPU expert offload on supported systems |
 | TensorRT-LLM | Yes | No | No | NVIDIA-specific optimized serving |
 | MLX | Yes | Yes | Yes | Apple silicon: served LLM, in-process embedding and reranking |
+| Tenstorrent | Yes | No | No | Tenstorrent hardware through tt-inference-server (vLLM on TT-Metalium) |
 
 ## Hardware Support
 
@@ -144,6 +147,7 @@ the workloads beneath it.
 | **NVIDIA H100** (CUDA 13) | Training and inference. `training/llm/primus` is AMD-only by design. |
 | **Apple silicon** | Inference through `inference/mlx`. Training paths via MPS/CPU are selected and unverified — confirm support in the recipe README first. |
 | **Intel hardware** | Selected paths via XPU, SYCL, AMX, and CPU backends — support varies by framework and device. |
+| **Tenstorrent Blackhole Galaxy** | LLM inference through `inference/tenstorrent` (Gemma 4 31B verified). P300X2 is documented by Tenstorrent and unverified. Training is not covered. |
 
 Not every framework supports every platform. Confirm the exact device and framework
 combination in the recipe README.
@@ -309,8 +313,8 @@ network-configuration use.
 - Release the OTel 2.0 training implementation and reproducible configuration.
 - Release the comprehensive OTel 2.0 evaluation through MLPerf in collaboration with
   MLCommons.
-- Add and verify training and inference support on AWS infrastructure and Tenstorrent
-  hardware, and benchmark multi node training under a common methodology.
+- Add and verify training support on AWS infrastructure and Tenstorrent hardware, inference
+  support on AWS, and benchmark multi node training under a common methodology.
 - Benchmark inference throughput, latency, memory use, and efficiency on AMD Ryzen
   systems.
 
