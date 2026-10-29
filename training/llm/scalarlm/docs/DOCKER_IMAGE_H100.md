@@ -35,7 +35,11 @@ revision label, not the tag:
 docker inspect farbodatdocker/scalarlm:h100-v1.8 \
   --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
 # h100-v1.8 -> c44453419e41d831b7caaebce7ebcedc3f608468
+# digest    -> sha256:8094eb166244ae6c9087944f863a10272860a4e747dbd65ef195812899aa7709
 ```
+
+The label `c444534` is a local build commit. On GitHub the same image code is commit
+`36c54e359456bb1be4cdb964d36c9197198749cd`.
 
 Helm chart:
 
