@@ -7,7 +7,8 @@
 #   ./run_unit_tests.sh h100-v1.8
 #   WITH_CMD=1 ./run_unit_tests.sh          # also run the two cmd/ tests (see below)
 #
-# Expected: 827 passed, 0 failed. With WITH_CMD=1: 829 passed.
+# Expected: mi355-v1.8 827 passed, 829 with WITH_CMD=1.
+#           h100-v1.8 835 passed, 837 with WITH_CMD=1.
 #
 # Two things must be set up or the suite reports 18 false failures. Both are
 # harness requirements, not product defects:
