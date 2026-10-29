@@ -22,6 +22,32 @@ def _mesh_device_type():
     return "cpu"
 
 
+def _adapter_only_state_dict():
+    return get_job_config().get("adapter_type", "none") not in (None, "", "none")
+
+
+def _check_adapter_keys_match(model, checkpoint_keys):
+    if not checkpoint_keys:
+        return
+    trainable = {name for name, param in model.named_parameters() if param.requires_grad}
+    if not checkpoint_keys & trainable:
+        raise RuntimeError(
+            f"Checkpoint resume matched no trainable parameter: none of its "
+            f"{len(checkpoint_keys)} keys, e.g. {sorted(checkpoint_keys)[:3]}, "
+            f"names a requires_grad parameter of the live model."
+        )
+
+
+def _check_adapter_unexpected_keys(incompatible):
+    if incompatible.unexpected_keys:
+        raise RuntimeError(
+            f"Checkpoint resume left {len(incompatible.unexpected_keys)} trained "
+            f"parameter(s) unloaded (unexpected keys), e.g. "
+            f"{incompatible.unexpected_keys[:3]}. Refusing to continue with "
+            f"partially-restored weights."
+        )
+
+
 def build_hsdp_mesh():
     job_config = get_job_config()
     shard_size = int(job_config.get("hsdp_shard_size", 1) or 1)
@@ -118,7 +144,11 @@ class PyTorchFSDP(nn.Module):
 
         return get_model_state_dict(
             self.model,
-            options=StateDictOptions(full_state_dict=True, cpu_offload=True),
+            options=StateDictOptions(
+                full_state_dict=True,
+                cpu_offload=True,
+                ignore_frozen_params=_adapter_only_state_dict(),
+            ),
         )
 
     def unwrap_optimizer(self, optimizer):
@@ -152,11 +182,20 @@ class PyTorchFSDP(nn.Module):
             set_model_state_dict,
         )
 
-        set_model_state_dict(
+        adapter_only = _adapter_only_state_dict()
+        if adapter_only:
+            _check_adapter_keys_match(self.model, set(state_dict or {}))
+        incompatible = set_model_state_dict(
             self.model,
             model_state_dict=state_dict,
-            options=StateDictOptions(full_state_dict=True, broadcast_from_rank0=True),
+            options=StateDictOptions(
+                full_state_dict=True,
+                broadcast_from_rank0=True,
+                strict=not adapter_only,
+            ),
         )
+        if adapter_only:
+            _check_adapter_unexpected_keys(incompatible)
 
     def __getattr__(self, name):
         # Fall through to the wrapped model so callers can reach its attributes.
