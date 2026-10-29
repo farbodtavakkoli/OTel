@@ -1,0 +1,18 @@
+# Linux x86_64, Python 3.12; native TorchNeuron (not the older XLA backend).
+# Install CPU PyTorch and the matching native TorchNeuron wheel first; see README.
+# Neuron compiler/NKI packages are available from https://pip.repos.neuron.amazonaws.com.
+# The source-built torch-neuronx wheel below is NOT assumed to be on public PyPI.
+torch==2.13.0+cpu
+torchvision==0.28.0+cpu
+Pillow==12.3.0
+torch-neuronx==2.13.3.0.1+50b1417.dev
+neuronx-cc==2.28.7631.0+8f7b0cf5
+nki==0.7.0+37713544100.gfede04bb
+transformers @ git+https://github.com/huggingface/transformers.git@50e35cc0ca18ec19b80653690de553e6decf74f5
+sentence-transformers==6.2.0
+datasets==5.1.0
+accelerate==1.15.0
+numpy==2.5.2
+protobuf==6.33.6
+huggingface-hub==2.3.0
+safetensors==0.8.0
