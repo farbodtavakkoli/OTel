@@ -39,6 +39,44 @@ image:
   pullPolicy: Always
 ```
 
+## `h100-v1.8` (Muse Glimmer)
+
+Built locally, not yet pushed. Revision `4dcb06de8797388dd01087b9ff10ca1daff1165a`.
+
+| Component | Version |
+|---|---|
+| Base | `nvcr.io/nvidia/cuda:12.9.1-cudnn-devel-ubuntu24.04`, no CUDA compat layer |
+| PyTorch | `2.13.0+cu129`, triton 3.7.1 |
+| vLLM | upstream v0.32.0 plus `scripts/vllm_patches/vllm-v0.32.0-scalarlm.patch` |
+| transformers | 5.19.0 (pin `>=5.17,<5.20`), tokenizers 0.23.3 |
+| opencv | 5.0.0.93 built against system OpenSSL 3, no bundled OpenSSL |
+| Extras | `mlflow-skinny` |
+
+Runs natively on drivers with CUDA 12.9 or newer. Build with
+`--build-arg CUDA_VERSION=13.0.3 --build-arg TORCH_CUDA_INDEX=cu130` for a CUDA 13 host.
+
+Results on 8xH100 (driver 580), `meta-models/Muse-Glimmer-30B`:
+
+| Check | Result |
+|---|---|
+| Build time torch stack checks | pass after base, vLLM and infra layers |
+| `/etc/ld.so.conf.d/` | no `cuda-compat` entry |
+| Compressed size | 13.3 GB (limit 20 GB) |
+| `import cv2` with `OPENSSL_FORCE_FIPS_MODE=1` | OK |
+| Unit suite with current `ml/` and `test/` | 835 passed, 2 deselected |
+| vLLM generation, TP 1 | correct answers, about 75 tok/s single stream |
+| Full parameter SFT, `pytorch_fsdp`, 8 GPUs, 8 steps of 4096 tokens | step 0 18.6 s, then about 3.0 s/step, 55.5 GiB peak, final 171 GB checkpoint saved |
+| LoRA GRPO, 8 steps, 4 prompts x 4 completions | about 77 s/step, 0 rollout errors, old log probs 16/16, ratio 0.998 to 1.0006 |
+
+Notes:
+
+1. The image bakes `ml/` from `4dcb06d`. The LoRA only FSDP checkpoint (`85b8a3b`, `c444534`)
+   reaches jobs through the shipped `ml/`, so no rebuild is needed for it.
+2. Write job output to fast local disk. The final full parameter checkpoint must finish inside
+   the 10 minute NCCL barrier timeout.
+3. On a host without the NVIDIA container toolkit, pass `/dev/nvidia*` and the driver
+   libraries with `--device` and `-v` instead of `--gpus`.
+
 ## Run
 
 The image is self-starting — no entrypoint override needed:
