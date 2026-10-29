@@ -27,8 +27,6 @@ def _adapter_only_state_dict():
 
 
 def _check_adapter_keys_match(model, checkpoint_keys):
-    if not checkpoint_keys:
-        return
     trainable = {name for name, param in model.named_parameters() if param.requires_grad}
     if not checkpoint_keys & trainable:
         raise RuntimeError(
@@ -36,14 +34,19 @@ def _check_adapter_keys_match(model, checkpoint_keys):
             f"{len(checkpoint_keys)} keys, e.g. {sorted(checkpoint_keys)[:3]}, "
             f"names a requires_grad parameter of the live model."
         )
-
-
-def _check_adapter_unexpected_keys(incompatible):
-    if incompatible.unexpected_keys:
+    missing = sorted(trainable - checkpoint_keys)
+    if missing:
         raise RuntimeError(
-            f"Checkpoint resume left {len(incompatible.unexpected_keys)} trained "
+            f"Checkpoint resume is missing {len(missing)} trainable parameter(s) "
+            f"(missing keys), e.g. {missing[:3]}. Refusing to continue with "
+            f"partially-restored weights."
+        )
+    unexpected = sorted(checkpoint_keys - set(model.state_dict().keys()))
+    if unexpected:
+        raise RuntimeError(
+            f"Checkpoint resume left {len(unexpected)} trained "
             f"parameter(s) unloaded (unexpected keys), e.g. "
-            f"{incompatible.unexpected_keys[:3]}. Refusing to continue with "
+            f"{unexpected[:3]}. Refusing to continue with "
             f"partially-restored weights."
         )
 
@@ -185,7 +188,7 @@ class PyTorchFSDP(nn.Module):
         adapter_only = _adapter_only_state_dict()
         if adapter_only:
             _check_adapter_keys_match(self.model, set(state_dict or {}))
-        incompatible = set_model_state_dict(
+        set_model_state_dict(
             self.model,
             model_state_dict=state_dict,
             options=StateDictOptions(
@@ -194,8 +197,6 @@ class PyTorchFSDP(nn.Module):
                 strict=not adapter_only,
             ),
         )
-        if adapter_only:
-            _check_adapter_unexpected_keys(incompatible)
 
     def __getattr__(self, name):
         # Fall through to the wrapped model so callers can reach its attributes.

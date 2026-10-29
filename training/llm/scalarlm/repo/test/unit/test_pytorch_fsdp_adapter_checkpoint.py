@@ -93,7 +93,7 @@ def test_adapter_load_raises_on_extra_keys(job_config):
     job_config("lora")
     saved = _wrapped(0).unwrap_model()
     saved["adapter.extra_lora_A.weight"] = torch.zeros(2, 4)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="unexpected keys"):
         _wrapped(1).load_unwrapped_model(saved)
 
 
@@ -101,5 +101,19 @@ def test_full_parameter_load_stays_strict(job_config):
     job_config("none")
     saved = _wrapped(0).unwrap_model()
     del saved["base.weight"]
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="Missing key"):
         _wrapped(1).load_unwrapped_model(saved)
+
+
+def test_adapter_load_raises_on_missing_trainable_key(job_config):
+    job_config("lora")
+    saved = _wrapped(0).unwrap_model()
+    del saved["adapter.bias"]
+    with pytest.raises(RuntimeError, match="missing keys"):
+        _wrapped(1).load_unwrapped_model(saved)
+
+
+def test_adapter_load_raises_on_empty_state_dict(job_config):
+    job_config("lora")
+    with pytest.raises(RuntimeError, match="matched no trainable parameter"):
+        _wrapped(0).load_unwrapped_model({})
