@@ -125,6 +125,7 @@ docker build --network=host --platform linux/amd64 \
     ${NEURON_BASE:+--build-arg NEURON_BASE="$NEURON_BASE"} \
     ${NEURON_TRAIN_BASE:+--build-arg NEURON_TRAIN_BASE="$NEURON_TRAIN_BASE"} \
     ${VLLM_PIN_ARGS[@]+"${VLLM_PIN_ARGS[@]}"} \
+    ${EXTRA_BUILD_ARGS:-} \
     -f "$DOCKERFILE" \
     -t "$BUILD_STAGE" \
     "$REPO_DIR"

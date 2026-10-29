@@ -52,8 +52,9 @@ Built locally, not yet pushed. Revision `4dcb06de8797388dd01087b9ff10ca1daff1165
 | opencv | 5.0.0.93 built against system OpenSSL 3, no bundled OpenSSL |
 | Extras | `mlflow-skinny` |
 
-Runs natively on drivers with CUDA 12.9 or newer. Build with
-`--build-arg CUDA_VERSION=13.0.3 --build-arg TORCH_CUDA_INDEX=cu130` for a CUDA 13 host.
+Runs natively on drivers with CUDA 12.9 or newer. For a CUDA 13 host, build with
+`EXTRA_BUILD_ARGS="--build-arg CUDA_VERSION=13.0.3 --build-arg TORCH_CUDA_INDEX=cu130" TARGET=nvidia ./build_image.sh`.
+This variant is untested.
 
 Results on 8xH100 (driver 580), `meta-models/Muse-Glimmer-30B`:
 
@@ -63,19 +64,27 @@ Results on 8xH100 (driver 580), `meta-models/Muse-Glimmer-30B`:
 | `/etc/ld.so.conf.d/` | no `cuda-compat` entry |
 | Compressed size | 13.3 GB (limit 20 GB) |
 | `import cv2` with `OPENSSL_FORCE_FIPS_MODE=1` | OK |
-| Unit suite with current `ml/` and `test/` | 835 passed, 2 deselected |
+| Unit suite with current `ml/` and `test/`, 1 GPU visible | 835 passed, 2 deselected, 0 skipped |
 | vLLM generation, TP 1 | correct answers, about 75 tok/s single stream |
 | Full parameter SFT, `pytorch_fsdp`, 8 GPUs, 8 steps of 4096 tokens | step 0 18.6 s, then about 3.0 s/step, 55.5 GiB peak, final 171 GB checkpoint saved |
-| LoRA GRPO, 8 steps, 4 prompts x 4 completions | about 77 s/step, 0 rollout errors, old log probs 16/16, ratio 0.998 to 1.0006 |
+| LoRA GRPO, 8 steps, 4 prompts x 4 completions | about 77 s/step, 0 rollout errors, old log probs 16/16, ratio 0.997 to 1.0006 |
 
 Notes:
 
-1. The image bakes `ml/` from `4dcb06d`. The LoRA only FSDP checkpoint (`85b8a3b`, `c444534`)
-   reaches jobs through the shipped `ml/`, so no rebuild is needed for it.
+1. The image bakes `ml/` from `4dcb06d`, which saves the full model on every LoRA step. The LoRA
+   only FSDP checkpoint (`85b8a3b`, `c444534`) is active only when the submitting client has the
+   current `ml/` in its working directory or beside the SDK, so the SDK ships it in the job tar.
+   Jobs that fall back to the image's `/app/cray/ml` lack it. That includes the infra kit's
+   `SCALARLM_HOME=/app/cray` and `TRAINER_REF` paths. Rebuild from `c444534` or later, or push that
+   commit for `TRAINER_REF`.
 2. Write job output to fast local disk. The final full parameter checkpoint must finish inside
    the 10 minute NCCL barrier timeout.
 3. On a host without the NVIDIA container toolkit, pass `/dev/nvidia*` and the driver
-   libraries with `--device` and `-v` instead of `--gpus`.
+   libraries with `--device` and `-v` instead of `--gpus`, and run `ldconfig` in the container.
+   `run_unit_tests.sh` uses `--gpus all` and does not work there. The v1.8 suite above ran with
+   that manual passthrough, `CUDA_VISIBLE_DEVICES=0`, the rendezvous variables and the same
+   deselects as the script. The NVIDIA entrypoint then prints "driver was not detected", yet
+   `torch.cuda.is_available()` is true.
 
 ## Run
 
