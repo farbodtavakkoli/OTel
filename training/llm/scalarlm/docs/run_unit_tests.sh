@@ -4,7 +4,7 @@
 # Run it against a built image:
 #   ./run_unit_tests.sh                     # defaults to the current tag for this host
 #   ./run_unit_tests.sh mi355-v1.8
-#   ./run_unit_tests.sh h100-v1.7
+#   ./run_unit_tests.sh h100-v1.8
 #   WITH_CMD=1 ./run_unit_tests.sh          # also run the two cmd/ tests (see below)
 #
 # Expected: 827 passed, 0 failed. With WITH_CMD=1: 829 passed.
@@ -49,7 +49,7 @@ if [ $# -ge 1 ]; then
 elif [ -d /opt/rocm ] || command -v rocm-smi >/dev/null 2>&1; then
     TAG="${IMAGE_TAG:-mi355-v1.8}"
 elif command -v nvidia-smi >/dev/null 2>&1; then
-    TAG="${IMAGE_TAG:-h100-v1.7}"
+    TAG="${IMAGE_TAG:-h100-v1.8}"
 else
     echo "ERROR: cannot detect GPU vendor; pass a tag, e.g. ./run_unit_tests.sh mi355-v1.8"
     exit 1

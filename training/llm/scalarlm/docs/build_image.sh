@@ -6,7 +6,7 @@
 # Usage:
 #   ./build_image.sh                              # auto-detect target, build + label
 #   TARGET=amd    IMAGE_TAG=mi355-v1.8 ./build_image.sh
-#   TARGET=nvidia IMAGE_TAG=h100-v1.7  ./build_image.sh
+#   TARGET=nvidia IMAGE_TAG=h100-v1.8  ./build_image.sh
 #
 # Targets:
 #   amd     MI355X (gfx950/ROCm). Runbook: DOCKER_IMAGE_MI355.md.
