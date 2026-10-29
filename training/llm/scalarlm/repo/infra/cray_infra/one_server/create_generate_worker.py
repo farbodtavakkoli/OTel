@@ -3,7 +3,10 @@ import aiohttp
 from itertools import islice
 import json
 import os
+import signal
 import sys
+
+import psutil
 
 import logging
 
@@ -716,8 +719,26 @@ async def async_completion_task(request, app):
     return response
 
 
+def server_process_tree():
+    me = psutil.Process()
+    root = me
+    root_pid = os.environ.get("SCALARLM_SERVER_PID", "")
+    if root_pid.isdigit():
+        for parent in me.parents():
+            if parent.pid == int(root_pid):
+                root = parent
+                break
+    procs = [p for p in root.children(recursive=True) if p.pid != me.pid]
+    if root.pid != me.pid:
+        procs.append(root)
+    return procs
+
+
 def kill_vllm_container():
-    # Kill instances of pt_thread_main process
-    os.system("pgrep pt_main_thread | xargs kill -9")
-    os.system("pgrep python | xargs kill -9")
+    for proc in server_process_tree():
+        try:
+            proc.kill()
+        except psutil.NoSuchProcess:
+            pass
+    os.kill(os.getpid(), signal.SIGKILL)
     sys.exit(1)

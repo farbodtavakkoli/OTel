@@ -6,7 +6,7 @@
 # Usage:
 #   ./build_image.sh                              # auto-detect target, build + label
 #   TARGET=amd    IMAGE_TAG=mi355-v1.8 ./build_image.sh
-#   TARGET=nvidia IMAGE_TAG=h100-v1.8  ./build_image.sh
+#   TARGET=nvidia IMAGE_TAG=h100-v1.9  ./build_image.sh
 #
 # Targets:
 #   amd     MI355X (gfx950/ROCm). Runbook: DOCKER_IMAGE_MI355.md.
@@ -55,9 +55,9 @@ case "$TARGET" in
         fi ;;
     nvidia)
         BASE_NAME=nvidia; ARCH_LIST=9.0;    VLLM_DEVICE=cuda
-        DEFAULT_TAG=h100-v1.8;  DEFAULT_STAGE=cray:h100-build
+        DEFAULT_TAG=h100-v1.9;  DEFAULT_STAGE=cray:h100-build
         TITLE="ScalarLM H100"
-        DESCRIPTION="ScalarLM training+inference for NVIDIA H100 (sm_90/CUDA 12.9, torch 2.13): vLLM v0.32 with native Muse Glimmer, transformers 5.17+, NCCL collectives, DDP+FSDP+FSDP2, GRPO training mode" ;;
+        DESCRIPTION="ScalarLM training+inference for NVIDIA H100 (sm_90/CUDA 12.9, torch 2.13): vLLM v0.32 with native Muse Glimmer, transformers 5.17+, NCCL collectives, DDP+FSDP+FSDP2, GRPO training mode, EFA multi-node (aws-ofi-nccl 1.22)" ;;
     trainium)
         BASE_NAME=trainium; ARCH_LIST=""; VLLM_DEVICE=neuron
         DEFAULT_TAG=trainium2-v1.0; DEFAULT_STAGE=cray:trainium2-build

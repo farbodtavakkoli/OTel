@@ -15,6 +15,17 @@ RUN apt-get update -y \
         libdw-dev libibverbs-dev \
     && rm -rf /var/lib/apt/lists/*
 
+ARG EFA_INSTALLER_VERSION=1.51.0
+RUN cd /tmp && curl -fsSL https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz | tar xz && \
+    cd aws-efa-installer && apt-get update -y && \
+    ./efa_installer.sh -y --skip-kmod --skip-limit-conf --no-verify --skip-mpi --disable-ngc && \
+    cd / && rm -rf /tmp/aws-efa-installer /var/lib/apt/lists/* && ldconfig && \
+    /opt/amazon/efa/bin/fi_info --version && \
+    ldd /opt/amazon/ofi-nccl/lib/libnccl-net.so | grep -q "libfabric.so.1 => /opt/amazon/efa/lib/"
+ENV FI_PROVIDER=efa
+ENV FI_EFA_USE_DEVICE_RDMA=1
+ENV PATH="/opt/amazon/efa/bin:$PATH"
+
 ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 RUN python3 -m venv $VIRTUAL_ENV

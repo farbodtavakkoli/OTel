@@ -39,6 +39,7 @@ def main():
 def run_server_with_autoreload():
 
     os.chdir("/app/cray/infra")
+    os.environ["SCALARLM_SERVER_PID"] = str(os.getpid())
 
     server_config = uvicorn.Config(
         "cray_infra.one_server.main:run_all_servers",
