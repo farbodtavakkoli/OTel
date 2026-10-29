@@ -2,28 +2,66 @@ ARG BASE_NAME=cpu
 
 ###############################################################################
 # NVIDIA BASE IMAGE
-FROM nvcr.io/nvidia/pytorch:26.07-py3 AS nvidia
+ARG CUDA_VERSION=12.9.1
+FROM nvcr.io/nvidia/cuda:${CUDA_VERSION}-cudnn-devel-ubuntu24.04 AS nvidia
 
-RUN apt-get update -y && apt-get install -y python3-venv slurm-wlm libslurm-dev
+RUN apt-get update -y \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        python3 python3-venv python3-dev python3-pip \
+        git ca-certificates curl pkg-config cmake ninja-build \
+        openmpi-bin libopenmpi-dev libpmix-dev \
+        slurm-wlm libslurm-dev \
+        ffmpeg libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev \
+        libdw-dev libibverbs-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-RUN python -m venv $VIRTUAL_ENV --system-site-packages && \
-    . $VIRTUAL_ENV/bin/activate
-
-# Put HPC-X MPI in the PATH, i.e. mpirun
-ENV PATH=$PATH:/opt/hpcx/ompi/bin
-ARG LD_LIBRARY_PATH=""
-ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}:/opt/hpcx/ompi/lib:/usr/local/lib/python3.12/dist-packages/torch/lib
+RUN python3 -m venv $VIRTUAL_ENV
 
 ARG TORCH_VERSION="2.13.0"
+ARG TORCHVISION_VERSION="0.28.0"
+ARG TORCHAUDIO_VERSION="2.11.0"
+ARG TORCHCODEC_VERSION="0.16.0"
+ARG TORCH_CUDA_INDEX=cu129
 ARG TORCH_CUDA_ARCH_LIST="7.5"
 
 RUN pip install uv && \
-    uv pip install ninja && \
-    pip install --upgrade "protobuf>=6.30.0"
+    uv pip install \
+        torch==${TORCH_VERSION} \
+        torchvision==${TORCHVISION_VERSION} \
+        torchaudio==${TORCHAUDIO_VERSION} \
+        torchcodec==${TORCHCODEC_VERSION} \
+        --index-url https://download.pytorch.org/whl/${TORCH_CUDA_INDEX} && \
+    uv pip install ninja "protobuf>=6.30.0" && \
+    python -c "import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda); assert torch.__version__.endswith('+${TORCH_CUDA_INDEX}'), torch.__version__"
 
-ENV PIP_CONSTRAINT=""
+ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}:/app/.venv/lib/python3.12/site-packages/torch/lib
+
+ARG OPENCV_PYTHON_VERSION=5.0.0.93
+RUN mkdir -p /opt/opencv-wheels && \
+    ENABLE_HEADLESS=1 CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) \
+    pip wheel --no-deps --no-binary opencv-python-headless \
+        opencv-python-headless==${OPENCV_PYTHON_VERSION} -w /opt/opencv-wheels && \
+    ls -la /opt/opencv-wheels
+
+RUN printf '%s\n' \
+        "torch==${TORCH_VERSION}+${TORCH_CUDA_INDEX}" \
+        "torchvision==${TORCHVISION_VERSION}+${TORCH_CUDA_INDEX}" \
+        "torchaudio==${TORCHAUDIO_VERSION}+${TORCH_CUDA_INDEX}" \
+        "torchcodec==${TORCHCODEC_VERSION}+${TORCH_CUDA_INDEX}" \
+        "triton==$(python -c 'import importlib.metadata as m; print(m.version("triton"))')" \
+        > /app/torch-constraints.txt && \
+    if [ "${TORCH_CUDA_INDEX#cu12}" != "${TORCH_CUDA_INDEX}" ]; then \
+        printf '%s\n' "cuda-bindings<13" "cuda-python<13" >> /app/torch-constraints.txt; \
+    fi && \
+    cat /app/torch-constraints.txt
+ENV PIP_CONSTRAINT=/app/torch-constraints.txt
+ENV UV_CONSTRAINT=/app/torch-constraints.txt
+ENV TORCH_CUDA_INDEX=${TORCH_CUDA_INDEX}
+ENV EXPECT_TORCH_VERSION=${TORCH_VERSION}+${TORCH_CUDA_INDEX}
+COPY scripts/check-torch-stack.sh /app/check-torch-stack.sh
+RUN chmod +x /app/check-torch-stack.sh && /app/check-torch-stack.sh base
 
 ARG INSTALL_ROOT=/app/cray
 WORKDIR ${INSTALL_ROOT}
@@ -132,7 +170,7 @@ ENV LD_LIBRARY_PATH=/opt/venv/lib/python3.12/site-packages/_rocm_sdk_core/lib:${
 # to the final stage as /app/ui-bundle. No Node.js runtime is carried forward;
 # the final image only contains the static bundle.
 ###############################################################################
-FROM node:24.2.0 AS scalarlm_ui_builder
+FROM public.ecr.aws/docker/library/node:24.2.0 AS scalarlm_ui_builder
 
 WORKDIR /build
 
@@ -153,7 +191,13 @@ RUN --mount=type=cache,target=/var/cache/apt \
     apt-get update -y \
     && apt-get install -y curl git ccache vim numactl gcc-12 g++-12 libomp-dev libnuma-dev \
     && apt-get install -y ffmpeg libsm6 libxext6 libgl1 libdnnl-dev \
-    && update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 10 --slave /usr/bin/g++ g++ /usr/bin/g++-12
+    && if [ "$BASE_NAME" = "nvidia" ] || [ "$BASE_NAME" = "spark" ]; then \
+        apt-get install -y gcc-13 g++-13 \
+        && update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 10 --slave /usr/bin/g++ g++ /usr/bin/g++-13; \
+    else \
+        update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 10 --slave /usr/bin/g++ g++ /usr/bin/g++-12; \
+    fi \
+    && gcc --version | head -1
 
 ARG INSTALL_ROOT=/app/cray
 
@@ -163,25 +207,24 @@ WORKDIR ${INSTALL_ROOT}
 RUN pip install setuptools-scm
 
 # Configure vLLM source - can use either local directory or remote repo.
-#
-# Pin the exact vllm-fork v0.27.1 revision validated with this PyTorch
-# generation. VLLM_BRANCH still selects the clone source, while an explicit
-# empty VLLM_COMMIT opts back into tracking that branch tip for development.
 ARG VLLM_SOURCE=remote
-ARG VLLM_BRANCH=main
-ARG VLLM_COMMIT=281955fc63c823e8a439db82bf02ad9fffb199e2
-ARG VLLM_REPO=https://github.com/supermassive-intelligence/vllm-fork.git
+ARG VLLM_BRANCH=v0.32.0
+ARG VLLM_COMMIT=5df63a7203cdb9328d824a27b682e77c7b9928be
+ARG VLLM_REPO=https://github.com/vllm-project/vllm.git
+ARG VLLM_FORK_PATCH=vllm-v0.32.0-scalarlm.patch
 
 # Handle vLLM source - support both local and remote modes.
 # build-copy-vllm.sh and apply_patches.py are copied in a single COPY
 # step so the image stays under Docker's 127-layer overlay-fs stacking
 # cap. The script sources apply_patches.py from its own SCRIPT_DIR.
-COPY scripts/build-copy-vllm.sh scripts/vllm_patches/apply_patches.py ${INSTALL_ROOT}/
+COPY scripts/build-copy-vllm.sh scripts/vllm_patches/apply_patches.py \
+     scripts/vllm_patches/vllm-v0.32.0-scalarlm.patch ${INSTALL_ROOT}/
 
 # Handle vLLM source - single RUN command with conditional mount
 # For remote: clone from repository
 # For local: mount and copy from ./vllm directory
 RUN --mount=type=bind,source=./vllm,target=/workspace/vllm,rw \
+    VLLM_FORK_PATCH="${VLLM_FORK_PATCH}" \
     bash ${INSTALL_ROOT}/build-copy-vllm.sh ${VLLM_SOURCE} ${INSTALL_ROOT}/vllm \
     /workspace/vllm ${VLLM_REPO} ${VLLM_BRANCH} ${VLLM_COMMIT}
 
@@ -198,7 +241,19 @@ ENV CMAKE_BUILD_TYPE=Release
 # vLLM dependencies
 COPY ./infra/requirements-vllm.txt ${INSTALL_ROOT}/requirements-vllm.txt
 RUN uv pip install --no-compile --no-cache-dir -r ${INSTALL_ROOT}/requirements-vllm.txt && \
-    python ${INSTALL_ROOT}/vllm/use_existing_torch.py --prefix
+    if [ -f ${INSTALL_ROOT}/vllm/tools/use_existing_torch.py ]; then \
+        UET=${INSTALL_ROOT}/vllm/tools/use_existing_torch.py; \
+    else \
+        UET=${INSTALL_ROOT}/vllm/use_existing_torch.py; \
+    fi && \
+    python "$UET" --prefix && \
+    if [ "$VLLM_TARGET_DEVICE" = "cuda" ] && [ -f requirements/build/cuda.txt ]; then \
+        uv pip install --no-compile --no-cache-dir -r requirements/build/cuda.txt; \
+    fi && \
+    if [ "$VLLM_TARGET_DEVICE" = "cuda" ] && python -c "import sys, torch; sys.exit(0 if torch.version.cuda.startswith('12.') else 1)"; then \
+        sed -i 's/^nvidia-cutlass-dsl\[cu13\]/nvidia-cutlass-dsl/; s/^humming-kernels\[cu13\]/humming-kernels[cu12]/' requirements/cuda.txt && \
+        echo "CUDA 12 build: swapped [cu13] extras in requirements/cuda.txt"; \
+    fi
 
 RUN \
     --mount=type=cache,target=/root/.cache/pip \
@@ -209,8 +264,20 @@ RUN \
     COMPUTED=$(( NPROC < MEM_BASED ? NPROC : MEM_BASED )) && \
     export MAX_JOBS=$(( COMPUTED < 16 ? COMPUTED : 16 )) && \
     echo "MAX_JOBS=${MAX_JOBS} (nproc=${NPROC}, mem-based=${MEM_BASED}, capped at 16)" && \
-    pip install --no-build-isolation -e . --verbose && \
-    uv pip install "safetensors>=0.8.0" 
+    pip install --no-build-isolation -e . --verbose \
+        ${TORCH_CUDA_INDEX:+--extra-index-url https://download.pytorch.org/whl/${TORCH_CUDA_INDEX}} && \
+    uv pip install "safetensors>=0.8.0" && \
+    if ls /opt/opencv-wheels/opencv_python_headless-*.whl >/dev/null 2>&1; then \
+        uv pip uninstall opencv-python-headless opencv-python && \
+        uv pip install --no-deps /opt/opencv-wheels/opencv_python_headless-*.whl && \
+        if find "$(python -c 'import site; print(site.getsitepackages()[0])')" \
+                -name 'libcrypto-*.so*' -o -name 'libssl-*.so*' | grep -q opencv; then \
+            echo "ERROR: opencv still bundles its own OpenSSL" >&2; exit 1; \
+        fi && \
+        echo "opencv-python-headless replaced with the source build (system OpenSSL)"; \
+    fi
+
+RUN if [ -x /app/check-torch-stack.sh ]; then /app/check-torch-stack.sh after-vllm; fi
 
 WORKDIR ${INSTALL_ROOT}
 
@@ -285,6 +352,8 @@ RUN \
         python -c "import peft, sentence_transformers, torch, torchaudio, torchao, torchcodec, torchvision, vllm._C; assert torch.version.cuda is None; assert '+cpu' in torch.__version__, torch.__version__; assert '+cpu' in torchvision.__version__, torchvision.__version__; assert '+cpu' in torchaudio.__version__, torchaudio.__version__; assert '+cpu' in torchcodec.__version__, torchcodec.__version__"; \
     fi
 
+RUN if [ -x /app/check-torch-stack.sh ]; then /app/check-torch-stack.sh after-infra; fi
+
 RUN mkdir -p ${INSTALL_ROOT}/jobs ${INSTALL_ROOT}/nfs
 
 # Copy the rest of the platform code
@@ -307,15 +376,6 @@ ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}:${PYTHONPATH:-}:/usr/local/lib/slurm
 ENV SLURM_CONF=${INSTALL_ROOT}/nfs/slurm.conf
 ENV VLLM_CPU_MOE_PREPACK=0
 
-# train_job_entrypoint.sh launches workers with a bare `torchrun`. On the NVIDIA
-# base, torch lives in the system dist-packages so `torchrun` resolves to
-# /usr/local/bin/torchrun with a `#!/usr/bin/python3` shebang — the SYSTEM
-# interpreter, which cannot see venv-only deps (cryptography, peft, …) and every
-# worker dies at `import cryptography` (via cray_infra.huggingface.get_hf_token).
-# The NVIDIA venv is built --system-site-packages, so its interpreter sees BOTH
-# system torch and the venv deps. Install a venv torchrun that runs under it so
-# the unmodified entrypoint resolves torchrun (venv PATH is first) correctly.
-#
 # NVIDIA-ONLY (VLLM_TARGET_DEVICE=cuda). The AMD image installs torch INTO its
 # venv (/opt/venv) so torchrun is already venv-bound there — and its venv is NOT
 # at $VIRTUAL_ENV=/app/.venv, so this must never touch the AMD build. Guard on

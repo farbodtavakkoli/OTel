@@ -127,6 +127,11 @@ ROCm/PyTorch versions — needs a full rebuild from `repo/`.
 Build from `repo/`'s Dockerfile, not by overlaying a published base: the AMD integration
 touches `ml/`, `infra/cray_infra/`, `scripts/` and `test/`.
 
+> **vLLM source.** `repo/Dockerfile` now defaults to upstream vLLM v0.32.0 with
+> `scripts/vllm_patches/vllm-v0.32.0-scalarlm.patch`, validated on NVIDIA only. `build_image.sh`
+> keeps `TARGET=amd` on `vllm-fork@281955f`. Set `AMD_VLLM_V032=1` to use v0.32.0, then rerun
+> every acceptance gate below before publishing.
+
 ```bash
 rocminfo | grep -m1 gfx            # gfx950
 git status --short                 # empty, or the image is labelled -dirty

@@ -418,6 +418,29 @@ STATE_DICT_EXPORT_SRC = '''    def state_dict(self, destination=None, prefix="",
 '''
 
 
+def _add_state_dict_export_imports(src: str, filename: str) -> str:
+    import re
+
+    blocks = re.findall(r"^from \.utils import \(\n(?:    [A-Za-z_]\w*,\n)+\)\n", src, re.M)
+    assert len(blocks) == 1, (
+        f"{filename}: expected exactly one `from .utils import (...)` block, "
+        f"found {len(blocks)}. Re-anchor this patch."
+    )
+    block = blocks[0]
+    assert "    maybe_prefix,\n" in block, (
+        f"{filename}: `from .utils import (...)` no longer imports maybe_prefix; "
+        "cannot add the state_dict export helpers. Re-anchor this patch."
+    )
+    new_block = block.replace(
+        "    maybe_prefix,\n",
+        "    maybe_prefix,\n"
+        "    scalarlm_state_dict_export_enabled,\n"
+        "    unpack_packed_modules_state_dict,\n",
+        1,
+    )
+    return src.replace(block, new_block, 1)
+
+
 LATEST_CHECKPOINT_SRC = '''
 
 def _scalarlm_latest_checkpoint(files):
@@ -476,7 +499,14 @@ def patch_diffusion_gemma_sc_embeds_dtype(vllm_root: Path) -> None:
     src = target.read_text()
     anchor = "    sc_embeds[decode_slots] = soft_embeds * sc_keep\n"
 
-    if "(soft_embeds * sc_keep).to(sc_embeds.dtype)" in src:
+    import re
+
+    if re.search(
+        r"^\s*sc_embeds\[decode_slots\] = \(soft_embeds \* sc_keep[^\n]*\)"
+        r"\.to\(sc_embeds\.dtype\)\n",
+        src,
+        re.M,
+    ):
         print("[vllm_patches] diffusion_gemma dtype cast already present; skipping")
         return
 
@@ -607,17 +637,6 @@ def patch_llama_scalarlm_state_dict_export(vllm_root: Path) -> None:
         print("[vllm_patches] llama state_dict export already present; skipping")
         return
 
-    anchor_imports = (
-        "from .utils import (\n"
-        "    AutoWeightsLoader,\n"
-        "    PPMissingLayer,\n"
-        "    WeightsMapper,\n"
-        "    extract_layer_index,\n"
-        "    make_empty_intermediate_tensors_factory,\n"
-        "    make_layers,\n"
-        "    maybe_prefix,\n"
-        ")\n"
-    )
     anchor_class = (
         "class LlamaForCausalLM(\n"
         "    LocalArgmaxMixin,\n"
@@ -631,25 +650,14 @@ def patch_llama_scalarlm_state_dict_export(vllm_root: Path) -> None:
         "):\n"
     )
 
-    assert anchor_imports in src, (
-        "llama.py: the `from .utils import (...)` block has drifted; cannot "
-        "add the state_dict export helpers. Re-anchor this patch."
-    )
     assert anchor_class in src, (
         "llama.py: the LlamaForCausalLM class header has drifted; cannot "
         "place the state_dict override. Re-anchor this patch."
     )
 
-    patched = src.replace(
-        anchor_imports,
-        anchor_imports.replace(
-            "    maybe_prefix,\n",
-            "    maybe_prefix,\n"
-            "    scalarlm_state_dict_export_enabled,\n"
-            "    unpack_packed_modules_state_dict,\n",
-        ),
-        1,
-    ).replace(anchor_class, anchor_class + STATE_DICT_EXPORT_SRC, 1)
+    patched = _add_state_dict_export_imports(src, "llama.py").replace(
+        anchor_class, anchor_class + STATE_DICT_EXPORT_SRC, 1
+    )
 
     assert patched != src, "patch produced identical output — something's wrong"
     compile(patched, str(target), "exec")
@@ -683,41 +691,18 @@ def patch_gemma4_scalarlm_state_dict_export(vllm_root: Path) -> None:
         print("[vllm_patches] gemma4 state_dict export already present; skipping")
         return
 
-    anchor_imports = (
-        "from .utils import (\n"
-        "    AutoWeightsLoader,\n"
-        "    WeightsMapper,\n"
-        "    extract_layer_index,\n"
-        "    is_pp_missing_parameter,\n"
-        "    make_layers,\n"
-        "    maybe_prefix,\n"
-        ")\n"
-    )
     anchor_class = (
         "class Gemma4ForCausalLM(\n"
         "    nn.Module, SupportsLoRA, SupportsPP, MixtureOfExperts, SupportsEagle3\n"
         "):\n"
     )
 
-    assert anchor_imports in src, (
-        "gemma4.py: the `from .utils import (...)` block has drifted; cannot "
-        "add the state_dict export helpers. Re-anchor this patch."
-    )
     assert anchor_class in src, (
         "gemma4.py: the Gemma4ForCausalLM class header has drifted; cannot "
         "place the state_dict override. Re-anchor this patch."
     )
 
-    patched = src.replace(
-        anchor_imports,
-        anchor_imports.replace(
-            "    maybe_prefix,\n",
-            "    maybe_prefix,\n"
-            "    scalarlm_state_dict_export_enabled,\n"
-            "    unpack_packed_modules_state_dict,\n",
-        ),
-        1,
-    ).replace(
+    patched = _add_state_dict_export_imports(src, "gemma4.py").replace(
         anchor_class,
         anchor_class + STATE_DICT_EXPORT_SRC,
         1,

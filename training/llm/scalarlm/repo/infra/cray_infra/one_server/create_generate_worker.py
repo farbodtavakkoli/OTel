@@ -44,7 +44,10 @@ from vllm.entrypoints.serve.lora.protocol import (
     LoadLoRAAdapterRequest,
 )
 
-from vllm.entrypoints.chat_utils import ChatCompletionMessageParam
+try:
+    from vllm.entrypoints.chat_utils import ChatCompletionMessageParam
+except ImportError:
+    from vllm.renderers.chat_utils import ChatCompletionMessageParam
 
 
 from cray_infra.api.fastapi.routers.request_types.get_work_response import (

@@ -64,6 +64,20 @@ else
     echo "✅ Remote vLLM cloned successfully"
 fi
 
+if [ -n "${VLLM_FORK_PATCH:-}" ]; then
+    SCRIPT_DIR_EARLY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    case "$VLLM_FORK_PATCH" in
+        /*) FORK_PATCH="$VLLM_FORK_PATCH" ;;
+        *)  FORK_PATCH="${SCRIPT_DIR_EARLY}/${VLLM_FORK_PATCH}" ;;
+    esac
+    if [ ! -f "$FORK_PATCH" ]; then
+        echo "❌ Error: VLLM_FORK_PATCH=$VLLM_FORK_PATCH not found at $FORK_PATCH"
+        exit 1
+    fi
+    echo "🩹 Applying vLLM fork patch $FORK_PATCH"
+    git -C "$DEST_DIR" apply --whitespace=nowarn "$FORK_PATCH"
+fi
+
 echo "📍 vLLM is ready at: $DEST_DIR"
 ls -la "$DEST_DIR" | head -5
 

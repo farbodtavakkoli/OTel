@@ -40,17 +40,24 @@ if [ "$TARGET" = auto ]; then
     elif command -v nvidia-smi >/dev/null 2>&1; then TARGET=nvidia
     else echo "ERROR: cannot auto-detect GPU vendor; set TARGET=amd or TARGET=nvidia"; exit 1; fi
 fi
+VLLM_PIN_ARGS=()
 case "$TARGET" in
     amd)
         BASE_NAME=amd;    ARCH_LIST=gfx942; VLLM_DEVICE=rocm
         DEFAULT_TAG=mi355-v1.8; DEFAULT_STAGE=cray:mi355-build
         TITLE="ScalarLM MI355X"
-        DESCRIPTION="ScalarLM training+inference for AMD Instinct MI355X (gfx950/ROCm): NCCL/RCCL collectives, DDP+FSDP+FSDP2 verified on 8 GPUs, GRPO training mode" ;;
+        DESCRIPTION="ScalarLM training+inference for AMD Instinct MI355X (gfx950/ROCm): NCCL/RCCL collectives, DDP+FSDP+FSDP2 verified on 8 GPUs, GRPO training mode"
+        if [ "${AMD_VLLM_V032:-0}" != 1 ]; then
+            VLLM_PIN_ARGS=(--build-arg VLLM_REPO=https://github.com/supermassive-intelligence/vllm-fork.git
+                           --build-arg VLLM_BRANCH=main
+                           --build-arg VLLM_COMMIT=281955fc63c823e8a439db82bf02ad9fffb199e2
+                           --build-arg VLLM_FORK_PATCH=)
+        fi ;;
     nvidia)
         BASE_NAME=nvidia; ARCH_LIST=9.0;    VLLM_DEVICE=cuda
-        DEFAULT_TAG=h100-v1.7;  DEFAULT_STAGE=cray:h100-build
+        DEFAULT_TAG=h100-v1.8;  DEFAULT_STAGE=cray:h100-build
         TITLE="ScalarLM H100"
-        DESCRIPTION="ScalarLM training+inference for NVIDIA H100 (sm_90/CUDA): NCCL collectives, DDP+FSDP+FSDP2, GRPO training mode" ;;
+        DESCRIPTION="ScalarLM training+inference for NVIDIA H100 (sm_90/CUDA 12.9, torch 2.13): vLLM v0.32 with native Muse Glimmer, transformers 5.17+, NCCL collectives, DDP+FSDP+FSDP2, GRPO training mode" ;;
     trainium)
         BASE_NAME=trainium; ARCH_LIST=""; VLLM_DEVICE=neuron
         DEFAULT_TAG=trainium2-v1.0; DEFAULT_STAGE=cray:trainium2-build
@@ -117,6 +124,7 @@ docker build --network=host --platform linux/amd64 \
     --build-arg VLLM_TARGET_DEVICE="$VLLM_DEVICE" \
     ${NEURON_BASE:+--build-arg NEURON_BASE="$NEURON_BASE"} \
     ${NEURON_TRAIN_BASE:+--build-arg NEURON_TRAIN_BASE="$NEURON_TRAIN_BASE"} \
+    ${VLLM_PIN_ARGS[@]+"${VLLM_PIN_ARGS[@]}"} \
     -f "$DOCKERFILE" \
     -t "$BUILD_STAGE" \
     "$REPO_DIR"

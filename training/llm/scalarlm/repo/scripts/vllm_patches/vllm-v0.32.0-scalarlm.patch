@@ -1,0 +1,4814 @@
+diff --git a/cmake/cpu_extension.cmake b/cmake/cpu_extension.cmake
+index c4d111e77..a5831bfe8 100644
+--- a/cmake/cpu_extension.cmake
++++ b/cmake/cpu_extension.cmake
+@@ -315,7 +315,7 @@ if (ENABLE_X86_ISA OR (ASIMD_FOUND AND NOT APPLE_SILICON_FOUND) OR POWER9_FOUND
+                 SUBBUILD_DIR "${FETCHCONTENT_BASE_DIR}/arm_compute-subbuild"
+                 SOURCE_DIR   "${FETCHCONTENT_BASE_DIR}/arm_compute-src"
+                 GIT_REPOSITORY https://github.com/ARM-software/ComputeLibrary.git
+-                GIT_TAG        v52.6.0
++                GIT_TAG        v52.8.0
+                 GIT_SHALLOW    TRUE
+                 GIT_PROGRESS   TRUE
+             )
+diff --git a/cmake/external_projects/qutlass.cmake b/cmake/external_projects/qutlass.cmake
+index b6df33c17..8dba82724 100644
+--- a/cmake/external_projects/qutlass.cmake
++++ b/cmake/external_projects/qutlass.cmake
+@@ -32,7 +32,16 @@ else()
+   set(_qutlass_bin "${_qutlass_fc_root}/qutlass-build")
+   set(_qutlass_sub "${_qutlass_fc_root}/qutlass-subbuild")
+ 
+-  if(EXISTS "${_qutlass_src}/qutlass/csrc/bindings.cpp")
++  find_package(Git REQUIRED)
++  execute_process(
++    COMMAND "${GIT_EXECUTABLE}" -C "${_qutlass_src}" rev-parse HEAD
++    RESULT_VARIABLE _qutlass_git_result
++    OUTPUT_VARIABLE _qutlass_git_revision
++    ERROR_QUIET
++    OUTPUT_STRIP_TRAILING_WHITESPACE)
++
++  if(_qutlass_git_result EQUAL 0 AND
++     _qutlass_git_revision STREQUAL _QUTLASS_UPSTREAM_TAG)
+     set(qutlass_SOURCE_DIR "${_qutlass_src}")
+     set(qutlass_BINARY_DIR "${_qutlass_bin}")
+   else()
+diff --git a/csrc/cpu/cpu_types_arm.hpp b/csrc/cpu/cpu_types_arm.hpp
+index 46999e3b7..e67e13d07 100644
+--- a/csrc/cpu/cpu_types_arm.hpp
++++ b/csrc/cpu/cpu_types_arm.hpp
+@@ -211,7 +211,7 @@ struct VectorizedRegWrapper {
+   // Define optimized functions for datatypes passed in __VA_ARGS__
+   OPT_TORCH_IMPL(abs, abs, abs, c10::Half, float)
+   OPT_TORCH_IMPL(er, erf, erf, float)
+-  OPT_TORCH_IMPL(exp, exp, fexp_u20, float)
++  OPT_TORCH_IMPL(exp, exp, exp, float)
+   OPT_TORCH_IMPL(exp_u20, exp, exp_u20, float)
+   OPT_TORCH_IMPL(sin, sin, sin, float)
+   OPT_TORCH_IMPL(sinh, sinh, sinh, float)
+diff --git a/docs/design/hybrid_lora_tokenformer.md b/docs/design/hybrid_lora_tokenformer.md
+new file mode 100644
+index 000000000..58e4d6c70
+--- /dev/null
++++ b/docs/design/hybrid_lora_tokenformer.md
+@@ -0,0 +1,421 @@
++# Hybrid LoRA + Tokenformer Adapters
++
++Design doc for enabling LoRA and Tokenformer adapters to coexist on a single
++vLLM server.
++
++**Status:** draft
++**Scope:** ScalarLM fork (`scalarlm-on-v0.19.0`)
++
++## 1. Problem
++
++Today, "LoRA" and "Tokenformer" are mutually exclusive — the runner's adapter
++plumbing is hardwired to create a `TokenformerModelManager`, and the
++`enable_lora` flag really means "enable the Tokenformer-flavored manager". A
++Tokenformer-only workflow is fine; a LoRA-only workflow accidentally gets a
++Tokenformer manager that no-ops most LoRA calls; a mixed workflow is not
++expressible.
++
++Users want both:
++
++- **Tokenformer adapter** — MLP-level residual module inserted at load time
++  via `TokenformerSurgeon`. One adapter is "active" at a time; base weights
++  of selected layers (e.g. embeddings, norms) may be overwritten from the
++  adapter's state dict, and the extra `tokenformer_k/v/p` parameters
++  contribute a delta on top of the base MLP output. When no adapter is
++  loaded, the tokenformer parameters are zeros and the wrapped model is
++  behavior-equivalent to the base model.
++- **LoRA adapter** — per-request low-rank deltas applied inside linear
++  layers (q/k/v/o, gate/up/down, etc.) via Punica kernels. Many adapters can
++  coexist, and different requests in the same batch can select different
++  adapter slots.
++
++The two mechanisms target different places in the model and have different
++per-request semantics. They should compose, not race.
++
++**Unified file format.** Both adapter kinds ship as a single `.pt` file
++with a `model_state_dict`, matching the existing Tokenformer loader
++(`tokenformer_model_manager.py:27-46`). The *kind* of an adapter (or
++whether it's mixed) is determined by the keys present:
++
++- `tokenformer_k`, `tokenformer_v`, `tokenformer_p` (possibly plus base
++  weight overrides like `embed_tokens.weight`, `lm_head.weight`) →
++  Tokenformer component.
++- `lora_A.weight`, `lora_B.weight` (scoped by target module name) →
++  LoRA component.
++- A single file may contain both. In that case the adapter is "hybrid":
++  its Tokenformer portion activates globally and its LoRA portion
++  occupies a LoRA slot.
++
++We do not accept HF PEFT's `adapter_model.safetensors` + `adapter_config.json`
++layout in v1. If a user wants to run a PEFT-trained LoRA, they convert it
++to the `.pt` shape offline.
++
++## 2. Current state
++
++This section is prescriptive — every claim is pinned to a file and line on
++this branch so the design stays accurate as code changes.
++
++### 2.1 Manager selection
++
++`vllm/v1/worker/lora_model_runner_mixin.py:32-48`
++
++```python
++def load_lora_model(self, model, vllm_config, device):
++    if not supports_lora(model):
++        raise ValueError(...)
++    self.lora_manager = TokenformerModelManager(model=model, device=device)
++    return self.lora_manager.model
++```
++
++The runner never looks at anything that would distinguish LoRA from
++Tokenformer. There is no `enable_tokenformer` flag anywhere in
++`vllm/engine/arg_utils.py` or `vllm/config/`. `enable_lora=True`
++(arg_utils.py:516) is the only switch, and it currently produces a
++Tokenformer manager.
++
++### 2.2 Tokenformer surgeon
++
++`vllm/tokenformer/tokenformer_surgeon.py:166-170`
++
++```python
++def _is_adapter_layer(self, layer_name):
++    parts = layer_name.split(".")
++    if any(part in _NON_LANGUAGE_PATH_COMPONENTS for part in parts):
++        return False
++    return "mlp" in parts[-1]
++```
++
++The surgeon wraps a module as a `TokenformerAdapter` iff its leaf name is
++`mlp` (case-sensitive component match) and no ancestor is a vision/audio
++tower or multimodal projector. In practice this means *blocks*, not the
++individual `q_proj`/`k_proj`/`gate_proj`/`up_proj`/`down_proj` linears that
++LoRA targets. The surgeon wraps the block; LoRA replaces the linears
++*inside* the block. They operate at different granularity and do not
++overlap structurally.
++
++### 2.3 Tokenformer activation
++
++`vllm/tokenformer/tokenformer_model_manager.py:69-107` (`activate_adapter`):
++
++- Snapshots any base weight it is about to overwrite into
++  `self.original_tensors`.
++- Restores originals, then copies the adapter's tensors (skipping any key
++  whose name contains `'lora'`) into the state dict.
++- Calls `self.model.load_weights(state_dict.items())` and then
++  `process_weights_after_loading(...)`.
++
++The `'lora'` skip on line 97 is defensive — it was added with LoRA
++coexistence in mind but never exercised because both paths can't run yet.
++
++`process_weights_after_loading` is the risky bit: it re-runs
++quantization prep, fused-tensor setup, etc. If LoRA has already replaced
++linears with `*WithLoRA` wrappers and registered them with the Punica
++kernel infrastructure, we need to confirm that re-running
++`process_weights_after_loading` doesn't invalidate that state.
++
++### 2.4 Warmup path
++
++`vllm/tokenformer/tokenformer_model_manager.py:214-223` (`add_dummy_lora`
++is a no-op), and `set_active_adapters` (line 154) now skips unregistered
++ids (fix landed in `6529423ba`). LoRA's real `add_dummy_lora` actually
++creates a zero-rank dummy and registers it. The two have divergent
++warmup semantics that a hybrid manager has to pick between.
++
++### 2.5 Interfaces
++
++Models declare `SupportsLoRA` and `SupportsTokenformer` independently
++(`vllm/model_executor/models/interfaces.py`). Gemma3, Gemma4, Llama,
++Qwen3 declare both. Neither protocol enumerates target modules — the
++target set is decided by the *manager*, not the model.
++
++## 3. Goals & non-goals
++
++Goals:
++
++1. A single server can load and serve both LoRA and Tokenformer adapters.
++2. Per-request LoRA selection continues to work unchanged.
++3. A Tokenformer adapter is a server-global switch (same semantics as today).
++4. When only one type is enabled, behavior and latency are unchanged from today.
++5. Tokenformer adapters that don't overwrite base weights (the common case)
++   have zero interaction cost with LoRA.
++
++Non-goals (for v1):
++
++- Per-request Tokenformer selection. Tokenformer stays global.
++- Stacking multiple Tokenformer adapters. One at a time.
++- Automatic adapter-type inference from the request ID. The request has to
++  say whether it's LoRA or Tokenformer.
++- Changing the Tokenformer adapter file format.
++
++## 4. Design
++
++### 4.1 Shape
++
++Introduce a composite manager that owns a LoRA manager and a Tokenformer
++manager and routes calls by adapter kind:
++
++```text
++HybridAdapterManager
++├── PTWorkerLoRAManager      (per-request LoRA, many slots)
++└── TokenformerModelManager  (global, one active)
++```
++
++The runner keeps its existing `self.lora_manager` attribute (for backward
++compat), but the object it holds is the hybrid when both are enabled.
++When only LoRA is enabled, it uses the `.pt`-aware
++`PTWorkerLoRAManager`, which falls back to upstream's PEFT loader for
++standard adapters. When only Tokenformer is enabled, it uses
++`TokenformerModelManager`.
++
++### 4.2 Load order
++
++When both are enabled, apply **LoRA first, then Tokenformer**:
++
++1. `LoRAModelManager._create_lora_modules()` replaces targeted linears
++   with `*WithLoRA` wrappers. The original linear becomes `base_layer`
++   inside the wrapper.
++2. `TokenformerSurgeon.insert_adapter_modules()` walks the resulting tree
++   and wraps each eligible `mlp` block with a `TokenformerAdapter`. The
++   wrapper holds a reference to the (already-LoRA-replaced) MLP block;
++   LoRA wrappers live *inside* the Tokenformer wrapper unchanged.
++
++At forward time: request arrives → LoRA layers select per-request A/B →
++LoRA produces a delta → the enclosing MLP runs normally → Tokenformer
++adds its own delta on top. Order is `base + lora_delta + tokenformer_delta`,
++which is what we want: the tokenformer adapter models "what does this
++MLP block look like *after* LoRA has already been applied". That matches
++the user's intuition ("tokenformer adds no-op augmentation; LoRA adds
++per-request deltas on top of what tokenformer produces").
++
++### 4.3 Adapter-kind detection and request routing
++
++Because both kinds share one file format (§1), the kind is a property
++of the file's contents, not of the request. Detection happens once at
++`add_adapter` time by inspecting `model_state_dict` keys:
++
++```python
++def classify_adapter(state_dict: dict[str, Tensor]) -> tuple[bool, bool]:
++    """Returns (has_tokenformer, has_lora)."""
++    has_tk = any(
++        k.endswith("tokenformer_k") or k.endswith("tokenformer_v")
++        or k.endswith("tokenformer_p")
++        for k in state_dict
++    )
++    has_lora = any(".lora_A." in k or ".lora_B." in k for k in state_dict)
++    return has_tk, has_lora
++```
++
++Four possible shapes:
++
++| has_tokenformer | has_lora | Classification |
++| --- | --- | --- |
++| true | false | pure Tokenformer |
++| false | true | pure LoRA |
++| true | true | hybrid |
++| false | false | reject at load — nothing to activate |
++
++The state dict is **classified and split at load time**. The LoRA
++sub-manager consumes the LoRA-only slice after reshaping it into vLLM's
++internal weight layout. The Tokenformer sub-manager currently re-loads
++the raw `.pt` file through its existing interface and filters LoRA keys
++during activation; passing the already-split Tokenformer slice through
++would be a separate I/O optimization. Both registrations use the same
++`adapter_id`, so a single `set_active_adapter(id)` on the hybrid manager
++fans out to both sub-managers.
++
++LoRA keys receive two normalization passes. Pure string normalization
++removes PEFT/wrapper-only path segments and preserves the standard
++`model.layers.*` prefix used by text-only causal LMs. Immediately before
++constructing the `LoRAModel`, the worker manager resolves the decoder
++prefix against the live model's `named_modules()` tree. This second pass
++handles multimodal wrappers whose text decoder is exposed under
++`language_model.model.layers.*`; when a vision tower is visited first,
++the resolver explicitly prefers the text-decoder prefix.
++
++Request routing is then a property of the *loaded* adapter, not the
++request — the client just passes an adapter id. The hybrid manager
++looks the id up in its registry and activates whichever components
++exist. This is strictly simpler than carrying an `adapter_kind` field
++on `LoRARequest` and it's the route we take.
++
++Request side-effect for hybrid adapters: activating a hybrid adapter
++because one request references it imposes the Tokenformer portion on
++*all* requests in the batch (that's just the nature of global-state
++Tokenformer). The adapter author is responsible for making the
++Tokenformer portion near-identity for requests that weren't specifically
++targeted at it. Document this as a sharp edge in §4.7.
++
++### 4.4 Weight overwrite conflicts
++
++The Tokenformer adapter may overwrite base weights (embeddings, lm_head,
++norms). LoRA never overwrites base weights — it stores A/B externally.
++So there is no direct state-dict collision. However:
++
++- `process_weights_after_loading` runs across the whole model.
++  `*WithLoRA` layers implement the hook (they have to, to set up Punica
++  metadata). We need to verify that calling it *after* LoRA adapters are
++  already loaded is either a no-op or idempotent. If not, we gate the
++  call: only run it over the subset of modules whose state actually
++  changed. See §6 (open questions) — needs a targeted test before we can
++  choose.
++
++- The LoRA-key skip in `TokenformerModelManager.activate_adapter` is
++  load-bearing for hybrid adapters because that sub-manager currently
++  re-loads the raw `.pt` file. It must never replay LoRA tensors into the
++  base state dict. The classifier uses exact `.lora_A.` / `.lora_B.`
++  path segments; the activation-side filter remains defense in depth.
++
++### 4.5 Warmup path
++
++When both are enabled:
++
++- LoRA's real `add_dummy_lora` registers a dummy at slot 0 so cudagraph
++  profiling sees the LoRA kernel shapes.
++- Tokenformer's `add_dummy_lora` remains a no-op (the surgeon-injected
++  wrappers always run, with zero-initialized tokenformer params when no
++  adapter is loaded, so warmup already exercises the tokenformer code
++  path).
++
++The hybrid's `add_dummy_lora` fans out to both managers to preserve the
++shared worker-manager contract. The Tokenformer call is a no-op, and the
++skip-unregistered-id guard added in `6529423ba` keeps the warmup request
++safe if it later reaches Tokenformer activation.
++
++### 4.6 Config & CLI
++
++The adapter modes are selected by two flags:
++
++```text
++--enable-tokenformer           # default: false
++```
++
++- `--enable-lora` → `.pt`-aware LoRA manager only.
++- `--enable-tokenformer` → Tokenformer manager only.
++- Both flags → hybrid manager.
++- Neither flag → no adapter manager.
++
++### 4.7 Hybrid-adapter semantics (sharp edge)
++
++A hybrid `.pt` binds a Tokenformer portion to a LoRA portion under one
++id. When a request picks this id:
++
++- LoRA portion lands in a per-request slot — only that request sees it.
++- Tokenformer portion is activated globally — every other request in
++  flight (and every subsequent request until the next Tokenformer
++  change) runs with that Tokenformer delta too.
++
++Two consequences:
++
++1. Mixing a hybrid adapter with LoRA-only adapters in the same batch is
++   fine only if the hybrid's Tokenformer portion is trained to be
++   close-to-identity outside of its specific task (the same constraint
++   that applies to any shared Tokenformer today).
++2. Two different hybrid adapters cannot both be "active" at once. The
++   scheduler serializes them the same way it serializes plain
++   Tokenformer swaps: requests tagged with hybrid-B wait until the
++   current batch using hybrid-A drains, then the Tokenformer portion
++   swaps, then the batch runs. See §6 on the swap-latency concern.
++
++Document the constraint in the user-facing guide next to the
++`--enable-tokenformer` flag.
++
++## 5. Implementation status
++
++The feature was delivered in phases. Phases 0–2 are implemented; phases
++3–4 remain follow-up work.
++
++**Phase 0 — baseline tests (complete).** Tests pinned down the original
++behavior:
++
++- LoRA-only server with a LoRA adapter: confirm `activate_adapter` works.
++  (This failed before phase 1 and motivated the manager split.)
++- Tokenformer-only server with a Tokenformer adapter: confirm activation.
++- Warmup run with both `enable_lora=True` and a registered LoRA adapter
++  vs. a registered Tokenformer adapter.
++
++**Phase 1 — split the managers (complete).** Stopped always instantiating
++Tokenformer from `load_lora_model`, introduced `--enable-tokenformer`,
++wired the existing Tokenformer manager behind it, and fixed
++`--enable-lora` to instantiate `LoRAModelManager` as originally intended.
++
++**Phase 2 — hybrid manager (complete).** Added `HybridAdapterManager` and
++allowed both flags to be set together. Load order per §4.2. Adapter-kind
++detection and state-dict splitting per §4.3. Warmup per §4.5.
++Hybrid-adapter semantics per §4.7.
++
++**Phase 3 — `process_weights_after_loading` tightening (pending).** Resolve the
++open question in §6. Either confirm idempotency or narrow the call
++scope.
++
++**Phase 4 — docs, examples, benchmarks (pending).** Recipe update showing a
++server with a Tokenformer base adapter *and* several LoRA adapters
++handling different request slices.
++
++## 6. Open questions
++
++- **`process_weights_after_loading` idempotency after LoRA.** Does
++  re-running it clobber Punica state? Needs a targeted test: load a LoRA
++  adapter, run inference, call `process_weights_after_loading` again,
++  verify identical outputs. If not idempotent, phase 3 needs to track
++  per-module dirty state and scope the call.
++
++- **Quantization interaction.** Tokenformer adapters currently load
++  un-quantized float tensors and rely on `process_weights_after_loading`
++  to re-quantize. If LoRA-wrapped linears are already present *and*
++  quantized, the second-pass quantization needs to skip them. Concretely:
++  does `ColumnParallelLinearWithLoRA` expose the raw base weight in a
++  way that `process_weights_after_loading` can requantize without going
++  through the LoRA path?
++
++- **Profiling.** Tokenformer adds ~hundreds of milliseconds when
++  swapping adapters (weight reload + process_weights). LoRA swap is
++  free. Mixed workloads where Tokenformer selection changes frequently
++  will see tail-latency spikes. We should document this and consider an
++  LRU pin for the active Tokenformer to reduce thrash.
++
++## 7. Testing
++
++Must-have tests before merging phase 2:
++
++1. **Hybrid activation smoke.** Load 1 Tokenformer + 1 LoRA adapter,
++   send a request that uses each, verify both take effect (differentiable
++   output vs. base model).
++2. **LoRA unaffected by Tokenformer swap.** Activate Tokenformer A,
++   send LoRA-tagged requests, activate Tokenformer B, send the *same*
++   LoRA-tagged requests, verify only the Tokenformer-attributable part
++   of the output changed.
++3. **Tokenformer unaffected by LoRA swap.** Inverse of #2.
++4. **Warmup stability.** Server boots with both flags, no registered
++   adapters; cudagraph profiling completes without the
++   "Adapter 1 not found" assert that motivated `6529423ba`.
++5. **Malformed adapter.** A `.pt` with neither tokenformer_* nor
++   lora_A/lora_B keys is rejected at load with a clear error.
++6. **Hybrid adapter.** A `.pt` containing both tokenformer_* and
++   lora_A/lora_B keys loads; activating it applies both portions;
++   deactivating it restores the base weights *and* frees the LoRA slot.
++7. **Split correctness.** After `add_adapter` on a hybrid `.pt`, the
++   LoRAModel's weights contain only LoRA tensors, and Tokenformer
++   activation applies only Tokenformer tensors and base overrides — no
++   cross-contamination reaches the live model.
++
++## 8. Alternatives considered
++
++- **Make tokenformer a special case of LoRA.** Rewrite the Tokenformer
++  adapter as a LoRA variant and use the LoRA manager for both. Rejected:
++  the tokenformer delta is a learned attention block, not a low-rank
++  matrix product, and fitting it into LoRA kernels would require
++  invasive changes to the Punica layer API. Also loses the "overwrite
++  base weights" capability.
++
++- **Always run the Tokenformer surgeon, even for LoRA-only servers.**
++  Tokenformer parameters would just sit at zero. Rejected: wraps every
++  `mlp` block with an `nn.Module` that does extra work (the zero-init
++  params still participate in the computation on line 69–88 of the
++  surgeon), slowing LoRA-only servers for no benefit.
++
++- **Two separate manager slots on the runner
++  (`self.lora_manager` + `self.tokenformer_manager`).** Mechanically
++  simpler than a hybrid manager. Rejected for v1 because every existing
++  call site assumes a single `self.lora_manager`; touching all of them
++  is a larger change than wrapping them behind one dispatching object.
++  Worth revisiting if the hybrid proves awkward.
+diff --git a/docs/training/adapter_format.md b/docs/training/adapter_format.md
+new file mode 100644
+index 000000000..c34be1ac9
+--- /dev/null
++++ b/docs/training/adapter_format.md
+@@ -0,0 +1,122 @@
++# ScalarLM adapter `.pt` format
++
++This doc is the contract between trainers and the ScalarLM adapter
++loader. It covers both Tokenformer and LoRA adapters, which ship in
++the same file format and are distinguished by their key shapes.
++Hybrid adapters (both kinds together) are supported.
++
++See `docs/design/hybrid_lora_tokenformer.md` for the end-to-end design
++this format feeds.
++
++## File layout
++
++A single `.pt` file with a dict of:
++
++```python
++torch.save({
++    "model_state_dict": {...},   # tensor state dict (see below)
++    "metadata":         {...},   # optional — defaults to {}
++}, "adapter.pt")
++```
++
++The loader finds the first `*.pt` file in the directory it's pointed
++at (alphabetically). Only `model_state_dict` is required; `metadata`
++is optional and its absence is not an error.
++
++## Key shapes
++
++Keys in `model_state_dict` are classified by the loader:
++
++- **Tokenformer keys** — any key whose **leaf** is one of
++  `tokenformer_k`, `tokenformer_v`, `tokenformer_p`. Example:
++  `model.layers.0.mlp.tokenformer_k`. The match is on the leaf name
++  only; a key like `some_tokenformer_k_config` does *not* match.
++
++- **LoRA keys** — any key containing `.lora_A.` or `.lora_B.` as a
++  path segment. Example:
++  `model.layers.0.self_attn.q_proj.lora_A.weight`. The match is on
++  the segment (with dots on both sides); a variable named
++  `lora_A_config` does *not* match.
++
++- **Base weight overrides** — any other key. These are copied into
++  the base model state dict at Tokenformer activation time (e.g. to
++  fine-tune `embed_tokens.weight`, `lm_head.weight`, layernorm
++  weights, etc.). They're treated as part of the Tokenformer half of
++  the adapter.
++
++A file with neither Tokenformer nor LoRA keys is rejected at load.
++
++### LoRA tensor shapes
++
++- `lora_A.weight`: `(rank, in_features)`
++- `lora_B.weight`: `(out_features, rank)`
++
++Rank must be consistent across every `lora_A` tensor in the file —
++the loader rejects files with mixed ranks.
++
++### LoRA module naming
++
++Keys should follow standard `model.layers.<i>.<module>.lora_A.weight`
++naming. Do **not** ship fused `qkv_proj` LoRAs; emit individual
++`q_proj`, `k_proj`, `v_proj` LoRAs and the loader will auto-fuse
++based on the model's `packed_modules_mapping`.
++
++vLLM's name parser accepts PEFT's `base_model.model.` prefix if
++present, but it isn't required.
++
++## Metadata fields
++
++All optional. The loader applies defaults when a field is missing and
++logs at WARN level when it does so, so trainers can spot unexpected
++defaulting.
++
++| key | type | default | notes |
++| --- | --- | --- | --- |
++| `lora_alpha` | int | `2 * rank` | LoRA scaling numerator. If this is wrong, the delta is incorrectly scaled, so we recommend always setting it. |
++| `use_rslora` | bool | `false` | Rank-stabilized LoRA. Changes scaling to `lora_alpha / sqrt(rank)`. |
++
++No `target_modules` field — vLLM figures out packing from the model's
++`packed_modules_mapping` at load time.
++
++## Example — hybrid adapter
++
++```python
++sd = {
++    # Tokenformer half
++    "model.layers.0.mlp.tokenformer_k": torch.randn(hidden, kv_size),
++    "model.layers.0.mlp.tokenformer_v": torch.randn(hidden, kv_size),
++    "model.layers.0.mlp.tokenformer_p": torch.randn(hidden, kv_size),
++    # LoRA half
++    "model.layers.0.self_attn.q_proj.lora_A.weight": torch.randn(16, hidden),
++    "model.layers.0.self_attn.q_proj.lora_B.weight": torch.randn(hidden, 16),
++    "model.layers.0.self_attn.k_proj.lora_A.weight": torch.randn(16, hidden),
++    "model.layers.0.self_attn.k_proj.lora_B.weight": torch.randn(kv_dim, 16),
++    # ... etc
++    # Base weight override
++    "lm_head.weight": torch.randn(vocab, hidden),
++}
++
++torch.save(
++    {
++        "model_state_dict": sd,
++        "metadata": {"lora_alpha": 32, "use_rslora": False},
++    },
++    "/path/to/adapter_dir/adapter.pt",
++)
++```
++
++Serve this with both flags set:
++
++```bash
++vllm serve <base_model> \
++    --enable-lora \
++    --enable-tokenformer \
++    --tool-call-parser gemma4 \
++    --reasoning-parser gemma4 \
++    --chat-template examples/tool_chat_template_gemma4.jinja
++```
++
++Load the adapter at request time with the standard `lora_path` /
++`lora_int_id` pair. The server classifies the `.pt` on load and
++routes the two halves to the Tokenformer and LoRA sub-managers
++respectively. No client-side change is needed.
+diff --git a/tests/engine/test_adapter_kind.py b/tests/engine/test_adapter_kind.py
+new file mode 100644
+index 000000000..cf44286de
+--- /dev/null
++++ b/tests/engine/test_adapter_kind.py
+@@ -0,0 +1,112 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Tests for LoRA + Tokenformer adapter-kind dispatch plumbing.
++
++Exercises the flag → LoRAConfig → dispatcher path without needing a model.
++See docs/design/hybrid_lora_tokenformer.md.
++"""
++
++import pytest
++
++from vllm.config.lora import LoRAConfig
++from vllm.engine.arg_utils import EngineArgs
++from vllm.utils.argparse_utils import FlexibleArgumentParser
++from vllm.v1.worker.lora_model_runner_mixin import _select_adapter_kind
++
++
++@pytest.mark.parametrize(
++    ("enable_lora", "enable_tokenformer", "expected_kind"),
++    [
++        (True, False, "lora"),
++        (False, True, "tokenformer"),
++        (True, True, "hybrid"),
++    ],
++)
++def test_select_adapter_kind(enable_lora, enable_tokenformer, expected_kind):
++    cfg = LoRAConfig(
++        enable_lora=enable_lora,
++        enable_tokenformer=enable_tokenformer,
++    )
++    assert _select_adapter_kind(cfg) == expected_kind
++
++
++def test_select_adapter_kind_no_config_defaults_to_tokenformer():
++    # Defensive branch — load_lora_model shouldn't be called without a
++    # lora_config, but if it is we should fall back to historical behavior.
++    assert _select_adapter_kind(None) == "tokenformer"
++
++
++def test_enable_tokenformer_defaults_false():
++    args = EngineArgs(model="dummy")
++    assert args.enable_tokenformer is False
++    assert args.enable_lora is False
++
++
++def test_enable_tokenformer_cli_flag_parses():
++    parser = EngineArgs.add_cli_args(FlexibleArgumentParser())
++    ns = parser.parse_args(["--model", "dummy", "--enable-tokenformer"])
++    args = EngineArgs.from_cli_args(ns)
++    assert args.enable_tokenformer is True
++    # Upstream registers --enable-lora with BooleanOptionalAction and no
++    # explicit default, so an absent flag parses to None (not False);
++    # every downstream check is truthiness-based.
++    assert not args.enable_lora
++
++
++def test_enable_tokenformer_builds_lora_config():
++    # Even without --enable-lora, passing --enable-tokenformer should
++    # cause the engine to construct a LoRAConfig so the adapter subsystem
++    # activates. We can't easily call create_engine_config without a real
++    # model, so assert on the flag-pair condition that gates construction.
++    args = EngineArgs(model="dummy", enable_tokenformer=True)
++    assert args.enable_lora or args.enable_tokenformer
++
++
++def test_lora_config_mirrors_flags():
++    cfg = LoRAConfig(enable_lora=True, enable_tokenformer=True)
++    assert cfg.enable_lora is True
++    assert cfg.enable_tokenformer is True
++    assert _select_adapter_kind(cfg) == "hybrid"
++
++
++def test_cli_tokenformer_alone_builds_lora_config():
++    """Regression: --enable-tokenformer without --enable-lora used to
++    feed enable_lora=None (upstream's BooleanOptionalAction has no
++    default) into LoRAConfig's strict bool field, so `vllm serve
++    --enable-tokenformer` failed pydantic validation before the engine
++    even started. create_engine_config now coerces with bool()."""
++    parser = EngineArgs.add_cli_args(FlexibleArgumentParser())
++    ns = parser.parse_args(["--model", "dummy", "--enable-tokenformer"])
++    args = EngineArgs.from_cli_args(ns)
++    assert args.enable_lora is None  # upstream parse behavior, unchanged
++    cfg = LoRAConfig(
++        enable_lora=bool(args.enable_lora),
++        enable_tokenformer=args.enable_tokenformer,
++    )
++    assert cfg.enable_lora is False
++    assert cfg.enable_tokenformer is True
++    assert _select_adapter_kind(cfg) == "tokenformer"
++
++
++def test_compute_hash_distinguishes_adapter_kinds():
++    """lora-only, tokenformer-only, and hybrid wrap the model
++    differently (LoRA layer wrappers vs surgeon vs both), so their
++    compile-cache hashes must differ."""
++    lora = LoRAConfig(enable_lora=True, enable_tokenformer=False)
++    tokenformer = LoRAConfig(enable_lora=False, enable_tokenformer=True)
++    hybrid = LoRAConfig(enable_lora=True, enable_tokenformer=True)
++    hashes = {
++        lora.compute_hash(),
++        tokenformer.compute_hash(),
++        hybrid.compute_hash(),
++    }
++    assert len(hashes) == 3
++
++
++def test_compute_hash_tracks_tokenformer_shape_env(monkeypatch):
++    """TOKENFORMER_NUM_HEADS / TOKENFORMER_R size the surgeon's adapter
++    parameters, so changing them must invalidate the compile cache."""
++    monkeypatch.delenv("TOKENFORMER_R", raising=False)
++    base = LoRAConfig(enable_tokenformer=True).compute_hash()
++    monkeypatch.setenv("TOKENFORMER_R", "64")
++    assert LoRAConfig(enable_tokenformer=True).compute_hash() != base
+diff --git a/tests/tokenformer/test_adapter_format.py b/tests/tokenformer/test_adapter_format.py
+new file mode 100644
+index 000000000..391f56508
+--- /dev/null
++++ b/tests/tokenformer/test_adapter_format.py
+@@ -0,0 +1,410 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Unit tests for adapter `.pt` classification and splitting.
++
++Covers §4.3 of docs/design/hybrid_lora_tokenformer.md.
++"""
++
++import pytest
++
++from vllm.tokenformer.adapter_format import (
++    AdapterClassification,
++    LoadedAdapter,
++    classify_adapter,
++    has_lora_keys,
++    has_tokenformer_keys,
++    load_adapter_from_pt,
++    load_adapter_state_dict,
++    normalize_lora_key,
++    normalize_lora_state_dict,
++    split_adapter_state_dict,
++)
++
++# --- classification -----------------------------------------------------
++
++
++def _fake_sd(*keys):
++    """Build a state-dict-like dict with sentinel values."""
++    return {k: i for i, k in enumerate(keys)}
++
++
++def test_pure_tokenformer_is_classified_tokenformer():
++    sd = _fake_sd(
++        "model.layers.0.mlp.tokenformer_k",
++        "model.layers.0.mlp.tokenformer_v",
++        "model.layers.0.mlp.tokenformer_p",
++    )
++    c = classify_adapter(sd)
++    assert c == AdapterClassification(has_tokenformer=True, has_lora=False)
++    assert c.kind == "tokenformer"
++
++
++def test_pure_lora_is_classified_lora():
++    sd = _fake_sd(
++        "model.layers.0.self_attn.q_proj.lora_A.weight",
++        "model.layers.0.self_attn.q_proj.lora_B.weight",
++    )
++    c = classify_adapter(sd)
++    assert c == AdapterClassification(has_tokenformer=False, has_lora=True)
++    assert c.kind == "lora"
++
++
++def test_hybrid_is_classified_hybrid():
++    sd = _fake_sd(
++        "model.layers.0.mlp.tokenformer_k",
++        "model.layers.0.self_attn.q_proj.lora_A.weight",
++    )
++    c = classify_adapter(sd)
++    assert c.has_tokenformer and c.has_lora
++    assert c.kind == "hybrid"
++
++
++def test_tokenformer_with_base_overrides_is_still_tokenformer():
++    # Base-weight overrides (norms, embeddings, lm_head) count as
++    # Tokenformer for classification purposes.
++    sd = _fake_sd(
++        "model.layers.0.mlp.tokenformer_k",
++        "model.embed_tokens.weight",
++        "lm_head.weight",
++    )
++    assert classify_adapter(sd).kind == "tokenformer"
++
++
++def test_empty_state_dict_is_rejected():
++    c = classify_adapter({})
++    assert c.has_tokenformer is False and c.has_lora is False
++    with pytest.raises(ValueError, match="neither tokenformer"):
++        _ = c.kind
++
++
++def test_unrelated_keys_only_is_rejected():
++    # Just base weights with no tokenformer or lora markers — malformed.
++    sd = _fake_sd("model.embed_tokens.weight", "lm_head.weight")
++    c = classify_adapter(sd)
++    assert c.has_tokenformer is False and c.has_lora is False
++    with pytest.raises(ValueError):
++        _ = c.kind
++
++
++# --- key predicates -----------------------------------------------------
++
++
++def test_has_tokenformer_keys_matches_leaf_only():
++    # The match is on the leaf segment, not substring, so a key that
++    # contains "tokenformer_k" mid-path should NOT match.
++    assert has_tokenformer_keys(["mlp.tokenformer_k"]) is True
++    assert has_tokenformer_keys(["mlp.tokenformer_k.extra"]) is False
++
++
++def test_has_lora_keys_requires_delimited_segment():
++    # Match requires `.lora_A.` / `.lora_B.` as a path segment —
++    # a variable named e.g. `lora_A_config` must not match.
++    assert has_lora_keys(["q_proj.lora_A.weight"]) is True
++    assert has_lora_keys(["q_proj.lora_B.weight"]) is True
++    assert has_lora_keys(["some.lora_A_config"]) is False
++    assert has_lora_keys(["prefix_lora_A.weight"]) is False
++
++
++# --- splitting ----------------------------------------------------------
++
++
++def test_split_routes_tokenformer_and_base_to_tokenformer_sd():
++    sd = {
++        "model.layers.0.mlp.tokenformer_k": "tk",
++        "model.embed_tokens.weight": "emb",
++        "lm_head.weight": "head",
++    }
++    tk_sd, lora_sd = split_adapter_state_dict(sd)
++    assert set(tk_sd) == {
++        "model.layers.0.mlp.tokenformer_k",
++        "model.embed_tokens.weight",
++        "lm_head.weight",
++    }
++    assert lora_sd == {}
++
++
++def test_split_routes_lora_to_lora_sd():
++    # Input: HF-shaped trainer keys. Output: vLLM module paths after
++    # normalize_lora_key runs inside split_adapter_state_dict.
++    sd = {
++        "model.language_model.layers.0.self_attn.q_proj.lora_A.weight": "A",
++        "model.language_model.layers.0.self_attn.q_proj.lora_B.weight": "B",
++    }
++    tk_sd, lora_sd = split_adapter_state_dict(sd)
++    assert tk_sd == {}
++    assert set(lora_sd) == {
++        "language_model.model.layers.0.self_attn.q_proj.lora_A.weight",
++        "language_model.model.layers.0.self_attn.q_proj.lora_B.weight",
++    }
++
++
++def test_normalize_swaps_gemma4_language_model_prefix():
++    """vLLM's Gemma4 module tree has `language_model.model.layers.*`
++    (extra `.model.` nesting). HF has `model.language_model.layers.*`.
++    We swap them so LoRA keys land on the right modules.
++    """
++    trainer_key = "model.language_model.layers.0.self_attn.q_proj.lora_A.default.weight"
++    assert normalize_lora_key(trainer_key) == (
++        "language_model.model.layers.0.self_attn.q_proj.lora_A.weight"
++    )
++
++
++def test_normalize_strips_top_level_model_prefix_for_vision():
++    """Vision tower is at the top level in vLLM — no `model.` prefix.
++    Also verifies the `.linear.` wrapper stripping still runs."""
++    trainer_key = (
++        "model.vision_tower.encoder.layers.0.self_attn.q_proj"
++        ".linear.lora_A.default.weight"
++    )
++    assert normalize_lora_key(trainer_key) == (
++        "vision_tower.encoder.layers.0.self_attn.q_proj.lora_A.weight"
++    )
++
++
++def test_normalize_strips_top_level_model_prefix_for_embed_vision():
++    trainer_key = "model.embed_vision.embedding_projection.lora_A.default.weight"
++    assert normalize_lora_key(trainer_key) == (
++        "embed_vision.embedding_projection.lora_A.weight"
++    )
++
++
++def test_normalize_gemma4_mlp_key_from_real_trainer_output():
++    """Exact key from the user's training log (2026-04-23)."""
++    trainer_key = "model.language_model.layers.0.mlp.gate_proj.lora_A.default.weight"
++    assert normalize_lora_key(trainer_key) == (
++        "language_model.model.layers.0.mlp.gate_proj.lora_A.weight"
++    )
++
++
++def test_normalize_keeps_model_prefix_for_text_only_causal_lm():
++    """Text-only Qwen3/Qwen3.5 trees use ``model.layers.*`` in vLLM.
++
++    The runtime resolver remains responsible for promoting this prefix
++    when the live decoder is nested inside a multimodal wrapper.
++    """
++    trainer_key = "model.layers.0.self_attn.q_proj.lora_A.default.weight"
++    assert normalize_lora_key(trainer_key) == (
++        "model.layers.0.self_attn.q_proj.lora_A.weight"
++    )
++
++
++def test_split_normalizes_peft_default_segment():
++    """`.lora_A.default.weight` and `.lora_B.default.weight` collapse
++    to vLLM's expected `.lora_A.weight` / `.lora_B.weight`, combined
++    with the model.language_model → language_model.model swap."""
++    sd = {
++        "model.language_model.layers.0.self_attn.q_proj.lora_A.default.weight": "A",
++        "model.language_model.layers.0.self_attn.q_proj.lora_B.default.weight": "B",
++    }
++    _, lora_sd = split_adapter_state_dict(sd)
++    assert set(lora_sd) == {
++        "language_model.model.layers.0.self_attn.q_proj.lora_A.weight",
++        "language_model.model.layers.0.self_attn.q_proj.lora_B.weight",
++    }
++
++
++def test_split_strips_clippable_linear_wrapper():
++    """Gemma4ClippableLinear inserts a `.linear.` segment between the
++    module and its LoRA weights; the normalizer must remove it.
++    vision_tower lives at the top level (no `.model.` swap)."""
++    sd = {
++        "model.vision_tower.encoder.layers.0.self_attn.q_proj"
++        ".linear.lora_A.default.weight": "A",
++        "model.vision_tower.encoder.layers.0.mlp.gate_proj"
++        ".linear.lora_B.default.weight": "B",
++    }
++    _, lora_sd = split_adapter_state_dict(sd)
++    assert set(lora_sd) == {
++        "vision_tower.encoder.layers.0.self_attn.q_proj.lora_A.weight",
++        "vision_tower.encoder.layers.0.mlp.gate_proj.lora_B.weight",
++    }
++
++
++def test_normalize_is_idempotent():
++    # Already-normalized keys (in vLLM module shape) pass through
++    # unchanged.
++    for already_normalized in [
++        "model.layers.0.self_attn.q_proj.lora_A.weight",
++        "language_model.model.layers.0.self_attn.q_proj.lora_A.weight",
++        "vision_tower.encoder.layers.0.mlp.down_proj.lora_B.weight",
++        "embed_vision.embedding_projection.lora_A.weight",
++    ]:
++        assert normalize_lora_key(already_normalized) == already_normalized
++
++
++def test_normalize_collision_raises():
++    # Two training-side keys that normalize to the same target is a
++    # bug upstream of us; fail loudly rather than silently dropping
++    # one.
++    sd = {
++        "q_proj.lora_A.default.weight": "A1",
++        "q_proj.linear.lora_A.weight": "A2",
++    }
++    with pytest.raises(ValueError, match="collision"):
++        normalize_lora_state_dict(sd)
++
++
++def test_split_hybrid():
++    # LoRA inputs are in HF shape and normalize on the way out.
++    # Tokenformer keys don't go through normalize_lora_key.
++    sd = {
++        "model.layers.0.mlp.tokenformer_k": "tk",
++        "model.language_model.layers.0.self_attn.q_proj.lora_A.weight": "A",
++        "model.language_model.layers.0.self_attn.q_proj.lora_B.weight": "B",
++        "model.embed_tokens.weight": "emb",
++    }
++    tk_sd, lora_sd = split_adapter_state_dict(sd)
++    assert set(tk_sd) == {
++        "model.layers.0.mlp.tokenformer_k",
++        "model.embed_tokens.weight",
++    }
++    assert set(lora_sd) == {
++        "language_model.model.layers.0.self_attn.q_proj.lora_A.weight",
++        "language_model.model.layers.0.self_attn.q_proj.lora_B.weight",
++    }
++
++
++def test_split_is_not_destructive():
++    sd = {
++        "model.layers.0.mlp.tokenformer_k": "tk",
++        "model.layers.0.self_attn.q_proj.lora_A.weight": "A",
++    }
++    sd_copy = dict(sd)
++    _ = split_adapter_state_dict(sd)
++    assert sd == sd_copy  # input not mutated
++
++
++# --- .pt loader ---------------------------------------------------------
++
++
++def test_load_adapter_from_pt_dispatches_to_classify_and_split(monkeypatch, tmp_path):
++    """Without torch, mock the low-level checkpoint reader to assert the
++    high-level function wires the pure pieces together correctly."""
++    fake_sd = {
++        "model.layers.0.mlp.tokenformer_k": "tk",
++        "model.embed_tokens.weight": "emb",
++        "model.language_model.layers.0.self_attn.q_proj.lora_A.weight": "A",
++        "model.language_model.layers.0.self_attn.q_proj.lora_B.weight": "B",
++    }
++    fake_metadata = {"lora_alpha": 64}
++    monkeypatch.setattr(
++        "vllm.tokenformer.adapter_format._load_adapter_checkpoint",
++        lambda *a, **kw: (fake_sd, fake_metadata),
++    )
++    result = load_adapter_from_pt(tmp_path)
++    assert isinstance(result, LoadedAdapter)
++    assert result.kind == "hybrid"
++    assert set(result.tokenformer_sd) == {
++        "model.layers.0.mlp.tokenformer_k",
++        "model.embed_tokens.weight",
++    }
++    assert set(result.lora_sd) == {
++        "language_model.model.layers.0.self_attn.q_proj.lora_A.weight",
++        "language_model.model.layers.0.self_attn.q_proj.lora_B.weight",
++    }
++    assert result.source_path == tmp_path.resolve()
++    assert result.metadata == {"lora_alpha": 64}
++
++
++def test_load_adapter_from_pt_rejects_unrelated_only(monkeypatch, tmp_path):
++    monkeypatch.setattr(
++        "vllm.tokenformer.adapter_format._load_adapter_checkpoint",
++        lambda *a, **kw: ({"model.embed_tokens.weight": "emb"}, {}),
++    )
++    with pytest.raises(ValueError, match="neither tokenformer"):
++        load_adapter_from_pt(tmp_path)
++
++
++def test_metadata_defaults_to_empty_dict(monkeypatch, tmp_path):
++    """Older .pt files without a `metadata` key still load, with
++    metadata={} in the result."""
++    fake_sd = {"model.layers.0.mlp.tokenformer_k": "tk"}
++    monkeypatch.setattr(
++        "vllm.tokenformer.adapter_format._load_adapter_checkpoint",
++        lambda *a, **kw: (fake_sd, {}),
++    )
++    result = load_adapter_from_pt(tmp_path)
++    assert result.metadata == {}
++
++
++def test_load_adapter_metadata_real_pt(tmp_path):
++    torch = pytest.importorskip("torch")
++    from vllm.tokenformer.adapter_format import load_adapter_metadata
++
++    sd = {"model.layers.0.mlp.tokenformer_k": torch.zeros(2)}
++    torch.save(
++        {"model_state_dict": sd, "metadata": {"lora_alpha": 32, "use_rslora": True}},
++        tmp_path / "a.pt",
++    )
++    md = load_adapter_metadata(tmp_path)
++    assert md == {"lora_alpha": 32, "use_rslora": True}
++
++
++def test_load_adapter_metadata_missing_returns_empty(tmp_path):
++    torch = pytest.importorskip("torch")
++    from vllm.tokenformer.adapter_format import load_adapter_metadata
++
++    torch.save({"model_state_dict": {"x": torch.zeros(1)}}, tmp_path / "a.pt")
++    assert load_adapter_metadata(tmp_path) == {}
++
++
++def test_metadata_wrong_type_raises(tmp_path):
++    torch = pytest.importorskip("torch")
++    torch.save(
++        {"model_state_dict": {"x": torch.zeros(1)}, "metadata": "not-a-dict"},
++        tmp_path / "a.pt",
++    )
++    with pytest.raises(ValueError, match="metadata"):
++        load_adapter_state_dict(tmp_path)
++
++
++def test_load_adapter_state_dict_missing_file_raises(tmp_path):
++    with pytest.raises(FileNotFoundError, match="No .pt file"):
++        load_adapter_state_dict(tmp_path)
++
++
++# --- real torch round-trip (skipped if torch not installed) -------------
++
++
++def _torch_or_skip():
++    torch = pytest.importorskip("torch")
++    return torch
++
++
++def test_load_adapter_state_dict_real_pt(tmp_path):
++    torch = _torch_or_skip()
++    sd = {
++        "model.layers.0.mlp.tokenformer_k": torch.zeros(4, 4),
++        "model.layers.0.self_attn.q_proj.lora_A.weight": torch.zeros(4, 8),
++    }
++    torch.save({"model_state_dict": sd}, tmp_path / "adapter.pt")
++    loaded = load_adapter_state_dict(tmp_path)
++    assert set(loaded) == set(sd)
++
++
++def test_load_adapter_from_pt_real_pt_hybrid(tmp_path):
++    torch = _torch_or_skip()
++    sd = {
++        "model.layers.0.mlp.tokenformer_p": torch.zeros(4, 4),
++        "model.language_model.layers.0.self_attn.q_proj.lora_B.weight": torch.zeros(
++            8, 4
++        ),
++        "lm_head.weight": torch.zeros(16, 4),
++    }
++    torch.save({"model_state_dict": sd}, tmp_path / "adapter.pt")
++    result = load_adapter_from_pt(tmp_path)
++    assert result.kind == "hybrid"
++    assert set(result.tokenformer_sd) == {
++        "model.layers.0.mlp.tokenformer_p",
++        "lm_head.weight",
++    }
++    assert set(result.lora_sd) == {
++        "language_model.model.layers.0.self_attn.q_proj.lora_B.weight",
++    }
++
++
++def test_load_adapter_rejects_checkpoint_without_model_state_dict(tmp_path):
++    torch = _torch_or_skip()
++    torch.save({"some_other_key": torch.zeros(2)}, tmp_path / "adapter.pt")
++    with pytest.raises(ValueError, match="model_state_dict"):
++        load_adapter_state_dict(tmp_path)
+diff --git a/tests/tokenformer/test_hybrid_adapter_manager.py b/tests/tokenformer/test_hybrid_adapter_manager.py
+new file mode 100644
+index 000000000..b77c9b7bf
+--- /dev/null
++++ b/tests/tokenformer/test_hybrid_adapter_manager.py
+@@ -0,0 +1,485 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Unit tests for HybridAdapterManager routing and live-prefix resolution.
++
++No model, no torch cuda — we stub TokenformerModelManager with a
++MagicMock and assert the hybrid manager wires the right sub-manager
++call for each adapter kind.
++"""
++
++from contextlib import contextmanager
++from types import SimpleNamespace
++from unittest.mock import MagicMock
++
++import pytest
++
++
++@pytest.fixture
++def patched_manager(monkeypatch):
++    """Return a HybridAdapterManager whose Tokenformer sub-manager is a
++    MagicMock (no real model required)."""
++    import vllm.tokenformer.hybrid_adapter_manager as mod
++
++    fake_tk = MagicMock()
++    fake_tk.model = SimpleNamespace(name="wrapped-model")
++
++    # dummy_lora_cache must yield — MagicMock doesn't produce a
++    # context manager by default.
++    @contextmanager
++    def _dummy_cache():
++        yield
++
++    fake_tk.dummy_lora_cache.side_effect = _dummy_cache
++
++    monkeypatch.setattr(mod, "TokenformerModelManager", lambda model, device: fake_tk)
++
++    mgr = mod.HybridAdapterManager(model=object(), device="cpu")
++    return mgr, fake_tk
++
++
++def _fake_loaded(kind, path="/tmp/fake-adapter"):
++    """Minimal stand-in for LoadedAdapter."""
++    return SimpleNamespace(kind=kind, source_path=path, tokenformer_sd={}, lora_sd={})
++
++
++def _pt_manager_with_modules(*module_names):
++    """Construct only the prefix-resolver portion of the worker manager."""
++    import vllm.tokenformer.hybrid_adapter_manager as mod
++
++    model = SimpleNamespace(
++        named_modules=lambda: ((name, object()) for name in module_names)
++    )
++    manager = object.__new__(mod.PTWorkerLoRAManager)
++    manager._adapter_manager = SimpleNamespace(model=model)
++    return manager
++
++
++def test_runtime_prefix_resolution_for_text_only_qwen35():
++    from vllm.tokenformer.adapter_format import normalize_lora_key
++
++    manager = _pt_manager_with_modules("model.layers.0.self_attn")
++    assert manager._detect_model_layers_prefix() == "model.layers."
++
++    tensor = object()
++    normalized_key = normalize_lora_key(
++        "model.layers.0.self_attn.q_proj.lora_A.default.weight"
++    )
++    result = manager._renormalize_lora_sd_for_model({normalized_key: tensor})
++    assert result == {"model.layers.0.self_attn.q_proj.lora_A.weight": tensor}
++
++
++def test_runtime_prefix_resolution_prefers_multimodal_text_decoder():
++    from vllm.tokenformer.adapter_format import normalize_lora_key
++
++    # named_modules() visits the vision tower first on Gemma4. The resolver
++    # must still choose the language decoder rather than the first layers tree.
++    manager = _pt_manager_with_modules(
++        "vision_tower.encoder.layers.0.self_attn",
++        "language_model.model.layers.0.self_attn",
++    )
++    assert manager._detect_model_layers_prefix() == "language_model.model.layers."
++
++    text_tensor = object()
++    vision_tensor = object()
++    text_key = normalize_lora_key(
++        "model.language_model.layers.0.self_attn.q_proj.lora_A.default.weight"
++    )
++    vision_key = normalize_lora_key(
++        "model.vision_tower.encoder.layers.0.self_attn.q_proj"
++        ".linear.lora_A.default.weight"
++    )
++    result = manager._renormalize_lora_sd_for_model(
++        {
++            text_key: text_tensor,
++            vision_key: vision_tensor,
++        }
++    )
++    assert result == {
++        "language_model.model.layers.0.self_attn.q_proj.lora_A.weight": text_tensor,
++        "vision_tower.encoder.layers.0.self_attn.q_proj.lora_A.weight": vision_tensor,
++    }
++
++
++def test_model_property_forwards_to_tokenformer(patched_manager):
++    mgr, fake_tk = patched_manager
++    assert mgr.model is fake_tk.model
++
++
++def test_add_tokenformer_adapter_delegates(patched_manager, monkeypatch):
++    mgr, fake_tk = patched_manager
++    import vllm.tokenformer.hybrid_adapter_manager as mod
++
++    monkeypatch.setattr(
++        mod,
++        "load_adapter_from_pt",
++        lambda _p: _fake_loaded("tokenformer"),
++    )
++    fake_tk.add_adapter.return_value = True
++
++    req = SimpleNamespace(adapter_id=7, lora_path="/tmp/a")
++    ok = mgr.add_adapter(req)
++    assert ok is True
++    fake_tk.add_adapter.assert_called_once_with(req)
++    assert mgr._kinds[7] == "tokenformer"
++
++
++@pytest.mark.parametrize("kind", ["lora", "hybrid"])
++def test_add_lora_or_hybrid_without_lora_submanager_raises(
++    patched_manager, monkeypatch, kind
++):
++    """Skeleton path (no vllm_config → self._lora is None) rejects LoRA
++    adapters with a clear message pointing at the missing flag."""
++    mgr, _ = patched_manager
++    import vllm.tokenformer.hybrid_adapter_manager as mod
++
++    monkeypatch.setattr(
++        mod,
++        "load_adapter_from_pt",
++        lambda _p: _fake_loaded(kind),
++    )
++    req = SimpleNamespace(adapter_id=9, lora_path="/tmp/a")
++    with pytest.raises(RuntimeError, match="enable-lora"):
++        mgr.add_adapter(req)
++
++
++def test_add_adapter_resolves_path_before_classification(patched_manager, monkeypatch):
++    """The classification load must open the same directory the
++    sub-managers resolve to (HF-hub ids, relative paths)."""
++    mgr, fake_tk = patched_manager
++    import vllm.tokenformer.hybrid_adapter_manager as mod
++
++    seen = {}
++    monkeypatch.setattr(mod, "get_adapter_absolute_path", lambda p: f"/resolved{p}")
++
++    def _fake_load(path):
++        seen["path"] = path
++        return _fake_loaded("tokenformer")
++
++    monkeypatch.setattr(mod, "load_adapter_from_pt", _fake_load)
++    mgr.add_adapter(SimpleNamespace(adapter_id=3, lora_path="/tmp/a"))
++    assert seen["path"] == "/resolved/tmp/a"
++
++
++def test_set_active_adapters_forwards(patched_manager):
++    mgr, fake_tk = patched_manager
++    requests = [SimpleNamespace(adapter_id=1)]
++    mapping = object()
++    mgr.set_active_adapters(requests, mapping)
++    fake_tk.set_active_adapters.assert_called_once_with(requests, mapping)
++
++
++def test_activate_tokenformer_routes_to_tokenformer(patched_manager, monkeypatch):
++    mgr, fake_tk = patched_manager
++    import vllm.tokenformer.hybrid_adapter_manager as mod
++
++    monkeypatch.setattr(
++        mod,
++        "load_adapter_from_pt",
++        lambda _p: _fake_loaded("tokenformer"),
++    )
++    mgr.add_adapter(SimpleNamespace(adapter_id=3, lora_path="/tmp/a"))
++    fake_tk.activate_adapter.reset_mock()
++
++    mgr.activate_adapter(3)
++    fake_tk.activate_adapter.assert_called_once_with(3)
++
++
++def test_activate_unknown_id_falls_back_to_tokenformer(patched_manager):
++    # Defensive: if an id was never registered (e.g. warmup no-op
++    # path), activate still routes to Tokenformer so the existing
++    # skip-unregistered behavior triggers there.
++    mgr, fake_tk = patched_manager
++    mgr.activate_adapter(42)
++    fake_tk.activate_adapter.assert_called_once_with(42)
++
++
++def test_remove_all_adapters_clears_kinds(patched_manager, monkeypatch):
++    mgr, fake_tk = patched_manager
++    import vllm.tokenformer.hybrid_adapter_manager as mod
++
++    monkeypatch.setattr(
++        mod,
++        "load_adapter_from_pt",
++        lambda _p: _fake_loaded("tokenformer"),
++    )
++    mgr.add_adapter(SimpleNamespace(adapter_id=11, lora_path="/tmp/a"))
++    assert mgr._kinds  # non-empty
++
++    mgr.remove_all_adapters()
++    assert mgr._kinds == {}
++    fake_tk.remove_all_adapters.assert_called_once()
++
++
++def test_remove_adapter_drops_kind(patched_manager, monkeypatch):
++    mgr, fake_tk = patched_manager
++    import vllm.tokenformer.hybrid_adapter_manager as mod
++
++    monkeypatch.setattr(
++        mod,
++        "load_adapter_from_pt",
++        lambda _p: _fake_loaded("tokenformer"),
++    )
++    mgr.add_adapter(SimpleNamespace(adapter_id=5, lora_path="/tmp/a"))
++    assert 5 in mgr._kinds
++
++    mgr.remove_adapter(5)
++    assert 5 not in mgr._kinds
++    fake_tk.remove_adapter.assert_called_once_with(5)
++
++
++def test_dummy_lora_cache_nests_tokenformer(patched_manager):
++    mgr, fake_tk = patched_manager
++    with mgr.dummy_lora_cache():
++        pass
++    fake_tk.dummy_lora_cache.assert_called_once()
++
++
++def test_add_dummy_lora_forwards_rank(patched_manager):
++    mgr, fake_tk = patched_manager
++    req = SimpleNamespace(adapter_id=0, lora_path="/dummy")
++    mgr.add_dummy_lora(req, rank=4)
++    fake_tk.add_dummy_lora.assert_called_once_with(req, rank=4)
++
++
++def test_list_adapters_accepts_tokenformer_mapping(patched_manager):
++    mgr, fake_tk = patched_manager
++    # The current Tokenformer manager returns a set, but keep the hybrid
++    # boundary tolerant of mapping-shaped results from legacy callers.
++    fake_tk.list_adapters.return_value = {1: object(), 2: object()}
++    assert mgr.list_adapters() == {1, 2}
++
++
++def test_supports_tower_connector_lora_is_false(patched_manager):
++    mgr, _ = patched_manager
++    assert mgr.supports_tower_connector_lora() is False
++
++
++# --- LoRA-wired path with both sub-managers ----------------------------
++
++
++@pytest.fixture
++def full_manager(monkeypatch):
++    """HybridAdapterManager with BOTH sub-managers mocked.
++
++    Simulates what happens when load_lora_model constructs the hybrid
++    manager with a vllm_config that has lora_config set — both halves
++    are wired but neither touches real model weights.
++    """
++    import vllm.tokenformer.hybrid_adapter_manager as mod
++
++    fake_tk = MagicMock()
++    fake_tk.model = SimpleNamespace(name="tk-wrapped")
++
++    @contextmanager
++    def _dummy_cache():
++        yield
++
++    fake_tk.dummy_lora_cache.side_effect = _dummy_cache
++
++    fake_lora = MagicMock()
++    # After the LoRA manager wraps the model, create_lora_manager
++    # returns the further-wrapped model that Tokenformer will see.
++    lora_wrapped = SimpleNamespace(
++        name="lora-wrapped",
++        embedding_modules={},
++    )
++    fake_lora.create_lora_manager.return_value = lora_wrapped
++
++    monkeypatch.setattr(mod, "TokenformerModelManager", lambda model, device: fake_tk)
++    monkeypatch.setattr(
++        mod,
++        "PTWorkerLoRAManager",
++        lambda vllm_config, device, embedding_modules: fake_lora,
++    )
++
++    # Vllm config stub that looks "LoRA-enabled".
++    vllm_config = SimpleNamespace(lora_config=SimpleNamespace())
++    base_model = SimpleNamespace(embedding_modules={})
++
++    mgr = mod.HybridAdapterManager(
++        model=base_model,
++        device="cpu",
++        vllm_config=vllm_config,
++    )
++    return mgr, fake_tk, fake_lora, lora_wrapped
++
++
++def test_hybrid_init_runs_lora_then_tokenformer(full_manager):
++    """The LoRA manager.create_lora_manager is called before the
++    Tokenformer sub-manager sees the model."""
++    _, fake_tk, fake_lora, lora_wrapped = full_manager
++    fake_lora.create_lora_manager.assert_called_once()
++    # Tokenformer sub-manager got instantiated (MagicMock was called).
++    # We can't easily introspect which model it got via the lambda
++    # replacement, but the order is implied: lora_wrapped exists before
++    # the tokenformer call happens in __init__.
++    assert fake_tk is not None
++    assert lora_wrapped.name == "lora-wrapped"
++
++
++def test_add_lora_routes_only_to_lora(full_manager, monkeypatch):
++    mgr, fake_tk, fake_lora, _ = full_manager
++    import vllm.tokenformer.hybrid_adapter_manager as mod
++
++    monkeypatch.setattr(
++        mod,
++        "load_adapter_from_pt",
++        lambda _p: _fake_loaded("lora"),
++    )
++    req = SimpleNamespace(adapter_id=11, lora_path="/tmp/a")
++    mgr.add_adapter(req)
++
++    fake_lora.add_adapter.assert_called_once_with(req)
++    fake_tk.add_adapter.assert_not_called()
++    assert mgr._kinds[11] == "lora"
++
++
++def test_add_hybrid_routes_to_both(full_manager, monkeypatch):
++    mgr, fake_tk, fake_lora, _ = full_manager
++    import vllm.tokenformer.hybrid_adapter_manager as mod
++
++    monkeypatch.setattr(
++        mod,
++        "load_adapter_from_pt",
++        lambda _p: _fake_loaded("hybrid"),
++    )
++    req = SimpleNamespace(adapter_id=21, lora_path="/tmp/a")
++    mgr.add_adapter(req)
++
++    fake_lora.add_adapter.assert_called_once_with(req)
++    fake_tk.add_adapter.assert_called_once_with(req)
++    assert mgr._kinds[21] == "hybrid"
++
++
++def test_set_active_adapters_fans_out(full_manager):
++    mgr, fake_tk, fake_lora, _ = full_manager
++    requests = [SimpleNamespace(adapter_id=1)]
++    mapping = object()
++    mgr.set_active_adapters(requests, mapping)
++    fake_tk.set_active_adapters.assert_called_once_with(requests, mapping)
++    fake_lora.set_active_adapters.assert_called_once_with(requests, mapping)
++
++
++def test_set_active_adapters_filters_tokenformer_ids_from_lora(full_manager):
++    """Regression: pure-Tokenformer ids forwarded to the LoRA
++    sub-manager made its inherited `_apply_adapters` lazily load them
++    as LoRA and raise "has no LoRA tensors" on the first batch. They
++    must be dropped from the LoRA-side request set and zeroed out of
++    the mappings (0 = no-LoRA slot)."""
++    from vllm.lora.layers import LoRAMapping
++
++    mgr, fake_tk, fake_lora, _ = full_manager
++    mgr._kinds = {5: "tokenformer", 7: "lora"}
++    req_tk = SimpleNamespace(adapter_id=5)
++    req_lora = SimpleNamespace(adapter_id=7)
++    requests = [req_tk, req_lora]
++    mapping = LoRAMapping(
++        index_mapping=(5, 5, 7, 0),
++        prompt_mapping=(5, 7),
++        is_prefill=True,
++    )
++
++    mgr.set_active_adapters(requests, mapping)
++
++    # Tokenformer half sees everything, untouched.
++    fake_tk.set_active_adapters.assert_called_once_with(requests, mapping)
++
++    # LoRA half sees only the LoRA request, with tokenformer ids
++    # rewritten to the no-LoRA sentinel in both mappings.
++    (lora_requests, lora_mapping), _ = fake_lora.set_active_adapters.call_args
++    assert list(lora_requests) == [req_lora]
++    assert lora_mapping.index_mapping == (0, 0, 7, 0)
++    assert lora_mapping.prompt_mapping == (0, 7)
++    assert lora_mapping.is_prefill is True
++    # The original mapping must not be mutated in place.
++    assert mapping.index_mapping == (5, 5, 7, 0)
++
++
++def test_get_dummy_lora_warmup_rank_delegates_to_lora(full_manager):
++    mgr, fake_tk, fake_lora, _ = full_manager
++    fake_lora.get_dummy_lora_warmup_rank.return_value = 16
++    assert mgr.get_dummy_lora_warmup_rank(8) == 16
++    fake_lora.get_dummy_lora_warmup_rank.assert_called_once_with(8)
++
++
++def test_get_dummy_lora_warmup_rank_default_without_lora(patched_manager):
++    mgr, fake_tk = patched_manager
++    assert mgr.get_dummy_lora_warmup_rank(8) == 8
++
++
++def test_add_dummy_lora_fans_out_when_lora_present(full_manager):
++    mgr, fake_tk, fake_lora, _ = full_manager
++    req = SimpleNamespace(adapter_id=0, lora_path="/dummy")
++    mgr.add_dummy_lora(req, rank=8)
++    # Both sub-managers must see the dummy — the LoRA one for
++    # cudagraph capture, the Tokenformer one for interface symmetry.
++    fake_tk.add_dummy_lora.assert_called_once_with(req, rank=8)
++    fake_lora.add_dummy_lora.assert_called_once_with(req, rank=8)
++
++
++def test_list_adapters_unions_both(full_manager):
++    mgr, fake_tk, fake_lora, _ = full_manager
++    fake_tk.list_adapters.return_value = {1: object(), 3: object()}
++    fake_lora.list_adapters.return_value = {2, 3}  # id 3 overlaps
++    assert mgr.list_adapters() == {1, 2, 3}
++
++
++def test_pin_adapter_routes_by_kind(full_manager, monkeypatch):
++    mgr, fake_tk, fake_lora, _ = full_manager
++    import vllm.tokenformer.hybrid_adapter_manager as mod
++
++    # Register a lora and a tokenformer adapter.
++    monkeypatch.setattr(
++        mod, "load_adapter_from_pt", lambda _p: _fake_loaded("tokenformer")
++    )
++    mgr.add_adapter(SimpleNamespace(adapter_id=10, lora_path="/t"))
++    monkeypatch.setattr(mod, "load_adapter_from_pt", lambda _p: _fake_loaded("lora"))
++    mgr.add_adapter(SimpleNamespace(adapter_id=20, lora_path="/l"))
++
++    fake_tk.pin_adapter.reset_mock()
++    fake_lora.pin_adapter.reset_mock()
++
++    mgr.pin_adapter(10)
++    fake_tk.pin_adapter.assert_called_once_with(10)
++    fake_lora.pin_adapter.assert_not_called()
++
++    fake_tk.pin_adapter.reset_mock()
++    fake_lora.pin_adapter.reset_mock()
++
++    mgr.pin_adapter(20)
++    fake_lora.pin_adapter.assert_called_once_with(20)
++    fake_tk.pin_adapter.assert_not_called()
++
++
++def test_remove_all_clears_both(full_manager, monkeypatch):
++    mgr, fake_tk, fake_lora, _ = full_manager
++    import vllm.tokenformer.hybrid_adapter_manager as mod
++
++    monkeypatch.setattr(
++        mod,
++        "load_adapter_from_pt",
++        lambda _p: _fake_loaded("hybrid"),
++    )
++    mgr.add_adapter(SimpleNamespace(adapter_id=5, lora_path="/tmp/a"))
++    mgr.remove_all_adapters()
++
++    fake_tk.remove_all_adapters.assert_called_once()
++    fake_lora.remove_all_adapters.assert_called_once()
++    assert mgr._kinds == {}
++
++
++def test_add_adapter_rolls_back_on_lora_half_failure(full_manager, monkeypatch):
++    """A hybrid adapter whose LoRA half fails to register must not
++    leave the tokenformer half + _kinds entry behind — a stale ghost
++    would keep activating on later batches."""
++    mgr, fake_tk, fake_lora, _ = full_manager
++    import vllm.tokenformer.hybrid_adapter_manager as mod
++
++    monkeypatch.setattr(mod, "load_adapter_from_pt", lambda _p: _fake_loaded("hybrid"))
++    fake_lora.add_adapter.side_effect = RuntimeError("punica says no")
++
++    with pytest.raises(RuntimeError, match="punica says no"):
++        mgr.add_adapter(SimpleNamespace(adapter_id=9, lora_path="/tmp/a"))
++
++    fake_tk.remove_adapter.assert_called_once_with(9)
++    assert 9 not in mgr._kinds
+diff --git a/tests/tokenformer/test_lora_from_pt.py b/tests/tokenformer/test_lora_from_pt.py
+new file mode 100644
+index 000000000..4b6dc8a88
+--- /dev/null
++++ b/tests/tokenformer/test_lora_from_pt.py
+@@ -0,0 +1,332 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Unit tests for the LoRA-from-.pt loader.
++
++`infer_lora_rank` and `build_peft_helper_from_pt` are pure logic and
++can run with fake shape-only tensors (no torch needed). The full
++`load_lora_model_from_pt` path needs real torch tensors because
++`LoRAModel.from_lora_tensors` moves tensors between devices; those
++tests skip cleanly when torch is unavailable.
++"""
++
++from types import SimpleNamespace
++
++import pytest
++
++
++def _fake_tensor(shape):
++    """Shape-only stand-in for tests of the rank/alpha inference logic."""
++    return SimpleNamespace(shape=shape)
++
++
++# --- infer_lora_rank ----------------------------------------------------
++
++
++def test_infer_rank_single_module():
++    from vllm.tokenformer.lora_from_pt import infer_lora_rank
++
++    sd = {
++        "model.layers.0.self_attn.q_proj.lora_A.weight": _fake_tensor((16, 4096)),
++        "model.layers.0.self_attn.q_proj.lora_B.weight": _fake_tensor((4096, 16)),
++    }
++    assert infer_lora_rank(sd) == 16
++
++
++def test_infer_rank_multiple_modules_consistent():
++    from vllm.tokenformer.lora_from_pt import infer_lora_rank
++
++    sd = {
++        "model.layers.0.self_attn.q_proj.lora_A.weight": _fake_tensor((32, 4096)),
++        "model.layers.0.self_attn.k_proj.lora_A.weight": _fake_tensor((32, 4096)),
++        "model.layers.0.self_attn.v_proj.lora_A.weight": _fake_tensor((32, 4096)),
++        # lora_B tensors are ignored for rank inference.
++        "model.layers.0.self_attn.q_proj.lora_B.weight": _fake_tensor((4096, 32)),
++    }
++    assert infer_lora_rank(sd) == 32
++
++
++def test_infer_rank_inconsistent_raises():
++    from vllm.tokenformer.lora_from_pt import infer_lora_rank
++
++    sd = {
++        "q_proj.lora_A.weight": _fake_tensor((16, 4096)),
++        "k_proj.lora_A.weight": _fake_tensor((32, 4096)),
++    }
++    with pytest.raises(ValueError, match="Inconsistent"):
++        infer_lora_rank(sd)
++
++
++def test_infer_rank_no_lora_a_raises():
++    from vllm.tokenformer.lora_from_pt import infer_lora_rank
++
++    # Only lora_B tensors (malformed adapter).
++    sd = {"q_proj.lora_B.weight": _fake_tensor((4096, 16))}
++    with pytest.raises(ValueError, match="No lora_A tensors"):
++        infer_lora_rank(sd)
++
++
++def test_infer_rank_zero_raises():
++    from vllm.tokenformer.lora_from_pt import infer_lora_rank
++
++    sd = {"q_proj.lora_A.weight": _fake_tensor((0, 4096))}
++    with pytest.raises(ValueError, match="positive integer"):
++        infer_lora_rank(sd)
++
++
++def test_infer_rank_ignores_non_lora_keys():
++    from vllm.tokenformer.lora_from_pt import infer_lora_rank
++
++    sd = {
++        "some.embed_tokens.weight": _fake_tensor((32000, 4096)),
++        "q_proj.lora_A.weight": _fake_tensor((8, 4096)),
++    }
++    assert infer_lora_rank(sd) == 8
++
++
++# --- build_peft_helper_from_pt -----------------------------------------
++
++
++def test_default_alpha_is_2x_rank():
++    from vllm.tokenformer.lora_from_pt import build_peft_helper_from_pt
++
++    sd = {"q_proj.lora_A.weight": _fake_tensor((16, 4096))}
++    helper = build_peft_helper_from_pt(sd)
++    assert helper.r == 16
++    assert helper.lora_alpha == 32
++    assert helper.vllm_lora_scaling_factor == pytest.approx(32 / 16)
++
++
++def test_explicit_alpha_is_respected():
++    from vllm.tokenformer.lora_from_pt import build_peft_helper_from_pt
++
++    sd = {"q_proj.lora_A.weight": _fake_tensor((16, 4096))}
++    helper = build_peft_helper_from_pt(sd, lora_alpha=64)
++    assert helper.r == 16
++    assert helper.lora_alpha == 64
++
++
++def test_alpha_multiplier_controls_default():
++    from vllm.tokenformer.lora_from_pt import build_peft_helper_from_pt
++
++    sd = {"q_proj.lora_A.weight": _fake_tensor((8, 4096))}
++    helper = build_peft_helper_from_pt(sd, lora_alpha_multiplier=4.0)
++    assert helper.lora_alpha == 32
++
++
++def test_metadata_alpha_overrides_default():
++    from vllm.tokenformer.lora_from_pt import build_peft_helper_from_pt
++
++    sd = {"q_proj.lora_A.weight": _fake_tensor((16, 4096))}
++    helper = build_peft_helper_from_pt(sd, metadata={"lora_alpha": 48})
++    assert helper.r == 16
++    assert helper.lora_alpha == 48
++
++
++def test_metadata_use_rslora_is_respected():
++    from vllm.tokenformer.lora_from_pt import build_peft_helper_from_pt
++
++    sd = {"q_proj.lora_A.weight": _fake_tensor((16, 4096))}
++    helper = build_peft_helper_from_pt(sd, metadata={"use_rslora": True})
++    import math
++
++    assert helper.vllm_lora_scaling_factor == pytest.approx(
++        helper.lora_alpha / math.sqrt(helper.r)
++    )
++
++
++def test_explicit_alpha_beats_metadata():
++    from vllm.tokenformer.lora_from_pt import build_peft_helper_from_pt
++
++    sd = {"q_proj.lora_A.weight": _fake_tensor((16, 4096))}
++    # Explicit kwarg takes precedence — tests stay deterministic even
++    # when a file happens to ship metadata.
++    helper = build_peft_helper_from_pt(
++        sd,
++        lora_alpha=100,
++        metadata={"lora_alpha": 48},
++    )
++    assert helper.lora_alpha == 100
++
++
++def test_warning_when_no_metadata_alpha(caplog):
++    import logging
++
++    from vllm.tokenformer.lora_from_pt import build_peft_helper_from_pt
++
++    sd = {"q_proj.lora_A.weight": _fake_tensor((16, 4096))}
++    with caplog.at_level(logging.WARNING, logger="vllm.tokenformer.lora_from_pt"):
++        build_peft_helper_from_pt(sd)
++    # Warning must name the default we picked so operators can verify
++    # it matches their training config.
++    assert any("lora_alpha" in r.message for r in caplog.records)
++
++
++def test_no_warning_when_metadata_alpha_present(caplog):
++    import logging
++
++    from vllm.tokenformer.lora_from_pt import build_peft_helper_from_pt
++
++    sd = {"q_proj.lora_A.weight": _fake_tensor((16, 4096))}
++    with caplog.at_level(logging.WARNING, logger="vllm.tokenformer.lora_from_pt"):
++        build_peft_helper_from_pt(sd, metadata={"lora_alpha": 32})
++    assert not any("lora_alpha" in r.message for r in caplog.records)
++
++
++def test_rslora_scaling_uses_sqrt_of_rank():
++    from vllm.tokenformer.lora_from_pt import build_peft_helper_from_pt
++
++    sd = {"q_proj.lora_A.weight": _fake_tensor((16, 4096))}
++    helper = build_peft_helper_from_pt(sd, use_rslora=True)
++    # vllm_lora_scaling_factor = lora_alpha / sqrt(r) under rsLoRA
++    import math
++
++    assert helper.vllm_lora_scaling_factor == pytest.approx(
++        helper.lora_alpha / math.sqrt(helper.r)
++    )
++
++
++# --- load_lora_model_from_pt -------------------------------------------
++
++
++def test_load_lora_model_rejects_rank_over_max(monkeypatch):
++    """The trainer's rank must be ≤ the server's max_lora_rank.
++    Otherwise vLLM pre-allocated slots are too small and set_lora
++    crashes with a cryptic shape-mismatch. Catch it early with a
++    clear message."""
++    from vllm.tokenformer.lora_from_pt import load_lora_model_from_pt
++
++    sd = {
++        "model.layers.0.self_attn.q_proj.lora_A.weight": _fake_tensor((32, 4096)),
++        "model.layers.0.self_attn.q_proj.lora_B.weight": _fake_tensor((4096, 32)),
++    }
++    with pytest.raises(ValueError, match=r"max_lora_rank=16"):
++        load_lora_model_from_pt(sd, lora_model_id=1, max_lora_rank=16)
++
++
++def test_load_lora_model_from_pt_empty_sd_raises():
++    from vllm.tokenformer.lora_from_pt import load_lora_model_from_pt
++
++    with pytest.raises(ValueError, match="empty"):
++        load_lora_model_from_pt({}, lora_model_id=1)
++
++
++def test_load_lora_model_from_pt_dispatches(monkeypatch):
++    """Without torch, stub LoRAModel.from_lora_tensors and verify the
++    loader passes the right arguments through."""
++    import vllm.tokenformer.lora_from_pt as mod
++
++    captured = {}
++
++    class _FakeLoRAModel:
++        @classmethod
++        def from_lora_tensors(cls, **kwargs):
++            captured.update(kwargs)
++            return SimpleNamespace(id=kwargs["lora_model_id"])
++
++    monkeypatch.setattr(mod, "LoRAModel", _FakeLoRAModel)
++
++    sd = {
++        "model.layers.0.self_attn.q_proj.lora_A.weight": _fake_tensor((16, 4096)),
++        "model.layers.0.self_attn.q_proj.lora_B.weight": _fake_tensor((4096, 16)),
++    }
++
++    result = mod.load_lora_model_from_pt(sd, lora_model_id=42)
++
++    assert result.id == 42
++    assert captured["lora_model_id"] == 42
++    assert captured["tensors"] is sd
++    helper = captured["peft_helper"]
++    assert helper.r == 16
++    assert helper.lora_alpha == 32
++
++
++def test_explicit_peft_helper_is_used(monkeypatch):
++    import vllm.tokenformer.lora_from_pt as mod
++    from vllm.lora.peft_helper import PEFTHelper
++
++    captured = {}
++
++    class _FakeLoRAModel:
++        @classmethod
++        def from_lora_tensors(cls, **kwargs):
++            captured.update(kwargs)
++            return SimpleNamespace()
++
++    monkeypatch.setattr(mod, "LoRAModel", _FakeLoRAModel)
++
++    helper = PEFTHelper(r=8, lora_alpha=16, target_modules=[])
++    sd = {
++        # Shape doesn't match helper.r intentionally; loader should not
++        # re-infer when an explicit helper is passed.
++        "q_proj.lora_A.weight": _fake_tensor((64, 4096)),
++        "q_proj.lora_B.weight": _fake_tensor((4096, 64)),
++    }
++    mod.load_lora_model_from_pt(sd, lora_model_id=1, peft_helper=helper)
++
++    assert captured["peft_helper"] is helper
++
++
++# --- real torch round-trip (skipped if torch not installed) ------------
++
++
++def test_load_lora_model_from_pt_real_torch(monkeypatch):
++    torch = pytest.importorskip("torch")
++
++    # We still stub LoRAModel.from_lora_tensors so this test doesn't
++    # require a full model; the point is that real tensor shapes
++    # thread through inference + helper construction.
++    import vllm.tokenformer.lora_from_pt as mod
++
++    captured = {}
++
++    class _FakeLoRAModel:
++        @classmethod
++        def from_lora_tensors(cls, **kwargs):
++            captured.update(kwargs)
++            return SimpleNamespace()
++
++    monkeypatch.setattr(mod, "LoRAModel", _FakeLoRAModel)
++
++    sd = {
++        "model.layers.0.self_attn.q_proj.lora_A.weight": torch.zeros(16, 4096),
++        "model.layers.0.self_attn.q_proj.lora_B.weight": torch.zeros(4096, 16),
++        "model.layers.0.self_attn.k_proj.lora_A.weight": torch.zeros(16, 4096),
++        "model.layers.0.self_attn.k_proj.lora_B.weight": torch.zeros(4096, 16),
++    }
++    mod.load_lora_model_from_pt(sd, lora_model_id=7, device="cpu")
++
++    helper = captured["peft_helper"]
++    assert helper.r == 16
++    assert captured["device"] == "cpu"
++    assert captured["tensors"] is sd
++
++
++def test_explicit_use_rslora_false_beats_metadata():
++    from vllm.tokenformer.lora_from_pt import build_peft_helper_from_pt
++
++    sd = {"q_proj.lora_A.weight": _fake_tensor((16, 4096))}
++    helper = build_peft_helper_from_pt(
++        sd, use_rslora=False, metadata={"use_rslora": True, "lora_alpha": 32}
++    )
++    # Plain LoRA scaling (alpha / r), not the RS-LoRA sqrt form.
++    assert helper.vllm_lora_scaling_factor == pytest.approx(
++        helper.lora_alpha / helper.r
++    )
++
++
++def test_metadata_use_rslora_string_raises():
++    from vllm.tokenformer.lora_from_pt import build_peft_helper_from_pt
++
++    sd = {"q_proj.lora_A.weight": _fake_tensor((16, 4096))}
++    # bool("false") is True — a stringly-typed trainer value must be
++    # rejected, not silently enable RS-LoRA.
++    with pytest.raises(ValueError, match="use_rslora.*bool"):
++        build_peft_helper_from_pt(sd, metadata={"use_rslora": "false"})
++
++
++def test_metadata_lora_alpha_string_raises():
++    from vllm.tokenformer.lora_from_pt import build_peft_helper_from_pt
++
++    sd = {"q_proj.lora_A.weight": _fake_tensor((16, 4096))}
++    with pytest.raises(ValueError, match="lora_alpha.*number"):
++        build_peft_helper_from_pt(sd, metadata={"lora_alpha": "64"})
+diff --git a/tests/tokenformer/test_state_dict_unpack.py b/tests/tokenformer/test_state_dict_unpack.py
+new file mode 100644
+index 000000000..0b141de6a
+--- /dev/null
++++ b/tests/tokenformer/test_state_dict_unpack.py
+@@ -0,0 +1,197 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Tests for unpack_packed_modules_state_dict — the ScalarLM
++state-dict rewrite shared by the gemma3/qwen2/qwen3/qwen3_moe
++ForCausalLM.state_dict overrides."""
++
++from types import SimpleNamespace
++
++import torch
++from torch import nn
++
++from vllm.model_executor.models.utils import unpack_packed_modules_state_dict
++
++MAPPING = {
++    "qkv_proj": ["q_proj", "k_proj", "v_proj"],
++    "gate_up_proj": ["gate_proj", "up_proj"],
++}
++# 4 q heads, 2 kv heads, head_dim 8 -> q rows 32, k/v rows 16 each
++# (fused qkv has 64 rows; a naive 3-way chunk would slice at 22/43).
++CFG = SimpleNamespace(
++    num_attention_heads=4,
++    num_key_value_heads=2,
++    head_dim=8,
++    hidden_size=32,
++)
++
++
++def _decoder_sd(prefix=""):
++    qkv = torch.arange(64 * 32, dtype=torch.float32).reshape(64, 32)
++    return {
++        f"{prefix}model.layers.0.self_attn.qkv_proj.weight": qkv,
++        f"{prefix}model.layers.0.self_attn.qkv_proj.bias": torch.arange(
++            64, dtype=torch.float32
++        ),
++        f"{prefix}model.layers.0.mlp.gate_up_proj.weight": torch.zeros(20, 32),
++        f"{prefix}model.layers.0.self_attn.attn._k_scale": torch.tensor(1.0),
++        f"{prefix}model.layers.1.mlp.experts.w13_weight": torch.zeros(2, 4),
++        f"{prefix}model.norm.weight": torch.ones(32),
++    }
++
++
++def test_top_level_unpacks_with_gqa_sizes():
++    sd = _decoder_sd()
++    qkv = sd["model.layers.0.self_attn.qkv_proj.weight"]
++    out = unpack_packed_modules_state_dict(
++        sd, prefix="", packed_modules_mapping=MAPPING, config=CFG
++    )
++    assert out is sd  # must hand back the same (destination) dict
++
++    assert "model.layers.0.self_attn.qkv_proj.weight" not in out
++    assert torch.equal(out["model.layers.0.self_attn.q_proj.weight"], qkv[:32])
++    assert torch.equal(out["model.layers.0.self_attn.k_proj.weight"], qkv[32:48])
++    assert torch.equal(out["model.layers.0.self_attn.v_proj.weight"], qkv[48:])
++    assert out["model.layers.0.self_attn.q_proj.bias"].shape == (32,)
++    assert out["model.layers.0.self_attn.k_proj.bias"].shape == (16,)
++
++    assert out["model.layers.0.mlp.gate_proj.weight"].shape == (10, 32)
++    assert out["model.layers.0.mlp.up_proj.weight"].shape == (10, 32)
++
++    # Non-loadable keys are dropped; everything else survives.
++    assert "model.layers.0.self_attn.attn._k_scale" not in out
++    assert "model.layers.1.mlp.experts.w13_weight" not in out
++    assert "model.norm.weight" in out
++
++
++def test_head_dim_none_falls_back_to_hidden_over_heads():
++    cfg = SimpleNamespace(
++        num_attention_heads=4,
++        num_key_value_heads=2,
++        head_dim=None,  # HF configs may carry an explicit None
++        hidden_size=32,
++    )
++    out = unpack_packed_modules_state_dict(
++        _decoder_sd(), prefix="", packed_modules_mapping=MAPPING, config=cfg
++    )
++    assert out["model.layers.0.self_attn.q_proj.weight"].shape == (32, 32)
++    assert out["model.layers.0.self_attn.k_proj.weight"].shape == (16, 32)
++
++
++def test_prefix_scopes_rewrite_to_own_subtree():
++    """Regression for the multimodal-wrapper bug: keys of sibling
++    modules already in the shared destination (a vision tower with an
++    incompatibly-shaped qkv_proj) must not be touched — splitting them
++    with this config's sizes raised RuntimeError in torch.split."""
++    sd = _decoder_sd(prefix="language_model.")
++    vision_qkv = torch.zeros(9, 5)  # 32/16/16 split cannot apply
++    sd["vision_tower.blocks.0.attn.qkv_proj.weight"] = vision_qkv
++    sd["vision_tower.blocks.0.attn.attn._k_scale"] = torch.tensor(1.0)
++
++    out = unpack_packed_modules_state_dict(
++        sd, prefix="language_model.", packed_modules_mapping=MAPPING, config=CFG
++    )
++
++    # Sibling keys untouched (same objects, not unpacked, not dropped).
++    assert out["vision_tower.blocks.0.attn.qkv_proj.weight"] is vision_qkv
++    assert "vision_tower.blocks.0.attn.attn._k_scale" in out
++    # Own subtree unpacked as usual.
++    assert "language_model.model.layers.0.self_attn.qkv_proj.weight" not in out
++    assert out["language_model.model.layers.0.self_attn.q_proj.weight"].shape == (
++        32,
++        32,
++    )
++    assert "language_model.model.layers.1.mlp.experts.w13_weight" not in out
++
++
++class _FakeTextModel(nn.Module):
++    """Stand-in for a ForCausalLM with the shared state_dict override
++    (same gate + rewrite pattern as gemma3/qwen2/qwen3/qwen3_moe)."""
++
++    packed_modules_mapping = MAPPING
++    config = CFG
++
++    def __init__(self):
++        super().__init__()
++        self.qkv_proj = nn.Linear(32, 64, bias=False)
++
++    def state_dict(self, destination=None, prefix="", keep_vars=False):
++        from vllm.model_executor.models.utils import (
++            scalarlm_state_dict_export_enabled,
++        )
++
++        state_dict = super().state_dict(
++            destination=destination, prefix=prefix, keep_vars=keep_vars
++        )
++        if not scalarlm_state_dict_export_enabled():
++            return state_dict
++        return unpack_packed_modules_state_dict(
++            state_dict,
++            prefix=prefix,
++            packed_modules_mapping=self.packed_modules_mapping,
++            config=self.config,
++        )
++
++
++class _FakeVisionTower(nn.Module):
++    def __init__(self):
++        super().__init__()
++        # Same attribute name as the text model's projection, but a
++        # shape the text config's split sizes cannot apply to.
++        self.qkv_proj = nn.Linear(5, 9, bias=False)
++
++
++class _FakeMMWrapper(nn.Module):
++    def __init__(self):
++        super().__init__()
++        # Registration order mirrors Gemma3ForConditionalGeneration:
++        # the vision tower's keys land in the shared destination before
++        # the language model's overridden state_dict runs.
++        self.vision_tower = _FakeVisionTower()
++        self.language_model = _FakeTextModel()
++
++
++def test_wrapper_recursion_leaves_siblings_untouched(monkeypatch):
++    """torch's Module.state_dict calls each child's (overridden)
++    state_dict with the shared destination and the child's prefix; the
++    override must only rewrite its own subtree."""
++    import vllm.model_executor.models.utils as mutils
++
++    monkeypatch.setattr(mutils, "_scalarlm_state_dict_export", True)
++    sd = _FakeMMWrapper().state_dict()
++
++    assert sd["vision_tower.qkv_proj.weight"].shape == (9, 5)
++    assert "language_model.qkv_proj.weight" not in sd
++    assert sd["language_model.q_proj.weight"].shape == (32, 32)
++    assert sd["language_model.k_proj.weight"].shape == (16, 32)
++    assert sd["language_model.v_proj.weight"].shape == (16, 32)
++
++
++def test_override_is_canonical_until_export_enabled(monkeypatch):
++    """Regression (codex ultra review): the rewrite used to apply
++    unconditionally, so vanilla flows consuming the canonical state
++    dict — sharded saves, dummy init — silently lost expert tensors
++    and got unpacked projections even with tokenformer disabled. The
++    override must be a no-op until a tokenformer manager enables the
++    export layout."""
++    import vllm.model_executor.models.utils as mutils
++
++    monkeypatch.setattr(mutils, "_scalarlm_state_dict_export", False)
++    sd = _FakeTextModel().state_dict()
++    assert "qkv_proj.weight" in sd  # canonical, still packed
++    assert "q_proj.weight" not in sd
++
++    monkeypatch.setattr(mutils, "_scalarlm_state_dict_export", True)
++    sd = _FakeTextModel().state_dict()
++    assert "qkv_proj.weight" not in sd
++    assert sd["q_proj.weight"].shape == (32, 32)
++
++
++def test_tokenformer_manager_enables_export(monkeypatch):
++    import vllm.model_executor.models.utils as mutils
++    from vllm.tokenformer.tokenformer_model_manager import (
++        TokenformerModelManager,
++    )
++
++    monkeypatch.setattr(mutils, "_scalarlm_state_dict_export", False)
++    TokenformerModelManager(model=nn.Linear(2, 2), device=torch.device("cpu"))
++    assert mutils.scalarlm_state_dict_export_enabled()
+diff --git a/tests/tokenformer/test_tokenformer_model_manager.py b/tests/tokenformer/test_tokenformer_model_manager.py
+new file mode 100644
+index 000000000..6e1d5dceb
+--- /dev/null
++++ b/tests/tokenformer/test_tokenformer_model_manager.py
+@@ -0,0 +1,123 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Unit tests for TokenformerModelManager adapter-lifecycle state.
++
++Uses a bare nn.Linear as the model — it doesn't declare
++SupportsTokenformer, so __init__ skips the surgeon and none of the
++tests touch real weight-reload machinery.
++"""
++
++from types import SimpleNamespace
++
++import pytest
++import torch
++from torch import nn
++
++from vllm.tokenformer.tokenformer_model_manager import TokenformerModelManager
++
++
++@pytest.fixture
++def manager():
++    return TokenformerModelManager(model=nn.Linear(2, 2), device=torch.device("cpu"))
++
++
++def test_get_dummy_lora_warmup_rank_returns_default(manager):
++    # The warmup path in LoRAModelRunnerMixin.maybe_setup_dummy_loras
++    # calls this on whatever manager is active; tokenformer must accept
++    # it and leave the rank unchanged (its dummy loras are no-ops).
++    assert manager.get_dummy_lora_warmup_rank(8) == 8
++    assert manager.get_dummy_lora_warmup_rank(4) == 4
++
++
++def test_remove_active_adapter_clears_active_marker(manager, monkeypatch):
++    manager._registered_adapters[7] = SimpleNamespace(tokenformers={})
++    manager._active_adapter = 7
++    monkeypatch.setattr(manager, "deactivate_adapter", lambda _id: True)
++
++    assert manager.remove_adapter(7) is True
++    assert 7 not in manager._registered_adapters
++    assert manager._active_adapter is None
++
++
++def test_deactivate_all_after_remove_does_not_raise(manager, monkeypatch):
++    """Regression: _remove_adapter used to leave _active_adapter set,
++    so the next empty-batch deactivate_all_adapters() looked up the
++    removed id in _registered_adapters and crashed with KeyError."""
++    manager._registered_adapters[7] = SimpleNamespace(tokenformers={})
++    manager._active_adapter = 7
++    monkeypatch.setattr(manager, "deactivate_adapter", lambda _id: True)
++    manager.remove_adapter(7)
++
++    # Simulates set_active_adapters(set()) on the next lora-free batch.
++    manager.deactivate_all_adapters()
++    assert manager._active_adapter is None
++
++
++def test_remove_unknown_adapter_returns_false(manager):
++    assert manager.remove_adapter(99) is False
++
++
++def test_list_adapters_returns_id_set(manager):
++    # The worker-manager contract is set[int]; adapter objects (which
++    # hold tensors) must not leak into the engine's list_loras RPC.
++    manager._registered_adapters[3] = SimpleNamespace(tokenformers={})
++    manager._registered_adapters[9] = SimpleNamespace(tokenformers={})
++    assert manager.list_adapters() == {3, 9}
++
++
++def test_pin_adapter_reports_unsupported(manager):
++    assert manager.pin_adapter(1) is False
++
++
++def test_adapter_slots_matches_capacity(manager):
++    assert manager.adapter_slots == manager.capacity
++
++
++def test_remove_adapter_syncs_lru_accounting(manager, monkeypatch):
++    """External removal used to leave the id in _lru_adaptor_ids, so a
++    later capacity eviction popped the stale id and evicted nothing."""
++    manager._registered_adapters[7] = SimpleNamespace(tokenformers={})
++    manager._lru_adaptor_ids.append(7)
++    monkeypatch.setattr(manager, "deactivate_adapter", lambda _id: True)
++    manager.remove_adapter(7)
++    assert manager._lru_adaptor_ids == []
++
++
++def test_remove_all_only_deactivates_active(manager, monkeypatch):
++    """Only the active adapter has weights applied; remove_all used to
++    run a full deactivation (model-sized weight reload) per registered
++    adapter."""
++    calls = []
++    monkeypatch.setattr(manager, "deactivate_adapter", lambda _id: calls.append(_id))
++    manager._registered_adapters[1] = SimpleNamespace(tokenformers={})
++    manager._registered_adapters[2] = SimpleNamespace(tokenformers={})
++    manager._lru_adaptor_ids.extend([1, 2])
++    manager._active_adapter = 2
++
++    manager.remove_all_adapters()
++
++    assert calls == [2]
++    assert manager._registered_adapters == {}
++    assert manager._lru_adaptor_ids == []
++    assert manager._active_adapter is None
++
++
++def test_unsupported_model_warns_about_skipped_surgery(caplog):
++    import logging
++
++    with caplog.at_level(logging.WARNING, logger="vllm"):
++        TokenformerModelManager(model=nn.Linear(2, 2), device=torch.device("cpu"))
++    assert any("SupportsTokenformer" in r.message for r in caplog.records)
++
++
++def test_from_local_checkpoint_picks_sorted_first_pt(tmp_path):
++    from vllm.tokenformer.tokenformer_model_manager import TokenformerModel
++
++    # Write b.pt first so filesystem order differs from sorted order.
++    torch.save({"model_state_dict": {"x": torch.tensor([2.0])}}, tmp_path / "b.pt")
++    torch.save({"model_state_dict": {"x": torch.tensor([1.0])}}, tmp_path / "a.pt")
++    model = TokenformerModel.from_local_checkpoint(
++        str(tmp_path), device=torch.device("cpu")
++    )
++    # Must match adapter_format's sorted-first choice: a.pt.
++    assert model.tokenformers["x"].item() == 1.0
+diff --git a/vllm/config/lora.py b/vllm/config/lora.py
+index a77660f3b..7c880ab4e 100644
+--- a/vllm/config/lora.py
++++ b/vllm/config/lora.py
+@@ -28,8 +28,25 @@ MaxLoRARanks = Literal[1, 8, 16, 32, 64, 128, 256, 320, 512]
+ 
+ @config(config=ConfigDict(arbitrary_types_allowed=True))
+ class LoRAConfig:
+-    """Configuration for LoRA."""
++    """Configuration for LoRA (and, in ScalarLM, Tokenformer) adapters.
+ 
++    The adapter subsystem is enabled if either `enable_lora` or
++    `enable_tokenformer` is set on the engine args; both select this same
++    config object. Fields like `max_loras`, `max_lora_rank`, and `lora_dtype`
++    apply to the tokenformer manager as well.
++    """
++
++    enable_lora: bool = False
++    """Mirror of EngineArgs.enable_lora. When True, the LoRA manager will
++    be instantiated by the runner. Exposed on this config so the runtime
++    can distinguish lora-only / tokenformer-only / hybrid without having
++    to carry EngineArgs around. See
++    `docs/design/hybrid_lora_tokenformer.md`."""
++    enable_tokenformer: bool = False
++    """If True, enable handling of Tokenformer adapters via
++    `TokenformerModelManager`. When both `enable_lora` and
++    `enable_tokenformer` are set, the runner selects
++    `HybridAdapterManager`."""
+     max_lora_rank: MaxLoRARanks = 16
+     """Max LoRA rank."""
+     max_loras: int = Field(default=1, ge=1)
+@@ -107,6 +124,16 @@ class LoRAConfig:
+         factors.append(self.enable_mixed_moe_lora_format)
+         factors.append(self.enable_moe_shared_loras)
+         factors.append(self.max_lora_cls_labels)
++        # The adapter kind decides which manager wraps the model (LoRA
++        # layer wrappers, the tokenformer surgeon, or both), so it
++        # changes the compiled graph; without these, lora-only,
++        # tokenformer-only, and hybrid configs hash identically.
++        factors.append(bool(self.enable_lora))
++        factors.append(self.enable_tokenformer)
++        # The tokenformer surgeon sizes its adapter parameters from
++        # these env vars, so they alter parameter shapes in the graph.
++        factors.append(os.getenv("TOKENFORMER_NUM_HEADS", "4"))
++        factors.append(os.getenv("TOKENFORMER_R", "32"))
+         # target_modules affects which modules get LoRA applied
+         factors.append(
+             tuple(sorted(self.target_modules)) if self.target_modules else None
+diff --git a/vllm/engine/arg_utils.py b/vllm/engine/arg_utils.py
+index ea628467e..ebb8fb605 100644
+--- a/vllm/engine/arg_utils.py
++++ b/vllm/engine/arg_utils.py
+@@ -674,6 +674,7 @@ class EngineArgs:
+     mm_device_do_normalize: bool | None = MultiModalConfig.mm_device_do_normalize
+     # LoRA fields
+     enable_lora: bool = False
++    enable_tokenformer: bool = LoRAConfig.enable_tokenformer
+     max_loras: int = LoRAConfig.max_loras
+     max_lora_rank: MaxLoRARanks = LoRAConfig.max_lora_rank
+     default_mm_loras: dict[str, str] | None = LoRAConfig.default_mm_loras
+@@ -1574,6 +1575,10 @@ class EngineArgs:
+             action=argparse.BooleanOptionalAction,
+             help="If True, enable handling of LoRA adapters.",
+         )
++        lora_group.add_argument(
++            "--enable-tokenformer",
++            **lora_kwargs["enable_tokenformer"],
++        )
+         lora_group.add_argument("--max-loras", **lora_kwargs["max_loras"])
+         lora_group.add_argument("--max-lora-rank", **lora_kwargs["max_lora_rank"])
+         lora_group.add_argument(
+@@ -2649,6 +2654,12 @@ class EngineArgs:
+ 
+         lora_config = (
+             LoRAConfig(
++                # bool(): upstream registers --enable-lora with
++                # BooleanOptionalAction and no default, so an absent flag
++                # parses to None, which the strict bool field rejects when
++                # --enable-tokenformer alone triggers this construction.
++                enable_lora=bool(self.enable_lora),
++                enable_tokenformer=self.enable_tokenformer,
+                 max_lora_rank=self.max_lora_rank,
+                 max_loras=self.max_loras,
+                 default_mm_loras=self.default_mm_loras,
+@@ -2664,7 +2675,7 @@ class EngineArgs:
+                 if self.max_cpu_loras and self.max_cpu_loras > 0
+                 else None,
+             )
+-            if self.enable_lora
++            if (self.enable_lora or self.enable_tokenformer)
+             else None
+         )
+ 
+diff --git a/vllm/model_executor/layers/linear.py b/vllm/model_executor/layers/linear.py
+index 65cda325a..7d6d84617 100644
+--- a/vllm/model_executor/layers/linear.py
++++ b/vllm/model_executor/layers/linear.py
+@@ -213,7 +213,7 @@ class UnquantizedLinearMethod(LinearMethodBase):
+ 
+             from vllm.model_executor.layers.utils import dispatch_cpu_unquantized_gemm
+ 
+-            dispatch_cpu_unquantized_gemm(layer, remove_weight=True)
++            dispatch_cpu_unquantized_gemm(layer, remove_weight=False)
+         elif current_platform.is_xpu():
+             # Opt-in: F.linear on XPU is faster with an N-contiguous (N, K) weight
+             # when K > N, but oneDNN's ab-weights matmul is not run-to-run bitwise
+diff --git a/vllm/model_executor/model_loader/base_loader.py b/vllm/model_executor/model_loader/base_loader.py
+index 65f64a332..48abfc292 100644
+--- a/vllm/model_executor/model_loader/base_loader.py
++++ b/vllm/model_executor/model_loader/base_loader.py
+@@ -86,6 +86,7 @@ class BaseModelLoader(ABC):
+ 
+             logger.debug("Loading weights on %s ...", load_device)
+             self.load_weights(model, model_config)
++            model.model_config = model_config
+ 
+             # Release transient tensors held by PyTorch's caching allocator
+             # before weight post-processing and raw CUDA driver allocations.
+diff --git a/vllm/model_executor/models/__init__.py b/vllm/model_executor/models/__init__.py
+index 78fa39ee4..0a60e9ca2 100644
+--- a/vllm/model_executor/models/__init__.py
++++ b/vllm/model_executor/models/__init__.py
+@@ -9,6 +9,7 @@ from .interfaces import (
+     SupportsMultiModal,
+     SupportsMultiModalEmbeddings,
+     SupportsPP,
++    SupportsTokenformer,
+     SupportsTranscription,
+     has_inner_state,
+     supports_hc_sp,
+@@ -17,6 +18,7 @@ from .interfaces import (
+     supports_multimodal,
+     supports_multimodal_embeddings,
+     supports_pp,
++    supports_tokenformer,
+     supports_transcription,
+ )
+ from .interfaces_base import (
+@@ -47,6 +49,8 @@ __all__ = [
+     "supports_mrope",
+     "SupportsPP",
+     "supports_pp",
++    "SupportsTokenformer",
++    "supports_tokenformer",
+     "SupportsTranscription",
+     "supports_transcription",
+ ]
+diff --git a/vllm/model_executor/models/gemma3.py b/vllm/model_executor/models/gemma3.py
+index 4646ebeca..638f46989 100644
+--- a/vllm/model_executor/models/gemma3.py
++++ b/vllm/model_executor/models/gemma3.py
+@@ -47,7 +47,7 @@ from vllm.model_executor.layers.vocab_parallel_embedding import (
+ from vllm.sequence import IntermediateTensors
+ from vllm.v1.attention.backend import AttentionType
+ 
+-from .interfaces import SupportsLoRA, SupportsPP
++from .interfaces import SupportsLoRA, SupportsPP, SupportsTokenformer
+ from .utils import (
+     AutoWeightsLoader,
+     WeightsMapper,
+@@ -55,6 +55,8 @@ from .utils import (
+     make_empty_intermediate_tensors_factory,
+     make_layers,
+     maybe_prefix,
++    scalarlm_state_dict_export_enabled,
++    unpack_packed_modules_state_dict,
+ )
+ 
+ logger = init_logger(__name__)
+@@ -364,7 +366,7 @@ class Gemma3Model(nn.Module):
+         return loader.load_weights(weights, mapper=self.hf_to_vllm_mapper)
+ 
+ 
+-class Gemma3ForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
++class Gemma3ForCausalLM(nn.Module, SupportsLoRA, SupportsPP, SupportsTokenformer):
+     hf_to_vllm_mapper = Gemma3Model.hf_to_vllm_mapper
+     packed_modules_mapping = {
+         "qkv_proj": [
+@@ -431,3 +433,20 @@ class Gemma3ForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
+     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+         loader = AutoWeightsLoader(self)
+         return loader.load_weights(weights, mapper=self.hf_to_vllm_mapper)
++
++    def state_dict(self, destination=None, prefix="", keep_vars=False):
++        # ScalarLM trainer contract: expose packed projections under
++        # their unpacked HF names. Scoped to `prefix` so recursion from
++        # a wrapper module (e.g. multimodal gemma3) can't rewrite
++        # sibling modules' keys in the shared destination dict.
++        state_dict = super().state_dict(
++            destination=destination, prefix=prefix, keep_vars=keep_vars
++        )
++        if not scalarlm_state_dict_export_enabled():
++            return state_dict
++        return unpack_packed_modules_state_dict(
++            state_dict,
++            prefix=prefix,
++            packed_modules_mapping=self.packed_modules_mapping,
++            config=self.config,
++        )
+diff --git a/vllm/model_executor/models/gemma4_mm.py b/vllm/model_executor/models/gemma4_mm.py
+index 204db6ce8..9f84483d8 100644
+--- a/vllm/model_executor/models/gemma4_mm.py
++++ b/vllm/model_executor/models/gemma4_mm.py
+@@ -79,6 +79,7 @@ from .interfaces import (
+     SupportsMultiModal,
+     SupportsPP,
+     SupportsQuant,
++    SupportsTokenformer,
+ )
+ from .utils import (
+     AutoWeightsLoader,
+@@ -1018,6 +1019,7 @@ class Gemma4ForConditionalGeneration(
+     SupportsLoRA,
+     SupportsEagle3,
+     SupportsEncoderCudaGraph,
++    SupportsTokenformer,
+ ):
+     supports_encoder_cudagraph: ClassVar[Literal[True]] = True
+     # Gemma4 clamps mm_prefix bidirectional ranges to the sliding window
+diff --git a/vllm/model_executor/models/interfaces.py b/vllm/model_executor/models/interfaces.py
+index 4dc67ff34..3d29adfb8 100644
+--- a/vllm/model_executor/models/interfaces.py
++++ b/vllm/model_executor/models/interfaces.py
+@@ -1783,6 +1783,16 @@ class SupportsMRoPE(Protocol):
+         ...
+ 
+ 
++@runtime_checkable
++class SupportsTokenformer(Protocol):
++    """The interface required for all models that support Tokenformer."""
++
++    supports_tokenformer: ClassVar[Literal[True]] = True
++    """
++    A flag that indicates this model supports Tokenformer.
++    """
++
++
+ @overload
+ def supports_mrope(model: type[object]) -> TypeIs[type[SupportsMRoPE]]: ...
+ 
+@@ -1975,3 +1985,17 @@ def supports_encoder_cudagraph(
+     model: type[object] | object,
+ ) -> TypeIs[type[SupportsEncoderCudaGraph]] | TypeIs[SupportsEncoderCudaGraph]:
+     return isinstance(model, SupportsEncoderCudaGraph)
++
++
++@overload
++def supports_tokenformer(model: type[object]) -> TypeIs[type[SupportsTokenformer]]: ...
++
++
++@overload
++def supports_tokenformer(model: object) -> TypeIs[SupportsTokenformer]: ...
++
++
++def supports_tokenformer(
++    model: type[object] | object,
++) -> TypeIs[type[SupportsTokenformer]] | TypeIs[SupportsTokenformer]:
++    return isinstance(model, SupportsTokenformer)
+diff --git a/vllm/model_executor/models/llama.py b/vllm/model_executor/models/llama.py
+index 9e0f45388..f7ecb7d99 100644
+--- a/vllm/model_executor/models/llama.py
++++ b/vllm/model_executor/models/llama.py
+@@ -66,6 +66,7 @@ from .interfaces import (
+     SupportsLoRA,
+     SupportsPP,
+     SupportsQuant,
++    SupportsTokenformer,
+ )
+ from .utils import (
+     AutoWeightsLoader,
+@@ -469,6 +470,7 @@ class LlamaForCausalLM(
+     SupportsEagle,
+     SupportsEagle3,
+     SupportsQuant,
++    SupportsTokenformer,
+ ):
+     hf_to_vllm_mapper = LlamaModel.hf_to_vllm_mapper
+     # LoRA specific attributes
+diff --git a/vllm/model_executor/models/qwen2.py b/vllm/model_executor/models/qwen2.py
+index 88600b376..c63e7db08 100644
+--- a/vllm/model_executor/models/qwen2.py
++++ b/vllm/model_executor/models/qwen2.py
+@@ -75,6 +75,8 @@ from .utils import (
+     make_layers,
+     maybe_prefix,
+     spec_decode_needs_target_embed,
++    scalarlm_state_dict_export_enabled,
++    unpack_packed_modules_state_dict,
+ )
+ 
+ 
+@@ -519,3 +521,20 @@ class Qwen2ForCausalLM(
+     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+         loader = AutoWeightsLoader(self)
+         return loader.load_weights(weights)
++
++    def state_dict(self, destination=None, prefix="", keep_vars=False):
++        # ScalarLM trainer contract: expose packed projections under
++        # their unpacked HF names. Scoped to `prefix` so recursion from
++        # a wrapper module can't rewrite sibling modules' keys in the
++        # shared destination dict.
++        state_dict = super().state_dict(
++            destination=destination, prefix=prefix, keep_vars=keep_vars
++        )
++        if not scalarlm_state_dict_export_enabled():
++            return state_dict
++        return unpack_packed_modules_state_dict(
++            state_dict,
++            prefix=prefix,
++            packed_modules_mapping=self.packed_modules_mapping,
++            config=self.config,
++        )
+diff --git a/vllm/model_executor/models/qwen2_vl.py b/vllm/model_executor/models/qwen2_vl.py
+index 7f0ed0e6a..a72cf9468 100644
+--- a/vllm/model_executor/models/qwen2_vl.py
++++ b/vllm/model_executor/models/qwen2_vl.py
+@@ -1850,7 +1850,16 @@ class Qwen2VLForConditionalGeneration(
+         return self.language_model.compute_logits(hidden_states)
+ 
+     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+-        loader = AutoWeightsLoader(self)
++        skip_prefixes = []
++        if self.config.tie_word_embeddings:
++            # Tied embeddings: lm_head shares embed_tokens' weight, so a tied
++            # checkpoint carries no separate lm_head weight. Skip it from the
++            # init-completeness check or AutoWeightsLoader raises
++            # "language_model.lm_head.weight not initialized". Mirrors qwen2.py,
++            # adjusted for the VL module prefix (hf_to_vllm_mapper rewrites
++            # `lm_head.` -> `language_model.lm_head.`, the model-tree name).
++            skip_prefixes.append("language_model.lm_head.")
++        loader = AutoWeightsLoader(self, skip_prefixes=skip_prefixes or None)
+         return loader.load_weights(weights, mapper=self.hf_to_vllm_mapper)
+ 
+     def get_mm_mapping(self) -> MultiModelKeys:
+diff --git a/vllm/model_executor/models/qwen3.py b/vllm/model_executor/models/qwen3.py
+index 31d1a094e..a88ae678e 100644
+--- a/vllm/model_executor/models/qwen3.py
++++ b/vllm/model_executor/models/qwen3.py
+@@ -54,10 +54,18 @@ from .interfaces import (
+     SupportsEagle3,
+     SupportsLoRA,
+     SupportsPP,
++    SupportsTokenformer,
+ )
+ from .qwen2 import Qwen2MLP as Qwen3MLP
+ from .qwen2 import Qwen2Model
+-from .utils import AutoWeightsLoader, PPMissingLayer, extract_layer_index, maybe_prefix
++from .utils import (
++    AutoWeightsLoader,
++    PPMissingLayer,
++    extract_layer_index,
++    maybe_prefix,
++    scalarlm_state_dict_export_enabled,
++    unpack_packed_modules_state_dict,
++)
+ 
+ logger = init_logger(__name__)
+ 
+@@ -278,7 +286,13 @@ class Qwen3Model(Qwen2Model):
+ 
+ 
+ class Qwen3ForCausalLM(
+-    LocalArgmaxMixin, nn.Module, SupportsLoRA, SupportsPP, SupportsEagle, SupportsEagle3
++    LocalArgmaxMixin,
++    nn.Module,
++    SupportsLoRA,
++    SupportsPP,
++    SupportsEagle,
++    SupportsEagle3,
++    SupportsTokenformer,
+ ):
+     hf_to_vllm_mapper = Qwen3Model.hf_to_vllm_mapper
+     packed_modules_mapping = {
+@@ -346,3 +360,20 @@ class Qwen3ForCausalLM(
+     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+         loader = AutoWeightsLoader(self)
+         return loader.load_weights(weights)
++
++    def state_dict(self, destination=None, prefix="", keep_vars=False):
++        # ScalarLM trainer contract: expose packed projections under
++        # their unpacked HF names. Scoped to `prefix` so recursion from
++        # a wrapper module can't rewrite sibling modules' keys in the
++        # shared destination dict.
++        state_dict = super().state_dict(
++            destination=destination, prefix=prefix, keep_vars=keep_vars
++        )
++        if not scalarlm_state_dict_export_enabled():
++            return state_dict
++        return unpack_packed_modules_state_dict(
++            state_dict,
++            prefix=prefix,
++            packed_modules_mapping=self.packed_modules_mapping,
++            config=self.config,
++        )
+diff --git a/vllm/model_executor/models/qwen3_moe.py b/vllm/model_executor/models/qwen3_moe.py
+index 870a082d3..d6c6ccb8d 100644
+--- a/vllm/model_executor/models/qwen3_moe.py
++++ b/vllm/model_executor/models/qwen3_moe.py
+@@ -71,6 +71,7 @@ from .interfaces import (
+     SupportsLoRA,
+     SupportsPP,
+     SupportsQuant,
++    SupportsTokenformer,
+ )
+ from .utils import (
+     AutoWeightsLoader,
+@@ -80,6 +81,8 @@ from .utils import (
+     make_empty_intermediate_tensors_factory,
+     make_layers,
+     maybe_prefix,
++    scalarlm_state_dict_export_enabled,
++    unpack_packed_modules_state_dict,
+ )
+ 
+ logger = init_logger(__name__)
+@@ -548,6 +551,7 @@ class Qwen3MoeForCausalLM(
+     SupportsEagle3,
+     MixtureOfExperts,
+     SupportsQuant,
++    SupportsTokenformer,
+ ):
+     hf_to_vllm_mapper = Qwen3MoeModel.hf_to_vllm_mapper
+     packed_modules_mapping = {
+@@ -555,7 +559,17 @@ class Qwen3MoeForCausalLM(
+             "q_proj",
+             "k_proj",
+             "v_proj",
+-        ]
++        ],
++        # Dense `Qwen3MoeMLP` blocks (the non-sparse layers, plus every sparse
++        # layer's `shared_expert`) fuse gate+up into one MergedColumnParallelLinear.
++        # It must be in the packed mapping or the LoRA manager can't wrap it
++        # (`MergedColumnParallelLinearWithLoRA.can_replace_layer` needs the 2-part
++        # mapping) and asserts at engine init. Declared unconditionally: a fully
++        # sparse model simply has no `gate_up_proj` module for it to match.
++        "gate_up_proj": [
++            "gate_proj",
++            "up_proj",
++        ],
+     }
+ 
+     embedding_modules = {
+@@ -571,9 +585,10 @@ class Qwen3MoeForCausalLM(
+         quant_config = vllm_config.quant_config
+         self.config = config
+         self.quant_config = quant_config
+-        # Only perform the following mapping when Qwen3MoeMLP exists
+-        if getattr(config, "mlp_only_layers", []):
+-            self.packed_modules_mapping["gate_up_proj"] = ["gate_proj", "up_proj"]
++        # `gate_up_proj` is now declared on the class-level packed_modules_mapping
++        # (covers dense layers whether they come from `mlp_only_layers` or from the
++        # `decoder_sparse_step` cadence), so no per-instance mutation here — that
++        # also avoids mutating the shared class attribute.
+         self.model = Qwen3MoeModel(
+             vllm_config=vllm_config, prefix=maybe_prefix(prefix, "model")
+         )
+@@ -657,3 +672,20 @@ class Qwen3MoeForCausalLM(
+     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+         loader = AutoWeightsLoader(self)
+         return loader.load_weights(weights)
++
++    def state_dict(self, destination=None, prefix="", keep_vars=False):
++        # ScalarLM trainer contract: expose packed projections under
++        # their unpacked HF names. Scoped to `prefix` so recursion from
++        # a wrapper module can't rewrite sibling modules' keys in the
++        # shared destination dict.
++        state_dict = super().state_dict(
++            destination=destination, prefix=prefix, keep_vars=keep_vars
++        )
++        if not scalarlm_state_dict_export_enabled():
++            return state_dict
++        return unpack_packed_modules_state_dict(
++            state_dict,
++            prefix=prefix,
++            packed_modules_mapping=self.packed_modules_mapping,
++            config=self.config,
++        )
+diff --git a/vllm/model_executor/models/utils.py b/vllm/model_executor/models/utils.py
+index ef1aac6de..ceba7034b 100644
+--- a/vllm/model_executor/models/utils.py
++++ b/vllm/model_executor/models/utils.py
+@@ -1192,3 +1192,101 @@ def parse_diarized_speaker(speaker: str) -> str | None:
+     ):
+         return None
+     return speaker
++
++
++_STATE_DICT_SCALE_SUFFIXES = ("._q_scale", "._k_scale", "._v_scale", "._prob_scale")
++
++# Process-wide switch for the ScalarLM trainer-export state_dict layout.
++# Off by default so vanilla flows that consume the canonical state dict
++# (sharded saves, dummy-weight init) are untouched; the tokenformer
++# adapter managers flip it on at construction, matching their own
++# process-lifetime scope. One-way by design: a process either serves
++# with the tokenformer subsystem or it doesn't.
++_scalarlm_state_dict_export = False
++
++
++def enable_scalarlm_state_dict_export() -> None:
++    global _scalarlm_state_dict_export
++    _scalarlm_state_dict_export = True
++
++
++def scalarlm_state_dict_export_enabled() -> bool:
++    return _scalarlm_state_dict_export
++
++
++def unpack_packed_modules_state_dict(
++    state_dict: dict[str, torch.Tensor],
++    *,
++    prefix: str,
++    packed_modules_mapping: Mapping[str, list[str]],
++    config: "PretrainedConfig",
++) -> dict[str, torch.Tensor]:
++    """Rewrite a state dict into the ScalarLM trainer's key layout.
++
++    Packed projections are split back into their per-projection HF names
++    (``qkv_proj`` -> ``q_proj``/``k_proj``/``v_proj`` with GQA-aware
++    sizes, other packed modules into equal chunks), and keys with no HF
++    checkpoint equivalent (fused-expert tensors, attention-scale
++    buffers) are dropped.
++
++    Only keys under ``prefix`` are touched. When the model is a
++    submodule of a wrapper (e.g. multimodal gemma3), torch's recursive
++    ``state_dict()`` hands over the shared, already-populated
++    destination dict; sibling modules such as a vision tower have their
++    own ``qkv_proj`` whose shape does not match this ``config``, and
++    rewriting those would crash in ``torch.split`` or silently corrupt
++    them. At the top level ``prefix`` is ``""`` and every key is in
++    scope.
++
++    Mutates ``state_dict`` in place and returns the same object — when
++    torch supplied a shared ``destination``, that exact dict must be
++    handed back.
++    """
++    from vllm.distributed.parallel_state import model_parallel_is_initialized
++
++    # Inside a running engine TP is always initialized; out-of-engine
++    # callers (unit tests, offline tooling) hold the full weights.
++    tp_size = (
++        get_tensor_model_parallel_world_size() if model_parallel_is_initialized() else 1
++    )
++
++    def _qkv_split_sizes() -> list[int]:
++        num_heads = config.num_attention_heads // tp_size
++        num_kv_heads = max(1, config.num_key_value_heads // tp_size)
++        head_dim = getattr(config, "head_dim", None)
++        if head_dim is None:
++            head_dim = config.hidden_size // config.num_attention_heads
++        q_size = num_heads * head_dim
++        kv_size = num_kv_heads * head_dim
++        return [q_size, kv_size, kv_size]
++
++    def _split(tensor: torch.Tensor, packed_key: str, num_parts: int):
++        if packed_key == "qkv_proj":
++            # q, k, and v can have different sizes due to GQA.
++            return torch.split(tensor, _qkv_split_sizes(), dim=0)
++        # Other packed modules (like gate_up_proj) split equally.
++        return torch.chunk(tensor, num_parts, dim=0)
++
++    for packed_key, unpacked_keys in packed_modules_mapping.items():
++        suffixes = (f"{packed_key}.weight", f"{packed_key}.bias")
++        for key in list(state_dict.keys()):
++            if not key.startswith(prefix) or not key.endswith(suffixes):
++                continue
++            tensor = state_dict.pop(key)
++            logger.debug(
++                "Unpacking %s into %s, original size: %s",
++                key,
++                unpacked_keys,
++                tensor.shape,
++            )
++            parts = _split(tensor, packed_key, len(unpacked_keys))
++            for unpacked_key, part in zip(unpacked_keys, parts):
++                state_dict[key.replace(packed_key, unpacked_key)] = part
++
++    for key in list(state_dict.keys()):
++        if not key.startswith(prefix):
++            continue
++        if ".experts." in key or key.endswith(_STATE_DICT_SCALE_SUFFIXES):
++            del state_dict[key]
++
++    return state_dict
+diff --git a/vllm/third_party/flash_linear_attention/ops/solve_tril.py b/vllm/third_party/flash_linear_attention/ops/solve_tril.py
+index 93ef770be..ea8c85fa5 100644
+--- a/vllm/third_party/flash_linear_attention/ops/solve_tril.py
++++ b/vllm/third_party/flash_linear_attention/ops/solve_tril.py
+@@ -13,6 +13,7 @@ import os
+ import torch
+ 
+ from vllm.triton_utils import tl, triton
++from vllm.triton_utils.allocation import set_triton_allocator
+ 
+ from .index import prepare_chunk_indices
+ from .op import make_tensor_descriptor
+@@ -500,6 +501,12 @@ def solve_tril(
+     elif BT == 64:
+         merge_fn = merge_16x16_to_64x64_inverse_kernel
+ 
++    if is_tma_supported:
++        # These kernels construct TMA descriptors on-device via
++        # make_tensor_descriptor(), which needs a registered host-side
++        # allocator. Register vLLM's, pinned to this tensor's device.
++        set_triton_allocator(A.device)
++
+     merge_fn[NT, B * H](
+         A=A,
+         Ai=Ai,
+diff --git a/vllm/tokenformer/__init__.py b/vllm/tokenformer/__init__.py
+new file mode 100644
+index 000000000..d6c00e2e3
+--- /dev/null
++++ b/vllm/tokenformer/__init__.py
+@@ -0,0 +1,15 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++
++from .tokenformer_model_manager import (
++    TokenformerModel,
++    TokenformerModelManager,
++)
++from .tokenformer_surgeon import TokenformerAdapter, TokenformerSurgeon
++
++__all__ = [
++    "TokenformerSurgeon",
++    "TokenformerAdapter",
++    "TokenformerModel",
++    "TokenformerModelManager",
++]
+diff --git a/vllm/tokenformer/adapter_format.py b/vllm/tokenformer/adapter_format.py
+new file mode 100644
+index 000000000..fa0990fa4
+--- /dev/null
++++ b/vllm/tokenformer/adapter_format.py
+@@ -0,0 +1,326 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Adapter `.pt` file-format helpers.
++
++Both Tokenformer and LoRA adapters ship in the same `.pt` format: a torch
++checkpoint with a top-level `model_state_dict` key whose value is a
++`dict[str, Tensor]`. The *kind* of an adapter is determined by which keys
++are present:
++
++- Tokenformer: leaf keys ending in `tokenformer_k`, `tokenformer_v`, or
++  `tokenformer_p`, plus optional base weight overrides (e.g. embeddings,
++  norms, lm_head).
++- LoRA: keys whose path contains a `.lora_A.` or `.lora_B.` segment.
++
++A single file may contain both kinds; such a file is "hybrid".
++
++This module is pure dict/string logic so it can be unit-tested without
++torch, CUDA, or any model weights loaded.
++
++See `docs/design/hybrid_lora_tokenformer.md` §4.3.
++"""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++from pathlib import Path
++from typing import Any, Literal, TypeAlias
++
++AdapterKind: TypeAlias = Literal["tokenformer", "lora", "hybrid"]
++
++_TOKENFORMER_LEAF_SUFFIXES = (
++    "tokenformer_k",
++    "tokenformer_v",
++    "tokenformer_p",
++)
++
++_LORA_PATH_SEGMENTS = (
++    ".lora_A.",
++    ".lora_B.",
++)
++
++
++def normalize_lora_key(key: str) -> str:
++    """Normalize a training-side LoRA key toward vLLM's module shape.
++
++    The ScalarLM trainer exports HF-shaped keys with a
++    Gemma4ForConditionalGeneration + PeftModel + Gemma4ClippableLinear
++    stack, for example:
++
++        model.language_model.layers.0.self_attn.q_proj.lora_A.default.weight
++        model.vision_tower.encoder.layers.0.self_attn.q_proj.linear.lora_A.default.weight
++        model.embed_vision.embedding_projection.lora_A.default.weight
++
++    vLLM's Gemma4 module tree (verified via `named_modules()` on the
++    deployed model) is:
++
++        language_model.model.layers.<N>...      (extra `.model.` nesting
++                                                  inside language_model)
++        vision_tower.encoder.layers.<N>...      (no leading `model.`)
++        embed_vision.embedding_projection       (no leading `model.`)
++
++    For text-only causal LMs (including Qwen3 and Qwen3.5), the trainer
++    saves keys under the standard HF `model.layers.<N>...` prefix. That
++    already matches vLLM's module tree, so the prefix is preserved:
++
++        model.layers.0.self_attn.q_proj.lora_A.default.weight
++        → model.layers.0.self_attn.q_proj.lora_A.weight   (step 2 only)
++
++    Transformations (applied in order, all idempotent):
++
++      1. Top-level prefix fixup:
++         - `model.language_model.X` → `language_model.model.X`
++           (HF has `.language_model.layers`; vLLM has `.language_model.model.layers`.
++           Swap them.)
++         - `model.layers.X` → leave unchanged. Text-only causal-LM
++           module trees retain this prefix.
++         - `model.vision_tower.X`, `model.embed_vision.X`, etc.
++           (Gemma4 multimodal sub-modules) → strip leading `model.`
++           because vLLM does not nest these under a top-level `model.`.
++
++         Before LoRA construction, `PTWorkerLoRAManager` still resolves
++         either decoder prefix against the live model. That runtime step
++         is required for multimodal wrappers whose decoder is exposed as
++         `language_model.model.layers.*`, and avoids guessing from the
++         checkpoint alone.
++
++      2. PEFT PeftModel adapter-name segment:
++         - `.lora_A.default.weight` → `.lora_A.weight`
++         - `.lora_B.default.weight` → `.lora_B.weight`
++
++      3. Gemma4ClippableLinear wrapper segment:
++         - `.linear.lora_A.weight` → `.lora_A.weight`
++         - `.linear.lora_B.weight` → `.lora_B.weight`
++    """
++    # Step 1 — fix top-level prefix.
++    if key.startswith("model.language_model."):
++        # Gemma4 language tower: HF has `.language_model.layers`;
++        # vLLM has `.language_model.model.layers`.
++        key = "language_model.model." + key[len("model.language_model.") :]
++    elif key.startswith("model.") and not key.startswith("model.layers."):
++        # Gemma4 multimodal sub-modules (vision_tower, embed_vision, …):
++        # vLLM exposes these without the top-level `model.` wrapper.
++        # Text-only causal LMs retain `model.layers.*`; the live-model
++        # resolver promotes it when the decoder is in a multimodal wrapper.
++        key = key[len("model.") :]
++
++    # Step 2 — strip PEFT's PeftModel `.default` adapter-name segment.
++    key = key.replace(".lora_A.default.", ".lora_A.")
++    key = key.replace(".lora_B.default.", ".lora_B.")
++
++    # Step 3 — strip the Gemma4ClippableLinear `.linear` wrapper segment.
++    key = key.replace(".linear.lora_A.", ".lora_A.")
++    key = key.replace(".linear.lora_B.", ".lora_B.")
++    return key
++
++
++def normalize_lora_state_dict(lora_sd):
++    """Apply `normalize_lora_key` to every key in a state dict slice.
++
++    Returns a new dict; does not mutate the input. If two training
++    keys collapse to the same vLLM key (shouldn't happen in practice
++    since a given linear can only have one lora_A/B), raises.
++    """
++    out: dict = {}
++    for k, v in lora_sd.items():
++        nk = normalize_lora_key(k)
++        if nk in out:
++            raise ValueError(
++                f"LoRA key normalization collision: {k!r} and an earlier "
++                f"key both map to {nk!r}. Training-side keys are "
++                f"ambiguous."
++            )
++        out[nk] = v
++    return out
++
++
++def _leaf(key: str) -> str:
++    return key.rsplit(".", 1)[-1]
++
++
++def has_tokenformer_keys(state_dict_keys) -> bool:
++    """True iff any key looks like a tokenformer parameter."""
++    return any(_leaf(k) in _TOKENFORMER_LEAF_SUFFIXES for k in state_dict_keys)
++
++
++def has_lora_keys(state_dict_keys) -> bool:
++    """True iff any key looks like a LoRA parameter."""
++    return any(any(seg in k for seg in _LORA_PATH_SEGMENTS) for k in state_dict_keys)
++
++
++@dataclass(frozen=True)
++class AdapterClassification:
++    has_tokenformer: bool
++    has_lora: bool
++
++    @property
++    def kind(self) -> AdapterKind:
++        if self.has_tokenformer and self.has_lora:
++            return "hybrid"
++        if self.has_tokenformer:
++            return "tokenformer"
++        if self.has_lora:
++            return "lora"
++        raise ValueError(
++            "Adapter state dict contains neither tokenformer_{k,v,p} nor "
++            ".lora_A./.lora_B. keys — cannot classify. Check that the "
++            "adapter file was produced by a supported trainer."
++        )
++
++
++def classify_adapter(state_dict) -> AdapterClassification:
++    """Classify an adapter state dict by the keys it contains.
++
++    `state_dict` must be the inner mapping (the value at
++    `checkpoint['model_state_dict']`), not the raw checkpoint object.
++
++    Raises `ValueError` if the state dict contains neither kind of key.
++    """
++    keys = list(state_dict.keys()) if hasattr(state_dict, "keys") else list(state_dict)
++    return AdapterClassification(
++        has_tokenformer=has_tokenformer_keys(keys),
++        has_lora=has_lora_keys(keys),
++    )
++
++
++def split_adapter_state_dict(state_dict):
++    """Partition an adapter state dict into (tokenformer_sd, lora_sd).
++
++    - Keys whose leaf is `tokenformer_{k,v,p}` go to `tokenformer_sd`.
++    - Keys whose path contains `.lora_A.` or `.lora_B.` go to
++      `lora_sd`, with their names normalized via
++      `normalize_lora_key` (strips PEFT's `.default.` adapter-name
++      segment and any `.linear.` wrapper segment so the keys match
++      vLLM's parser expectations).
++    - Other keys (base weight overrides like `embed_tokens.weight`,
++      `lm_head.weight`, `input_layernorm.weight`, ...) are treated as
++      Tokenformer base-weight overrides and go to `tokenformer_sd`.
++      This matches today's TokenformerModelManager.activate_adapter
++      behavior where *any* non-LoRA key is copied into the base state
++      dict.
++
++    Returns two new dicts; does not mutate the input.
++    """
++    tokenformer_sd = {}
++    lora_sd_raw = {}
++    for k, v in state_dict.items():
++        if any(seg in k for seg in _LORA_PATH_SEGMENTS):
++            lora_sd_raw[k] = v
++        else:
++            tokenformer_sd[k] = v
++    lora_sd = normalize_lora_state_dict(lora_sd_raw)
++    return tokenformer_sd, lora_sd
++
++
++# --- .pt I/O ------------------------------------------------------------
++
++
++@dataclass(frozen=True)
++class LoadedAdapter:
++    """Result of loading and classifying a `.pt` adapter file.
++
++    `tokenformer_sd` and `lora_sd` together partition the raw
++    `model_state_dict`; each may be empty for a pure adapter of the
++    other kind. `metadata` holds any optional training-time values the
++    trainer chose to embed (e.g. `lora_alpha`, `use_rslora`) — empty
++    dict if the file predates metadata support.
++    """
++
++    kind: AdapterKind
++    tokenformer_sd: dict[str, Any]
++    lora_sd: dict[str, Any]
++    source_path: Path
++    metadata: dict[str, Any]
++
++
++def load_adapter_state_dict(
++    model_dir: str | Path,
++    *,
++    map_location: Any = None,
++) -> dict[str, Any]:
++    """Read the `model_state_dict` out of the first `.pt` in `model_dir`.
++
++    torch is imported lazily so this module can be imported on
++    CPU-only / non-ML machines (e.g. doc-build or lint CI).
++    """
++    state_dict, _ = _load_adapter_checkpoint(model_dir, map_location=map_location)
++    return state_dict
++
++
++def load_adapter_metadata(
++    model_dir: str | Path,
++    *,
++    map_location: Any = None,
++) -> dict[str, Any]:
++    """Read the optional `metadata` dict from the adapter `.pt`.
++
++    Returns `{}` if the file has no `metadata` key (older adapters).
++    The trainer embeds non-tensor metadata like `lora_alpha` and
++    `use_rslora` here so we can avoid ambiguous defaults on load.
++    """
++    _, metadata = _load_adapter_checkpoint(model_dir, map_location=map_location)
++    return metadata
++
++
++def _load_adapter_checkpoint(
++    model_dir: str | Path,
++    *,
++    map_location: Any = None,
++) -> tuple[dict[str, Any], dict[str, Any]]:
++    """Lower-level: load the `.pt`, return (model_state_dict, metadata)."""
++    model_dir = Path(model_dir)
++    files = sorted(model_dir.glob("*.pt"))
++    if not files:
++        raise FileNotFoundError(f"No .pt file found in {model_dir}")
++    checkpoint_file = files[0]
++
++    import torch  # lazy
++
++    if map_location is None:
++        # Default to CPU: with map_location=None torch restores tensors
++        # onto the device recorded at save time (e.g. the trainer's
++        # cuda:0), which under TP>1 would land every rank's copy on
++        # GPU 0. Consumers move tensors to their target device later.
++        map_location = "cpu"
++    checkpoint = torch.load(checkpoint_file, map_location=map_location)
++    if not isinstance(checkpoint, dict) or "model_state_dict" not in checkpoint:
++        got = (
++            list(checkpoint.keys())
++            if isinstance(checkpoint, dict)
++            else type(checkpoint).__name__
++        )
++        raise ValueError(
++            f"Adapter file {checkpoint_file} has no top-level "
++            f"'model_state_dict' key. Got: {got}"
++        )
++    metadata = checkpoint.get("metadata", {})
++    if not isinstance(metadata, dict):
++        raise ValueError(
++            f"Adapter file {checkpoint_file} has 'metadata' key but it is "
++            f"a {type(metadata).__name__}, expected dict."
++        )
++    return checkpoint["model_state_dict"], metadata
++
++
++def load_adapter_from_pt(
++    model_dir: str | Path,
++    *,
++    map_location: Any = None,
++) -> LoadedAdapter:
++    """Load + classify + split a `.pt` adapter.
++
++    Raises `FileNotFoundError` if no `.pt` is in `model_dir`,
++    `ValueError` if the file is malformed or contains neither
++    Tokenformer nor LoRA keys.
++    """
++    sd, metadata = _load_adapter_checkpoint(model_dir, map_location=map_location)
++    classification = classify_adapter(sd)
++    kind = classification.kind  # raises ValueError on neither
++    tk_sd, lora_sd = split_adapter_state_dict(sd)
++    return LoadedAdapter(
++        kind=kind,
++        tokenformer_sd=tk_sd,
++        lora_sd=lora_sd,
++        source_path=Path(model_dir).resolve(),
++        metadata=metadata,
++    )
+diff --git a/vllm/tokenformer/hybrid_adapter_manager.py b/vllm/tokenformer/hybrid_adapter_manager.py
+new file mode 100644
+index 000000000..2341a6280
+--- /dev/null
++++ b/vllm/tokenformer/hybrid_adapter_manager.py
+@@ -0,0 +1,508 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""HybridAdapterManager — dispatches adapter operations across a
++Tokenformer sub-manager and a LoRA sub-manager.
++
++`add_adapter` classifies the incoming `.pt` file (Tokenformer-only,
++LoRA-only, or hybrid) and registers each half with the appropriate
++sub-manager; at `set_active_adapters` time it fans out to both.
++
++See `docs/design/hybrid_lora_tokenformer.md`.
++"""
++
++from __future__ import annotations
++
++from contextlib import contextmanager
++from dataclasses import replace
++from typing import TYPE_CHECKING, Any
++
++from vllm.logger import init_logger
++from vllm.lora.utils import get_adapter_absolute_path
++from vllm.lora.worker_manager import LRUCacheWorkerLoRAManager
++from vllm.tokenformer.adapter_format import (
++    AdapterKind,
++    load_adapter_from_pt,
++)
++from vllm.tokenformer.lora_from_pt import load_lora_model_from_pt
++from vllm.tokenformer.tokenformer_model_manager import TokenformerModelManager
++
++if TYPE_CHECKING:
++    import torch
++    import torch.nn as nn
++
++    from vllm.config import VllmConfig
++    from vllm.lora.lora_model import LoRAModel
++    from vllm.lora.request import LoRARequest
++
++logger = init_logger(__name__)
++
++
++class PTWorkerLoRAManager(LRUCacheWorkerLoRAManager):
++    """LoRA worker manager that prefers ScalarLM's `.pt` adapter format
++    but falls back to upstream HF PEFT (`adapter_config.json +
++    adapter_model.safetensors`) when no `.pt` is in the adapter
++    directory.
++
++    Overrides `_load_adapter` only. Slot management, kernel setup, and
++    dummy-lora caching are inherited.
++    """
++
++    def _load_adapter(self, lora_request: LoRARequest) -> LoRAModel:
++        # Prefer `.pt`. If there's no .pt in the dir, delegate to the
++        # upstream PEFT path so users with standard HF LoRA checkpoints
++        # keep working on the same server.
++        from pathlib import Path
++
++        lora_path = get_adapter_absolute_path(lora_request.lora_path)
++        pt_files = list(Path(lora_path).glob("*.pt"))
++        if not pt_files:
++            logger.info(
++                "No .pt file in %s; falling back to upstream PEFT loader.",
++                lora_path,
++            )
++            return super()._load_adapter(lora_request)
++
++        loaded = load_adapter_from_pt(lora_path)
++        if not loaded.lora_sd:
++            raise ValueError(
++                f"Adapter at {loaded.source_path} has no LoRA tensors "
++                f"(found only Tokenformer keys). Serve with "
++                f"--enable-tokenformer instead, or as a hybrid adapter "
++                f"with both --enable-lora and --enable-tokenformer."
++            )
++        # Resolve decoder keys against the live model so the same .pt
++        # loader works for text-only models (`model.layers.*`, including
++        # Qwen3.5) and multimodal wrappers
++        # (`language_model.model.layers.*`, including Gemma4).
++        lora_sd = self._renormalize_lora_sd_for_model(loaded.lora_sd)
++        lora_model = load_lora_model_from_pt(
++            lora_sd,
++            lora_model_id=lora_request.adapter_id,
++            device=self.device,
++            dtype=(
++                self.lora_config.lora_dtype if self.lora_config is not None else None
++            ),
++            model_vocab_size=self.vocab_size,
++            metadata=loaded.metadata,
++            max_lora_rank=(
++                self.lora_config.max_lora_rank if self.lora_config is not None else None
++            ),
++        )
++        # Matches upstream's own _load_adapter: the flag comes from the
++        # request, not from anything this loader inspects in the .pt
++        # file, so copying it through costs nothing even if ScalarLM's
++        # .pt adapters never use the on-disk 3D MoE layout in practice.
++        lora_model.is_3d_lora_weight = lora_request.is_3d_lora_weight
++        self._warn_on_zero_base_match(lora_model, loaded.source_path)
++        return lora_model
++
++    def _detect_model_layers_prefix(self) -> str:
++        """Probe the live base model to find which prefix its decoder
++        layers use.  Returns the string that should replace the
++        training-side ``model.layers.`` prefix in LoRA keys.
++
++        Known variants:
++          - ``model.layers.`` — text-only causal LM (Qwen3, Qwen3.5)
++          - ``language_model.model.layers.`` — multimodal wrapper
++                                               (Gemma4, Qwen3.5-VL)
++
++        Falls back to ``model.layers.`` (the vLLM default) if the
++        model tree is not accessible.
++        """
++        try:
++            model = self._adapter_manager.model
++            candidates: list[str] = []
++            for name, _ in model.named_modules():
++                if name.endswith(".self_attn") or name.endswith(".mlp"):
++                    # Strip the layer suffix to get the layers container
++                    # e.g. "language_model.model.layers.0.self_attn"
++                    #   -> "language_model.model.layers."
++                    # or  "model.layers.0.self_attn"
++                    #   -> "model.layers."
++                    parts = name.split(".")
++                    try:
++                        layers_idx = next(
++                            i for i, p in enumerate(parts) if p == "layers"
++                        )
++                    except StopIteration:
++                        continue
++                    prefix = ".".join(parts[: layers_idx + 1]) + "."
++                    if prefix not in candidates:
++                        candidates.append(prefix)
++            if candidates:
++                # Prefer the TEXT-DECODER prefix. On multimodal models
++                # named_modules() also yields the vision tower (e.g.
++                # "vision_tower.encoder.layers.") which can be visited
++                # first; re-prefixing decoder LoRA keys onto it collides
++                # them with the real vision keys (the Gemma4 failure mode).
++                # The decoder prefix always ends in "model.layers." — top
++                # level for Qwen3, or "language_model.model.layers." for a
++                # VL-wrapped Gemma4 — whereas the vision tower does not.
++                for prefix in candidates:
++                    if prefix.endswith("model.layers."):
++                        logger.debug("Detected model layers prefix: %s", prefix)
++                        return prefix
++                logger.debug(
++                    "Detected model layers prefix (no decoder match): %s",
++                    candidates[0],
++                )
++                return candidates[0]
++        except Exception:
++            pass
++        logger.debug(
++            "Could not detect model layers prefix; defaulting to model.layers."
++        )
++        return "model.layers."
++
++    def _renormalize_lora_sd_for_model(self, lora_sd: dict) -> dict:
++        """Re-run key normalization using the live model's prefix.
++
++        ``adapter_format.normalize_lora_key`` preserves text-only
++        ``model.layers.*`` keys and converts HF multimodal
++        ``model.language_model.*`` keys to
++        ``language_model.model.*``. This method then detects the final
++        decoder prefix from the live model and applies it consistently.
++        Keeping this runtime resolution is important for multimodal
++        models, where a vision tower may also contain a ``layers`` tree.
++        """
++        target_prefix = self._detect_model_layers_prefix()
++        # target_prefix is e.g. "model.layers." or
++        # "language_model.model.layers."
++
++        out: dict = {}
++        for k, v in lora_sd.items():
++            # The key has already been through normalize_lora_key once
++            # (inside load_adapter_from_pt -> split_adapter_state_dict).
++            # Reduce either supported decoder prefix to a common form,
++            # then apply the live model's target prefix.
++
++            # Undo any previous prefix normalization: if the key starts
++            # with a known vLLM prefix that isn't the target, strip it
++            # back to bare "layers.*" then re-prefix.
++            KNOWN_PREFIXES = (
++                "language_model.model.layers.",
++                "model.layers.",
++            )
++            bare = k
++            for kp in KNOWN_PREFIXES:
++                if k.startswith(kp):
++                    bare = "layers." + k[len(kp) :]
++                    break
++
++            # Re-prefix with the correct target
++            if bare.startswith("layers."):
++                nk = target_prefix + bare[len("layers.") :]
++            else:
++                nk = k  # non-layers key (vision_tower, embed_vision, …)
++
++            if nk in out:
++                raise ValueError(
++                    f"LoRA key re-normalization collision: {k!r} and an "
++                    f"earlier key both map to {nk!r}."
++                )
++            out[nk] = v
++        return out
++
++    def _warn_on_zero_base_match(self, lora_model, source_path) -> None:
++        """If every parsed LoRA module path is missing from the base
++        model, the adapter will silently no-op at activation time (see
++        `LoRAModelManager.activate_adapter` — `module_lora` lookup
++        returns None and the slot is reset). That's the hardest
++        failure to debug because the adapter still "loads". Turn it
++        into a visible WARNING.
++
++        We're permissive: a single match is enough to silence the
++        warning. Partial matches (e.g. vision-tower keys landing on
++        modules we don't support) are expected and benign.
++        """
++        try:
++            base_modules = set(
++                n for n, _ in self._adapter_manager.model.named_modules()
++            )
++        except Exception:
++            # If we can't read the tree (e.g. _adapter_manager not yet
++            # wired during some tests), skip the check silently.
++            return
++
++        lora_modules = (
++            set(lora_model.loras.keys()) if hasattr(lora_model, "loras") else set()
++        )
++        if not lora_modules:
++            return
++
++        matches = lora_modules & base_modules
++        if matches:
++            return
++
++        # Zero overlap — classic prefix/rename mismatch. Show the
++        # caller a sample from each side so they can eyeball the
++        # transform that's missing.
++        sample_lora = sorted(lora_modules)[:3]
++        sample_base = sorted(m for m in base_modules if "self_attn" in m or "mlp" in m)[
++            :3
++        ]
++        logger.warning(
++            "LoRA adapter at %s loaded but NONE of its %d module paths "
++            "match the base model. The adapter will silently have no "
++            "effect at inference. Sample adapter keys: %s. Sample "
++            "base-model modules: %s. Check your trainer-side key "
++            "naming or add a rule to normalize_lora_key.",
++            source_path,
++            len(lora_modules),
++            sample_lora,
++            sample_base,
++        )
++
++
++class HybridAdapterManager:
++    """Manager that composes a Tokenformer sub-manager and a LoRA
++    sub-manager behind the same interface the runner mixin expects.
++    """
++
++    def __init__(
++        self,
++        model: nn.Module,
++        device: torch.device,
++        vllm_config: VllmConfig | None = None,
++    ):
++        """Instantiate both sub-managers.
++
++        Load order is LoRA layer replacement first, then the Tokenformer
++        surgeon. This yields the composition:
++
++            base(x) + lora_delta(x)  (inside the MLP block)
++            + tokenformer_delta(x)   (added by the surgeon wrapper)
++
++        When `vllm_config` is None (or `vllm_config.lora_config` is
++        None), the LoRA sub-manager is not instantiated and the manager
++        behaves like a pure Tokenformer manager. This compatibility path
++        is also useful to lightweight tests and legacy callers.
++        """
++        lora_enabled = vllm_config is not None and vllm_config.lora_config is not None
++
++        if lora_enabled:
++            assert vllm_config is not None  # implied by lora_enabled
++            # LoRA sub-manager replaces targeted linears with *WithLoRA
++            # wrappers, returning the transformed model. We then feed
++            # that into the Tokenformer surgeon.
++            self._lora: Any = PTWorkerLoRAManager(
++                vllm_config,
++                device,
++                model.embedding_modules,
++            )
++            model = self._lora.create_lora_manager(model, vllm_config)
++        else:
++            self._lora = None
++
++        self._tokenformer = TokenformerModelManager(model=model, device=device)
++        # adapter_id -> AdapterKind, so remove/activate can route correctly.
++        self._kinds: dict[int, AdapterKind] = {}
++
++    # --- model handle exposed to the runner -----------------------------
++
++    @property
++    def model(self) -> nn.Module:
++        # LoRA layer replacement runs first when enabled, followed by
++        # Tokenformer surgery. The Tokenformer sub-manager therefore owns
++        # the final model after both transformations.
++        return self._tokenformer.model
++
++    # --- adapter lifecycle ---------------------------------------------
++
++    def add_adapter(self, lora_request) -> bool:
++        """Classify the adapter, then route each half to its sub-manager.
++
++        A hybrid adapter's Tokenformer tensors go to the Tokenformer
++        manager; its LoRA tensors go to the LoRA manager. Both halves
++        share the same adapter id. `activate`/`set_active_adapters` use
++        `self._kinds` to fan out correctly.
++
++        The sub-managers each re-load the `.pt` file from disk. This is
++        redundant (we already classified once) but keeps their existing
++        interfaces intact. Passing pre-split dictionaries through would
++        be a separate performance optimization.
++        """
++        # Resolve like both sub-managers do (absolute/relative paths,
++        # HF-hub ids) — classification must open the same directory the
++        # sub-managers will load from.
++        lora_path = get_adapter_absolute_path(lora_request.lora_path)
++        loaded = load_adapter_from_pt(lora_path)
++        kind = loaded.kind
++        self._kinds[lora_request.adapter_id] = kind
++
++        # Tokenformer half.
++        if kind in ("tokenformer", "hybrid"):
++            self._tokenformer.add_adapter(lora_request)
++
++        # LoRA half.
++        if kind in ("lora", "hybrid"):
++            if self._lora is None:
++                self._kinds.pop(lora_request.adapter_id, None)
++                raise RuntimeError(
++                    f"Adapter {lora_request.adapter_id} at "
++                    f"{loaded.source_path} contains LoRA tensors, but the "
++                    f"HybridAdapterManager was constructed without a "
++                    f"LoRA-enabled vllm_config. Pass "
++                    f"--enable-lora alongside --enable-tokenformer."
++                )
++            try:
++                self._lora.add_adapter(lora_request)
++            except Exception:
++                # Don't leave a half-registered hybrid behind: a stale
++                # tokenformer half plus its _kinds entry would
++                # ghost-activate on later batches.
++                if kind == "hybrid":
++                    self._tokenformer.remove_adapter(lora_request.adapter_id)
++                self._kinds.pop(lora_request.adapter_id, None)
++                raise
++
++        return True
++
++    def remove_adapter(self, adapter_id: int) -> bool:
++        kind = self._kinds.pop(adapter_id, "tokenformer")
++        if kind in ("tokenformer", "hybrid"):
++            self._tokenformer.remove_adapter(adapter_id)
++        if kind in ("lora", "hybrid") and self._lora is not None:
++            self._lora.remove_adapter(adapter_id)
++        return True
++
++    def remove_all_adapters(self) -> None:
++        self._kinds.clear()
++        self._tokenformer.remove_all_adapters()
++        if self._lora is not None:
++            self._lora.remove_all_adapters()
++
++    def pin_adapter(self, adapter_id: int) -> bool:
++        kind = self._kinds.get(adapter_id)
++        if kind in ("tokenformer", "hybrid"):
++            self._tokenformer.pin_adapter(adapter_id)
++        if kind in ("lora", "hybrid") and self._lora is not None:
++            self._lora.pin_adapter(adapter_id)
++        return True
++
++    def list_adapters(self) -> set[int]:
++        """Union of adapter ids across both sub-managers.
++
++        TokenformerModelManager returns a `dict[int, Any]`; the LRU
++        LoRA worker manager returns a `set[int]`. Normalize to a set
++        so the union is sensible; hybrid adapters are naturally
++        de-duplicated. Returning a set matches upstream behavior, which
++        is what `LoRAModelRunnerMixin.list_adapters` forwards to API
++        callers.
++        """
++        ids: set[int] = set()
++        tk = self._tokenformer.list_adapters()
++        if tk is not None:
++            ids |= set(tk)  # works for both dict (keys) and set
++        if self._lora is not None:
++            lora = self._lora.list_adapters()
++            if lora is not None:
++                ids |= set(lora)
++        return ids
++
++    # --- per-step activation -------------------------------------------
++
++    def set_active_adapters(self, lora_requests, lora_mapping) -> None:
++        """Fan out to both sub-managers, filtering the LoRA side.
++
++        The Tokenformer sub-manager sees the full request set — it
++        skips ids it doesn't own (the guard from 6529423ba).
++
++        The LoRA sub-manager must NOT see pure-Tokenformer ids: its
++        inherited `_apply_adapters` lazily `_load_adapter`s every id it
++        hasn't registered, which raises "has no LoRA tensors" for a
++        Tokenformer-only `.pt`. Those ids are also zeroed out of the
++        token/prompt mappings (0 = no-LoRA) so `convert_mapping` never
++        looks up a LoRA slot for them. Ids absent from `_kinds` (dummy
++        warmup loras registered via `add_dummy_lora`, upstream-style
++        lazily-loaded LoRA requests) pass through untouched.
++        """
++        self._tokenformer.set_active_adapters(lora_requests, lora_mapping)
++        if self._lora is None:
++            return
++
++        tk_only_ids = {
++            adapter_id
++            for adapter_id, kind in self._kinds.items()
++            if kind == "tokenformer"
++        }
++        lora_side_requests = lora_requests
++        lora_side_mapping = lora_mapping
++        if tk_only_ids:
++            lora_side_requests = [
++                r for r in lora_requests if r.adapter_id not in tk_only_ids
++            ]
++            if lora_mapping is not None:
++                lora_side_mapping = replace(
++                    lora_mapping,
++                    index_mapping=tuple(
++                        0 if i in tk_only_ids else i for i in lora_mapping.index_mapping
++                    ),
++                    prompt_mapping=tuple(
++                        0 if i in tk_only_ids else i
++                        for i in lora_mapping.prompt_mapping
++                    ),
++                )
++        self._lora.set_active_adapters(lora_side_requests, lora_side_mapping)
++
++    def activate_adapter(self, adapter_id: int) -> bool:
++        kind = self._kinds.get(adapter_id, "tokenformer")
++        if kind in ("tokenformer", "hybrid"):
++            self._tokenformer.activate_adapter(adapter_id)
++        if kind in ("lora", "hybrid") and self._lora is not None:
++            self._lora.activate_adapter(adapter_id)
++        return True
++
++    def deactivate_adapter(self, adapter_id: int) -> bool:
++        kind = self._kinds.get(adapter_id, "tokenformer")
++        if kind in ("tokenformer", "hybrid"):
++            self._tokenformer.deactivate_adapter(adapter_id)
++        if kind in ("lora", "hybrid") and self._lora is not None:
++            self._lora.deactivate_adapter(adapter_id)
++        return True
++
++    # --- warmup plumbing ------------------------------------------------
++
++    @contextmanager
++    def dummy_lora_cache(self):
++        with self._tokenformer.dummy_lora_cache():
++            if self._lora is not None:
++                with self._lora.dummy_lora_cache():
++                    yield
++            else:
++                yield
++
++    def add_dummy_lora(self, lora_request, rank: int = 8) -> bool:
++        """Register the dummy with both sub-managers when both are present.
++
++        Tokenformer's `add_dummy_lora` is a no-op that exists purely to
++        satisfy the warmup path. The LRU LoRA sub-manager, however,
++        actually registers a rank-`rank` zero adapter at a slot — that
++        registration is load-bearing for cudagraph profiling of the
++        LoRA kernels. If we only forward to Tokenformer, the LoRA-side
++        cudagraph capture runs without any dummy in the slots and
++        misses the LoRA path entirely.
++        """
++        self._tokenformer.add_dummy_lora(lora_request, rank=rank)
++        if self._lora is not None:
++            self._lora.add_dummy_lora(lora_request, rank=rank)
++        return True
++
++    def get_dummy_lora_warmup_rank(self, default_rank: int) -> int:
++        """Warmup-rank hook from the worker-manager interface.
++
++        The LoRA sub-manager is the one that actually registers dummy
++        adapters (and may bump the rank, e.g. for fully-sharded MoE
++        LoRA), so delegate when it exists. Tokenformer ignores the
++        rank entirely.
++        """
++        if self._lora is not None:
++            return self._lora.get_dummy_lora_warmup_rank(default_rank)
++        return default_rank
++
++    # --- misc -----------------------------------------------------------
++
++    def supports_tower_connector_lora(self) -> bool:
++        if self._lora is not None:
++            return self._lora.supports_tower_connector_lora()
++        return False
+diff --git a/vllm/tokenformer/lora_from_pt.py b/vllm/tokenformer/lora_from_pt.py
+new file mode 100644
+index 000000000..c8e4e67ef
+--- /dev/null
++++ b/vllm/tokenformer/lora_from_pt.py
+@@ -0,0 +1,215 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Build a vLLM `LoRAModel` from a ScalarLM `.pt` state-dict slice.
++
++Upstream vLLM expects HF PEFT format (adapter_config.json +
++adapter_model.safetensors). ScalarLM trains and serves both Tokenformer
++and LoRA adapters in a single `.pt` file whose inner
++`model_state_dict` contains `lora_A` / `lora_B` tensors. This module
++bridges the two: given the LoRA half of a split state dict (from
++`adapter_format.split_adapter_state_dict`), it infers rank / alpha from
++tensor shapes and hands a `LoRAModel` back.
++
++See `docs/design/hybrid_lora_tokenformer.md` — this is the pure-logic
++loader `hybrid_adapter_manager.py`'s `PTWorkerLoRAManager` calls.
++"""
++
++from __future__ import annotations
++
++from typing import TYPE_CHECKING, Any
++
++from vllm.logger import init_logger
++from vllm.lora.lora_model import LoRAModel
++from vllm.lora.peft_helper import PEFTHelper
++
++if TYPE_CHECKING:
++    import torch
++
++logger = init_logger(__name__)
++
++
++def infer_lora_rank(lora_sd: dict[str, Any]) -> int:
++    """Infer LoRA rank from the shapes of lora_A tensors.
++
++    `lora_A.weight` has shape `(rank, in_features)` by construction
++    (see vllm/lora/lora_weights.py). We look across every lora_A tensor
++    in the state dict and require a single consistent rank — mixing
++    ranks within one adapter is not supported.
++
++    Raises `ValueError` if the state dict has no lora_A tensors, or if
++    multiple distinct ranks are found.
++    """
++    ranks_by_key: dict[str, int] = {}
++    for key, tensor in lora_sd.items():
++        if ".lora_A." in key:
++            # MoE expert LoRA tensors (PEFT fused format: `experts.base_layer`
++            # = gate_up_proj, `experts` = down_proj) stack the adapter rank with
++            # num_experts (and the gate/up split) into the leading dim, so
++            # `shape[0]` is rank × num_experts × parts, NOT the adapter rank. A
++            # Qwen3MoE adapter therefore shows e.g. {8 (attn), 64, 128 (experts)}
++            # and the old single-rank check raised "Inconsistent LoRA ranks".
++            # Infer the rank from the standard (non-expert) lora_A tensors, whose
++            # leading dim is the true rank; vLLM's FusedMoEWithLoRA reconstructs
++            # the per-expert rank from the stacked tensors downstream.
++            if ".experts" in key:
++                continue
++            try:
++                rank = int(tensor.shape[0])
++            except (AttributeError, TypeError, IndexError) as exc:
++                raise ValueError(
++                    f"Cannot read shape[0] of tensor at {key!r} to infer rank"
++                ) from exc
++            ranks_by_key[key] = rank
++
++    if not ranks_by_key:
++        raise ValueError(
++            "No lora_A tensors found — cannot infer rank from state dict. "
++            "(Expert `.experts` lora_A tensors are excluded from rank inference "
++            "because they stack rank×num_experts in the leading dim.)"
++        )
++
++    unique_ranks = set(ranks_by_key.values())
++    if len(unique_ranks) != 1:
++        raise ValueError(
++            f"Inconsistent LoRA ranks across lora_A tensors: "
++            f"{sorted(unique_ranks)}. Per-layer rank variation is not "
++            f"supported. Offending keys: {sorted(ranks_by_key.keys())[:5]}…"
++        )
++    rank = unique_ranks.pop()
++    if rank <= 0:
++        raise ValueError(
++            f"Inferred LoRA rank is {rank}; expected a positive integer. "
++            f"Check the training-side export."
++        )
++    return rank
++
++
++def build_peft_helper_from_pt(
++    lora_sd: dict[str, Any],
++    *,
++    lora_alpha: int | None = None,
++    lora_alpha_multiplier: float = 2.0,
++    use_rslora: bool | None = None,
++    metadata: dict[str, Any] | None = None,
++) -> PEFTHelper:
++    """Construct a minimal `PEFTHelper` from a LoRA-only state dict slice.
++
++    `.pt` adapters don't carry the sidecar `adapter_config.json` that
++    PEFT ships with, so we infer what we can from tensor shapes and
++    accept the rest via either an explicit kwarg or a `metadata` dict
++    embedded in the `.pt` file.
++
++    Resolution order for `lora_alpha` / `use_rslora`:
++      1. Explicit kwarg — `None` means "not specified", so an explicit
++         `use_rslora=False` really does override metadata.
++      2. Value in `metadata` (what the trainer wrote into the `.pt`),
++         type-checked: `use_rslora` must be a real bool (a trainer
++         writing the *string* "false" would otherwise enable RS-LoRA
++         via truthiness) and `lora_alpha` a real number.
++      3. Default (`rank * lora_alpha_multiplier`, `use_rslora=False`).
++
++    A warning is logged when the default is used — silently guessing
++    alpha would produce a LoRA delta that's the wrong strength.
++    """
++    r = infer_lora_rank(lora_sd)
++    metadata = metadata or {}
++
++    if lora_alpha is None:
++        meta_alpha = metadata.get("lora_alpha")
++        if meta_alpha is not None:
++            if isinstance(meta_alpha, bool) or not isinstance(meta_alpha, (int, float)):
++                raise ValueError(
++                    f"metadata['lora_alpha'] must be a number, got "
++                    f"{type(meta_alpha).__name__}: {meta_alpha!r}"
++                )
++            lora_alpha = int(meta_alpha)
++        else:
++            lora_alpha = int(r * lora_alpha_multiplier)
++            logger.warning(
++                "LoRA adapter has no `lora_alpha` in its metadata; "
++                "defaulting to rank * %g = %d. If the adapter was trained "
++                "with a different alpha the delta will be scaled incorrectly. "
++                "Bake `lora_alpha` into the .pt metadata dict to silence "
++                "this warning.",
++                lora_alpha_multiplier,
++                lora_alpha,
++            )
++
++    # use_rslora: explicit arg wins (including explicit False);
++    # otherwise honor metadata; otherwise default False.
++    if use_rslora is None:
++        meta_rslora = metadata.get("use_rslora", False)
++        if not isinstance(meta_rslora, bool):
++            raise ValueError(
++                f"metadata['use_rslora'] must be a bool, got "
++                f"{type(meta_rslora).__name__}: {meta_rslora!r}"
++            )
++        use_rslora = meta_rslora
++
++    return PEFTHelper(
++        r=r,
++        lora_alpha=lora_alpha,
++        target_modules=[],
++        use_rslora=use_rslora,
++    )
++
++
++def load_lora_model_from_pt(
++    lora_sd: dict[str, Any],
++    *,
++    lora_model_id: int,
++    device: str | torch.device = "cuda",
++    dtype: torch.dtype | None = None,
++    model_vocab_size: int | None = None,
++    peft_helper: PEFTHelper | None = None,
++    metadata: dict[str, Any] | None = None,
++    max_lora_rank: int | None = None,
++) -> LoRAModel:
++    """Build a `LoRAModel` from a LoRA-only `.pt` state-dict slice.
++
++    Callers are expected to have already partitioned a hybrid `.pt`
++    into its tokenformer and lora halves via
++    `adapter_format.split_adapter_state_dict` before calling this.
++
++    If `peft_helper` is None, one is built from tensor shapes +
++    metadata via `build_peft_helper_from_pt`.
++
++    If `max_lora_rank` is provided, we validate that the adapter's
++    rank fits before handing tensors to vLLM. vLLM pre-allocates
++    stacked LoRA slots sized `max_lora_rank × in_features`; if the
++    adapter rank exceeds that, `set_lora` fails deep in
++    `LoRALayer.copy_(…)` with a cryptic shape mismatch. Catching it
++    here gives operators a clear pointer to `--max-lora-rank`.
++    """
++    if not lora_sd:
++        raise ValueError("lora_sd is empty — nothing to load.")
++    if peft_helper is None:
++        peft_helper = build_peft_helper_from_pt(lora_sd, metadata=metadata)
++
++    if max_lora_rank is not None and peft_helper.r > max_lora_rank:
++        raise ValueError(
++            f"LoRA adapter {lora_model_id} has rank={peft_helper.r}, which "
++            f"exceeds the server's configured max_lora_rank={max_lora_rank}. "
++            f"vLLM pre-allocates LoRA slots at the configured max, so "
++            f"applying this adapter would silently corrupt tensors. Fix by "
++            f"passing `--max-lora-rank={peft_helper.r}` (or larger — valid "
++            f"values: 1, 8, 16, 32, 64, 128, 256, 320, 512) on the server "
++            f"command line."
++        )
++
++    logger.info(
++        "Loading LoRA adapter %s from .pt state-dict slice: "
++        "rank=%d, alpha=%d, %d tensors.",
++        lora_model_id,
++        peft_helper.r,
++        peft_helper.lora_alpha,
++        len(lora_sd),
++    )
++    return LoRAModel.from_lora_tensors(
++        lora_model_id=lora_model_id,
++        tensors=lora_sd,
++        peft_helper=peft_helper,
++        device=str(device),
++        dtype=dtype,
++        model_vocab_size=model_vocab_size,
++    )
+diff --git a/vllm/tokenformer/tokenformer_model_manager.py b/vllm/tokenformer/tokenformer_model_manager.py
+new file mode 100644
+index 000000000..b153ce7e6
+--- /dev/null
++++ b/vllm/tokenformer/tokenformer_model_manager.py
+@@ -0,0 +1,337 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++import copy
++import os
++from collections.abc import Callable
++from contextlib import contextmanager
++from pathlib import Path
++from typing import Any
++
++import torch
++from torch import nn
++
++from vllm.logger import init_logger
++from vllm.lora.utils import get_adapter_absolute_path, get_lora_id
++from vllm.model_executor.model_loader.utils import process_weights_after_loading
++from vllm.model_executor.models import supports_tokenformer
++from vllm.model_executor.models.utils import enable_scalarlm_state_dict_export
++from vllm.tokenformer.tokenformer_surgeon import (
++    TokenformerSurgeon,
++)
++
++logger = init_logger(__name__)
++
++
++class TokenformerModel:
++    """A tokenformer pre-trained model."""
++
++    def __init__(self, tokenformers: dict[str, torch.Tensor]) -> None:
++        self.id = get_lora_id()
++        self.tokenformers = tokenformers
++
++    @classmethod
++    def from_local_checkpoint(
++        cls, model_dir: str, device: torch.device
++    ) -> "TokenformerModel":
++        # Find all .pt files in the directory. Sorted, so a directory
++        # with several checkpoints picks the same file as the
++        # classifier in adapter_format (Path.glob order is
++        # filesystem-dependent).
++        files = sorted(Path(model_dir).glob("*.pt"))
++
++        if len(files) == 0:
++            raise FileNotFoundError(f"No .pt file found in {model_dir}")
++
++        checkpoint_file = files[0]
++
++        tokenformers = {}
++        state_dict = torch.load(checkpoint_file, map_location=device)
++        module_state_dict = state_dict["model_state_dict"]
++        for module, tensor in module_state_dict.items():
++            logger.info("Loading %s from %s", module, checkpoint_file)
++            tokenformers[module] = tensor.to(device)
++
++        return cls(tokenformers)
++
++
++class TokenformerModelManager:
++    """A manager that manages tokenformer models."""
++
++    def __init__(
++        self,
++        model: nn.Module,
++        device: torch.device,
++    ):
++        # The activate/deactivate round-trip (state_dict -> load_weights)
++        # and the ScalarLM trainer contract need the export layout
++        # (unpacked projections, expert/scale tensors dropped). The
++        # model-side state_dict overrides stay canonical unless this
++        # manager exists, so vanilla flows (sharded saves, dummy init)
++        # are unaffected.
++        enable_scalarlm_state_dict_export()
++
++        if supports_tokenformer(model):
++            self.model = TokenformerSurgeon(model, device).insert_adapter_modules()
++        else:
++            logger.warning(
++                "%s does not declare SupportsTokenformer; skipping "
++                "tokenformer surgery. Adapters served on this model will "
++                "only apply base-weight overrides — any tokenformer_{k,v,p} "
++                "tensors in the adapter will have no effect.",
++                type(model).__name__,
++            )
++            self.model = model
++
++        self._registered_adapters: dict[int, Any] = {}
++        self._active_adapter: Any = None
++        self.tokenformer_model_cls = TokenformerModel
++        self.dtype = next(self.model.parameters()).dtype
++        self.device = device
++        self.original_tensors: dict[str, torch.Tensor] = {}
++        self._lru_adaptor_ids: list[int] = []
++
++    def activate_adapter(self, adapter_id: int) -> bool:
++        assert adapter_id in self._registered_adapters, (
++            f"Adapter {adapter_id} not found"
++        )
++
++        if adapter_id == self._active_adapter:
++            logger.info("Tokenformer %s is already active", adapter_id)
++            return False
++
++        self.update_lru_position(adapter_id)
++
++        logger.info("Activating Tokenformer - %s", adapter_id)
++
++        model_state_dict = self.model.state_dict()
++
++        tokenformers = self._registered_adapters[adapter_id].tokenformers
++
++        # Save original tensors if not already saved
++        for key in tokenformers:
++            if key not in self.original_tensors:
++                logger.info(
++                    "Saving original tensor %s before loading adapter %s",
++                    key,
++                    adapter_id,
++                )
++                if key in model_state_dict:
++                    self.original_tensors[key] = copy.deepcopy(model_state_dict[key])
++
++        for key, value in self.original_tensors.items():
++            logger.info("Loading original tensor %s from adapter %s", key, adapter_id)
++            model_state_dict[key] = value
++
++        for key, value in tokenformers.items():
++            logger.info("Loading %s from adapter %s", key, adapter_id)
++            if "lora" in key:
++                continue
++
++            model_state_dict[key] = value
++
++        self.model.load_weights(model_state_dict.items())
++        process_weights_after_loading(self.model, self.model.model_config, self.device)
++
++        self._active_adapter = adapter_id
++
++        return True
++
++    def update_lru_position(self, adapter_id: int) -> None:
++        if adapter_id in self._lru_adaptor_ids:
++            self._lru_adaptor_ids.remove(adapter_id)
++        self._lru_adaptor_ids.append(adapter_id)
++
++    def deactivate_adapter(self, adapter_id: int) -> bool:
++        return self._deactivate_adapter(adapter_id)
++
++    def _deactivate_adapter(self, adapter_id: int):
++        logger.info("Deactivating Tokenformer - %s", adapter_id)
++        model_state_dict = self.model.state_dict()
++        tokenformers = self._registered_adapters[adapter_id].tokenformers
++
++        for key in tokenformers:
++            if "tokenformer_p" in key:
++                nn.init.zeros_(model_state_dict[key])
++
++        for key, value in self.original_tensors.items():
++            logger.info(
++                "Restoring original tensor %s after deactivating adapter %s",
++                key,
++                adapter_id,
++            )
++            model_state_dict[key] = self.original_tensors[key]
++
++        self.model.load_weights(model_state_dict.items())
++        process_weights_after_loading(self.model, self.model.model_config, self.device)
++
++    def add_adapter(self, request) -> bool:
++        lora_path = get_adapter_absolute_path(request.lora_path)
++        tokenformer = self.tokenformer_model_cls.from_local_checkpoint(
++            lora_path, device=self.device
++        )
++
++        if len(self._registered_adapters) >= self.capacity:
++            # Remove the least recently used adapter
++            lru_adapter_id = self._lru_adaptor_ids.pop(0)
++            self.remove_adapter(lru_adapter_id)
++
++        self._registered_adapters[request.adapter_id] = tokenformer
++        self._lru_adaptor_ids.append(request.adapter_id)
++
++        logger.info("Adapter %s added", request.adapter_id)
++
++        return True
++
++    def supports_tower_connector_lora(self):
++        return False
++
++    def set_active_adapters(self, lora_requests, lora_mapping):
++        if len(lora_requests) == 0:
++            self.deactivate_all_adapters()
++        else:
++            for request in lora_requests:
++                # add_dummy_lora is a no-op for tokenformer, so warmup
++                # requests reach here with ids that were never registered.
++                # Skip them instead of asserting in activate_adapter.
++                if request.adapter_id not in self._registered_adapters:
++                    logger.debug(
++                        "Skipping activation of unregistered adapter "
++                        "%s (likely a dummy warmup LoRA)",
++                        request.adapter_id,
++                    )
++                    continue
++                self.activate_adapter(request.adapter_id)
++
++    def set_adapter_mapping(self, mapping: Any) -> None:
++        pass
++
++    def remove_adapter(self, adapter_id: int) -> bool:
++        return remove_adapter(
++            adapter_id, self._registered_adapters, self._remove_adapter
++        )
++
++    def _remove_adapter(self, adapter_id: int) -> None:
++        if adapter_id not in self._registered_adapters:
++            logger.warning("Adapter %s not found", adapter_id)
++            return
++
++        if adapter_id == self._active_adapter:
++            self.deactivate_adapter(adapter_id)
++            # Clear the active marker, or the next empty-batch
++            # deactivate_all_adapters() would deactivate this id again
++            # after it's gone from the registry and hit a KeyError.
++            self._active_adapter = None
++
++        del self._registered_adapters[adapter_id]
++        # Keep LRU accounting in sync for externally-driven removals,
++        # or capacity eviction later pops a stale id and evicts nothing.
++        if adapter_id in self._lru_adaptor_ids:
++            self._lru_adaptor_ids.remove(adapter_id)
++        logger.info("Adapter %s removed", adapter_id)
++
++    def deactivate_all_adapters(self) -> None:
++        if self._active_adapter is not None:
++            self.deactivate_adapter(self._active_adapter)
++        self._active_adapter = None
++
++    def remove_all_adapters(self) -> None:
++        # Only the active adapter has weights applied to the model, so
++        # deactivating just that one is enough (deactivating every
++        # registered adapter reloaded the full model once per entry).
++        self.deactivate_all_adapters()
++        self._registered_adapters.clear()
++        self._lru_adaptor_ids.clear()
++
++    def get_adapter(self, adapter_id: int) -> Any | None:
++        return self._registered_adapters.get(adapter_id)
++
++    def list_adapters(self) -> set[int]:
++        # The worker-manager contract (and the engine's list_loras RPC)
++        # wants a set of adapter ids, not the id -> TokenformerModel
++        # mapping — the model objects carry tensors and don't belong on
++        # the control plane.
++        return set(self._registered_adapters)
++
++    def pin_adapter(self, adapter_id: int) -> bool:
++        logger.debug(
++            "Pinning is not supported for tokenformer adapters; "
++            "adapter %s stays subject to LRU eviction.",
++            adapter_id,
++        )
++        return False
++
++    @property
++    def capacity(self) -> int:
++        return int(os.getenv("TOKENFORMER_CACHE_CAPACITY", "4"))
++
++    @property
++    def adapter_slots(self) -> int:
++        return self.capacity
++
++    @contextmanager
++    def dummy_lora_cache(self):
++        """Context manager for dummy LoRA cache during warmup."""
++        # Simple pass-through context manager: tokenformer needs no
++        # special cache handling.
++        yield
++
++    def add_dummy_lora(self, lora_request, rank: int = 8):
++        """Add a dummy LoRA for warmup purposes.
++
++        Args:
++            lora_request: The LoRA request object
++            rank: The rank for the dummy LoRA (default 8)
++        """
++        # Tokenformer doesn't need to actually add dummy LoRAs, just accept the call
++        logger.debug(
++            "Adding dummy LoRA %s with rank %s (no-op for tokenformer)",
++            lora_request.lora_name,
++            rank,
++        )
++        pass
++
++    def get_dummy_lora_warmup_rank(self, default_rank: int) -> int:
++        """Warmup-rank hook from the worker-manager interface.
++
++        `add_dummy_lora` is a no-op for tokenformer, so the rank never
++        matters here; return the caller's default unchanged.
++        """
++        return default_rank
++
++
++def add_adapter(
++    adapter: Any,
++    registered_adapters: dict[int, Any],
++    capacity: int,
++    add_func: Callable[[Any], Any],
++) -> bool:
++    if adapter.id not in registered_adapters:
++        if len(registered_adapters) >= capacity:
++            raise RuntimeError("No free adapter slots.")
++        add_func(adapter)
++        registered_adapters[adapter.id] = adapter
++        return True
++    return False
++
++
++def deactivate_adapter(
++    adapter_id: int,
++    active_adapters: dict[int, None],
++    deactivate_func: Callable[[int], Any],
++) -> bool:
++    if adapter_id in active_adapters:
++        deactivate_func(adapter_id)
++        active_adapters.pop(adapter_id)
++        return True
++    return False
++
++
++def remove_adapter(
++    adapter_id: int,
++    registered_adapters: dict[int, Any],
++    deactivate_func: Callable[[int], Any],
++) -> bool:
++    if adapter_id not in registered_adapters:
++        return False
++    deactivate_func(adapter_id)
++    return True
+diff --git a/vllm/tokenformer/tokenformer_surgeon.py b/vllm/tokenformer/tokenformer_surgeon.py
+new file mode 100644
+index 000000000..1f4f2e8b5
+--- /dev/null
++++ b/vllm/tokenformer/tokenformer_surgeon.py
+@@ -0,0 +1,214 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++
++import math
++import os
++
++import torch
++from torch import nn
++
++from vllm.logger import init_logger
++
++logger = init_logger(__name__)
++
++
++class TokenformerAdapter(nn.Module):
++    def __init__(self, layer, hidden_size, device):
++        super().__init__()
++        self.layer = layer
++        self.hidden_size = hidden_size
++        self.num_heads = int(os.getenv("TOKENFORMER_NUM_HEADS", "4"))
++        self.tokenformer_r = int(os.getenv("TOKENFORMER_R", "32"))
++        # Use a floating-point dtype so parameters can carry gradients. Under
++        # quantized loading (e.g. NVFP4) the base layer's weight dtype is an
++        # integer packed type, which would make `nn.Parameter(requires_grad=True)`
++        # fail with "Only Tensors of floating point and complex dtype can
++        # require gradients". Fall back to float32 if the layer dtype is usable.
++        layer_dtype = next(layer.parameters()).dtype
++        self.dtype = layer_dtype if layer_dtype.is_floating_point else torch.bfloat16
++
++        self.tokenformer_k = nn.Parameter(
++            torch.zeros(
++                self.num_heads, self.hidden_size, device=device, dtype=self.dtype
++            )
++        )
++        self.tokenformer_v = nn.Parameter(
++            torch.zeros(
++                self.num_heads,
++                self.hidden_size * self.tokenformer_r,
++                device=device,
++                dtype=self.dtype,
++            )
++        )
++
++        self.tokenformer_p = nn.Parameter(
++            torch.zeros(
++                self.tokenformer_r, self.hidden_size, device=device, dtype=self.dtype
++            )
++        )
++
++        self.reset_parameters()
++
++    def reset_parameters(self):
++        k_gain = 3.0 / math.sqrt(self.hidden_size / self.num_heads)
++        v_gain = 3.0 / math.sqrt(self.hidden_size)
++
++        k_init_tensor = torch.empty_like(self.tokenformer_k, dtype=torch.bfloat16)
++        torch.nn.init.normal_(k_init_tensor, std=k_gain)
++        self.tokenformer_k.data.copy_(k_init_tensor)
++
++        v_init_tensor = torch.empty_like(self.tokenformer_v, dtype=torch.bfloat16)
++        torch.nn.init.uniform_(v_init_tensor, a=-v_gain, b=v_gain)
++        self.tokenformer_v.data.copy_(v_init_tensor)
++
++        p_init_tensor = torch.empty_like(self.tokenformer_p, dtype=torch.bfloat16)
++        torch.nn.init.zeros_(p_init_tensor)
++        self.tokenformer_p.data.copy_(p_init_tensor)
++
++    def forward(self, hidden_states: torch.Tensor, *args, **kwargs) -> torch.Tensor:
++        all_base_layer_results = self.layer(hidden_states, *args, **kwargs)
++
++        tokenformer_results = self.tokenformer_op(hidden_states)
++
++        if isinstance(all_base_layer_results, tuple):
++            base_layer_results = all_base_layer_results[0]
++        else:
++            base_layer_results = all_base_layer_results
++
++        # sum the two outputs
++        layer_and_adapter_sum = base_layer_results + tokenformer_results
++
++        if isinstance(all_base_layer_results, tuple):
++            results = (layer_and_adapter_sum,) + all_base_layer_results[1:]
++        else:
++            results = layer_and_adapter_sum
++
++        return results
++
++    def tokenformer_op(self, query: torch.Tensor) -> torch.Tensor:
++        q = query.view(
++            -1, self.num_heads, self.hidden_size // self.num_heads
++        ).transpose(0, 1)
++        k = self.tokenformer_k.view(
++            -1, self.num_heads, self.hidden_size // self.num_heads
++        ).transpose(0, 1)
++        v = self.tokenformer_v.view(
++            -1, self.num_heads, self.hidden_size * self.tokenformer_r // self.num_heads
++        ).transpose(0, 1)
++
++        result = torch.nn.functional.scaled_dot_product_attention(
++            query=q,
++            key=k,
++            value=v,
++            attn_mask=None,
++            dropout_p=0.0,
++            is_causal=False,  # should be false for tokenformer
++        )
++
++        proj_down = (
++            result.transpose(0, 1)
++            .contiguous()
++            .view([-1, self.hidden_size, self.tokenformer_r])
++        )
++
++        # tokenformer_p dims are [tokenformer_r, hidden_size]
++        # query dims are [batch size, length, 1, hidden_size]
++        # proj_down are [batch size, length, hidden_size, tokenformer_r]
++
++        query_batch = query.view([-1, 1, self.hidden_size])
++
++        # logger.info(f"query shape: {query.shape}")
++        # logger.info(f"query batch shape: {query_batch.shape}")
++        # logger.info(f"proj_down shape: {proj_down.shape}")
++        # logger.info(f"tokenformer_p shape: {self.tokenformer_p.shape}")
++
++        result = torch.bmm(query_batch, proj_down) @ self.tokenformer_p
++
++        # logger.info(f"result shape: {result.shape}")
++
++        return result.view(query.shape)
++
++    # Visualize the size of the parameters
++    def __repr__(self):
++        return (
++            f"TokenformerAdapter(\nhidden_size={self.hidden_size}\n(layer): "
++            + self.layer.__repr__()
++            + "\n)"
++        )
++
++
++# Path components inside a multimodal wrapper that are NOT part of the
++# language model. Tokenformer is a language-model post-training adapter;
++# wrapping vision / audio tower MLPs would use the wrong hidden_size and
++# adapt parameters that aren't trained through the text loss.
++#
++# Match by path component so HF's `model.<thing>` wrapper prefix doesn't hide
++# them (e.g., "model.vision_tower.encoder.layers.0.mlp" must be excluded).
++_NON_LANGUAGE_PATH_COMPONENTS = frozenset(
++    {
++        "vision_tower",
++        "audio_tower",
++        "embed_vision",
++        "embed_audio",
++        "multi_modal_projector",
++    }
++)
++
++
++class TokenformerSurgeon:
++    def __init__(self, model: nn.Module, device: torch.device):
++        self.model = model
++        self.device = device
++
++    def _is_adapter_layer(self, layer_name):
++        parts = layer_name.split(".")
++        if any(part in _NON_LANGUAGE_PATH_COMPONENTS for part in parts):
++            return False
++        return "mlp" in parts[-1]
++
++    def _recursive_setattr(self, obj, attr, value):
++        attr = attr.split(".", 1)
++        if len(attr) == 1:
++            setattr(obj, attr[0], value)
++        else:
++            self._recursive_setattr(getattr(obj, attr[0]), attr[1], value)
++
++    def _get_language_hidden_size(self):
++        """Resolve the language model's hidden_size, tolerating multimodal
++        configs that nest the text config under `text_config`."""
++        if hasattr(self.model, "config"):
++            cfg = self.model.config
++            text_cfg = getattr(cfg, "text_config", None)
++            if text_cfg is not None and hasattr(text_cfg, "hidden_size"):
++                return text_cfg.hidden_size
++            if hasattr(cfg, "hidden_size"):
++                return cfg.hidden_size
++        if hasattr(self.model, "model_config"):
++            return self.model.model_config.hidden_size
++        return None
++
++    def update_layer(self, name, layer):
++        """Try to wrap the layer with a TokenformerAdapter."""
++        if not self._is_adapter_layer(name):
++            return
++
++        logger.info("Wrapping layer %s with TokenformerAdapter", name)
++
++        hidden_size = self._get_language_hidden_size()
++        if hidden_size is None:
++            logger.error("Model does not expose a language hidden_size")
++            return
++
++        # Wrap the layer with a TokenformerAdapter
++        self._recursive_setattr(
++            self.model,
++            name,
++            TokenformerAdapter(layer, hidden_size, device=self.device),
++        )
++
++    def insert_adapter_modules(self):
++        # Add tokenformer adapters for mlp and attention
++        for name, layer in self.model.named_modules():
++            self.update_layer(name, layer)
++
++        return self.model
+diff --git a/vllm/v1/engine/async_llm.py b/vllm/v1/engine/async_llm.py
+index f2142af2b..eb6573831 100644
+--- a/vllm/v1/engine/async_llm.py
++++ b/vllm/v1/engine/async_llm.py
+@@ -1295,6 +1295,32 @@ class AsyncLLM(EngineClient):
+     async def get_status(self):
+         return await self.engine_core.get_status()
+ 
++    async def get_current_kv_cache_size(self) -> int:
++        """Get the number of free KV cache tokens available.
++
++        Queries the v1 engine core; used by ScalarLM for dynamic batch
++        sizing. Engine/transport failures propagate — masking a dead
++        engine as "0 free tokens" would make the caller treat it as
++        ordinary cache pressure and retry forever instead of
++        triggering recovery.
++
++        Returns:
++            int: Number of free tokens available in KV cache
++        """
++        return await self.engine_core.get_free_kv_cache_tokens_async()
++
++    async def get_total_kv_cache_tokens(self) -> int:
++        """Get the total number of KV cache tokens configured.
++
++        Queries the v1 engine core; used by ScalarLM for dynamic batch
++        sizing. Engine/transport failures propagate — see
++        get_current_kv_cache_size.
++
++        Returns:
++            int: Total number of tokens available in KV cache
++        """
++        return await self.engine_core.get_total_kv_cache_tokens_async()
++
+     @property
+     def is_running(self) -> bool:
+         # Is None before the loop is started.
+diff --git a/vllm/v1/engine/core.py b/vllm/v1/engine/core.py
+index 35cc8cc18..bd496a60f 100644
+--- a/vllm/v1/engine/core.py
++++ b/vllm/v1/engine/core.py
+@@ -419,6 +419,77 @@ class EngineCore:
+         cache_config.effective_attention_block_size = (
+             block_sizes.pop() if len(block_sizes) == 1 else None
+         )
++    def get_free_kv_cache_tokens(self) -> int:
++        """Get the number of free KV cache tokens available.
++
++        This method queries the scheduler's KV cache manager to determine
++        how many tokens worth of KV cache memory is currently available.
++
++        Advisory heuristic only: uses KV cache group 0's block size (a
++        hybrid-cache model's other groups may differ), and with internal
++        DP load balancing the client aggregates only rank 0's value.
++
++        Returns:
++            int: Number of free tokens available in KV cache
++        """
++        if not hasattr(self.scheduler, "kv_cache_manager"):
++            logger.warning(
++                "get_free_kv_cache_tokens() no kv_cache_manager on scheduler."
++            )
++            return 0
++
++        kv_manager = self.scheduler.kv_cache_manager
++        if not hasattr(kv_manager, "block_pool") or not hasattr(
++            kv_manager, "kv_cache_config"
++        ):
++            logger.warning("get_free_kv_cache_tokens() no block_pool on kv_manager.")
++            return 0
++
++        # Get free blocks and convert to tokens
++        free_blocks = kv_manager.block_pool.get_num_free_blocks()
++        block_size = kv_manager.kv_cache_config.kv_cache_groups[
++            0
++        ].kv_cache_spec.block_size
++
++        if block_size is None:
++            return 0
++
++        return free_blocks * block_size
++
++    def get_total_kv_cache_tokens(self) -> int:
++        """Get the total number of KV cache tokens available.
++
++        This method queries the scheduler's KV cache manager to determine
++        how many tokens worth of KV cache memory is currently configured.
++
++        Advisory heuristic only — see get_free_kv_cache_tokens.
++
++        Returns:
++            int: Total number of tokens available in KV cache
++        """
++        if not hasattr(self.scheduler, "kv_cache_manager"):
++            logger.warning(
++                "get_total_kv_cache_tokens() no kv_cache_manager on scheduler."
++            )
++            return 0
++
++        kv_manager = self.scheduler.kv_cache_manager
++        if not hasattr(kv_manager, "block_pool") or not hasattr(
++            kv_manager, "kv_cache_config"
++        ):
++            logger.warning("get_total_kv_cache_tokens() no block_pool on kv_manager.")
++            return 0
++
++        # Get total blocks and convert to tokens
++        total_blocks = kv_manager.block_pool.num_gpu_blocks
++        block_size = kv_manager.kv_cache_config.kv_cache_groups[
++            0
++        ].kv_cache_spec.block_size
++
++        if block_size is None:
++            return 0
++
++        return total_blocks * block_size
+ 
+     def get_supported_tasks(self) -> tuple[SupportedTask, ...]:
+         supported_tasks = self.model_executor.supported_tasks
+diff --git a/vllm/v1/engine/core_client.py b/vllm/v1/engine/core_client.py
+index dccc8cba5..d9119c5ec 100644
+--- a/vllm/v1/engine/core_client.py
++++ b/vllm/v1/engine/core_client.py
+@@ -1376,6 +1376,14 @@ class AsyncMPClient(MPClient):
+     async def pin_lora_async(self, lora_id: int) -> bool:
+         return await self.call_utility_async("pin_lora", lora_id)
+ 
++    async def get_free_kv_cache_tokens_async(self) -> int:
++        """Get the number of free KV cache tokens available."""
++        return await self.call_utility_async("get_free_kv_cache_tokens")
++
++    async def get_total_kv_cache_tokens_async(self) -> int:
++        """Get the number of total KV cache tokens available."""
++        return await self.call_utility_async("get_total_kv_cache_tokens")
++
+     async def save_sharded_state_async(
+         self, path: str, pattern: str | None = None, max_size: int | None = None
+     ) -> None:
+diff --git a/vllm/v1/worker/lora_model_runner_mixin.py b/vllm/v1/worker/lora_model_runner_mixin.py
+index 9d94e62ed..c8792f267 100644
+--- a/vllm/v1/worker/lora_model_runner_mixin.py
++++ b/vllm/v1/worker/lora_model_runner_mixin.py
+@@ -4,6 +4,7 @@
+ 
+ from collections.abc import Callable
+ from contextlib import contextmanager
++from typing import Any
+ 
+ import numpy as np
+ import torch
+@@ -14,13 +15,39 @@ from vllm.config.lora import LoRAConfig
+ from vllm.logger import init_logger
+ from vllm.lora.layers import LoRAMapping, LoRAMappingType
+ from vllm.lora.request import LoRARequest
+-from vllm.lora.worker_manager import LRUCacheWorkerLoRAManager
+ from vllm.model_executor.models import supports_lora
++from vllm.tokenformer.adapter_format import AdapterKind
++from vllm.tokenformer.hybrid_adapter_manager import (
++    HybridAdapterManager,
++    PTWorkerLoRAManager,
++)
++from vllm.tokenformer.tokenformer_model_manager import TokenformerModelManager
+ from vllm.v1.worker.gpu_input_batch import InputBatch
+ 
+ logger = init_logger(__name__)
+ 
+ 
++def _select_adapter_kind(lora_config: LoRAConfig | None) -> AdapterKind:
++    """Classify which adapter manager the runner should instantiate.
++
++    The runner only reaches `load_lora_model` when `lora_config is not None`,
++    i.e. at least one of `enable_lora` / `enable_tokenformer` was set.
++    """
++    if lora_config is None:
++        # Defensive: load_lora_model shouldn't be called without a config,
++        # but fall back to the historical behavior if it ever is.
++        return "tokenformer"
++    lora = lora_config.enable_lora
++    tk = lora_config.enable_tokenformer
++    if lora and tk:
++        return "hybrid"
++    if tk:
++        return "tokenformer"
++    # Either enable_lora was True, or (defensively) neither flag is set but
++    # we still have a lora_config — treat both as the lora path.
++    return "lora"
++
++
+ # Defined as a mixin for GPUModelRunner
+ class LoRAModelRunnerMixin:
+     lora_config: LoRAConfig | None
+@@ -47,13 +74,51 @@ class LoRAModelRunnerMixin:
+         if not supports_lora(model):
+             raise ValueError(f"{model.__class__.__name__} does not support LoRA yet.")
+ 
+-        # Add LoRA Manager to the Model Runner
+-        self.lora_manager = LRUCacheWorkerLoRAManager(
+-            vllm_config,
++        lora_config = vllm_config.lora_config
++        kind = _select_adapter_kind(lora_config)
++
++        if kind == "tokenformer":
++            # Any: three duck-typed manager classes share this slot
++            # (LRU LoRA / tokenformer / hybrid).
++            self.lora_manager: Any = TokenformerModelManager(model=model, device=device)
++            logger.info(
++                "Created TokenformerModelManager for model %s on device %s.",
++                model.__class__.__name__,
++                device,
++            )
++            return self.lora_manager.model
++
++        if kind == "lora":
++            # Use the ScalarLM `.pt`-aware manager (with fallback to
++            # upstream PEFT when no .pt is present), so adapters
++            # produced by the ScalarLM trainer load without users
++            # needing to set --enable-tokenformer too.
++            self.lora_manager = PTWorkerLoRAManager(
++                vllm_config,
++                device,
++                model.embedding_modules,
++            )
++            logger.info(
++                "Created PTWorkerLoRAManager for model %s on device %s. "
++                "If you intended to serve Tokenformer adapters, use "
++                "--enable-tokenformer instead of --enable-lora.",
++                model.__class__.__name__,
++                device,
++            )
++            return self.lora_manager.create_lora_manager(model, vllm_config)
++
++        # kind == "hybrid"
++        self.lora_manager = HybridAdapterManager(
++            model=model,
++            device=device,
++            vllm_config=vllm_config,
++        )
++        logger.info(
++            "Created HybridAdapterManager for model %s on device %s.",
++            model.__class__.__name__,
+             device,
+-            model.embedding_modules,
+         )
+-        return self.lora_manager.create_lora_manager(model, vllm_config)
++        return self.lora_manager.model
+ 
+     def _set_active_loras(
+         self,
+@@ -63,6 +128,8 @@ class LoRAModelRunnerMixin:
+         mapping_type: LoRAMappingType = LoRAMappingType.LANGUAGE,
+     ) -> None:
+         self._ensure_lora_enabled()
++        if self.lora_manager is None:
++            raise RuntimeError("LoRA is not enabled.")
+ 
+         # Set is_prefill to True, so we always use the SGMV kernels on
+         # non-cuda platforms.

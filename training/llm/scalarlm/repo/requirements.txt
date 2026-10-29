@@ -12,6 +12,7 @@ humanize
 atomicwrites
 cryptography==46.0.0
 sortedcontainers
+mlflow-skinny
 # >=4.8: older datasets (3.6.0) hard-imports `VideoReader` from torchvision.io in
 # its torch formatter, which AMD's torchvision (0.27.0+rocm) does not export ->
 # every training job dies with ImportError before step 0. 4.8+ wraps that import
