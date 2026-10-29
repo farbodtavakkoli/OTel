@@ -1,4 +1,7 @@
-# Worldwide Media Coverage of the Open Telco (OTel) AI Project
+# Worldwide Coverage of Open Telco (OTel) AI 1.0
+
+**Release date:** March 2, 2026 (2026-03-02)  
+**Release event:** MWC Barcelona 2026
 
 | Rank | Outlet | Region / Market | Date | Category | Headline | Link |
 |---:|---|---|---|---|---|---|
