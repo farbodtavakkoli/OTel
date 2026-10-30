@@ -47,11 +47,11 @@ the recipe you see here.
 
 ## Setup
 
-The client is pure Python; no NVIDIA/AMD split applies:
+The client is pure Python; no NVIDIA/AMD split applies. Run from the OTel repo root:
 
 ```bash
 cd training/llm/scalarlm
-ln -sf ../../../dev.env dev.env        # HF_TOKEN, used for --hf_upload_token
+echo "HF_TOKEN=<your token>" > dev.env
 python3.12 -m venv .env_scalarlm && source .env_scalarlm/bin/activate
 pip install -r requirements_scalarlm.txt
 export SCALARLM_API_URL=http://<your-scalarlm-deployment>
@@ -62,7 +62,7 @@ export SCALARLM_API_URL=http://<your-scalarlm-deployment>
 resolves as `SCALARLM_API_URL` -> `MASINT_API_URL` -> `http://localhost:8000`.
 
 `hf_upload_token` is submitted with the job and appears in that job's config on the server.
-Never commit `dev.env`, and rotate any token that has been committed.
+Keep `dev.env` and tokens out of version control.
 
 ## Data
 
@@ -138,8 +138,9 @@ batches are logged with a traceback and skipped; results contain only successful
 - Diffusion models (auto-detected from `model_type: diffusion_gemma`) run on `ddp` and
   `pytorch_fsdp` and fail on `fsdp`.
 - `pytorch_fsdp` is the only sharded strategy with HSDP. `hsdp_shard_size` and
-  `reshard_after_forward` are server-side settings with no CLI flag — add them to
-  `build_train_args()` in `train.py` to send them.
+  `reshard_after_forward` are server settings. `reshard_after_forward` has the
+  `--reshard_after_forward` flag; `hsdp_shard_size` has no CLI flag, so add it to
+  `build_train_args()` in `train.py` to send it.
 
 ## Arguments
 
@@ -175,7 +176,7 @@ batches are logged with a traceback and skipped; results contain only successful
 | `--classification_dropout` | `0.1` | [classification] Head dropout |
 | `--label_smoothing` | `0.1` | [classification] Label smoothing |
 | `--upload_to_hf` | `False` | Push the trained model to the Hub |
-| `--hf_repo_id` | `farbodtavakkoli/scalarlm-test` | Hub repo for uploads — change to your own |
+| `--hf_repo_id` | `farbodtavakkoli/scalarlm-test` | Hub repo for uploads; set it to your own repo when using `--upload_to_hf` |
 | `--hf_upload_token` | `$HF_TOKEN` | Hub token (from `dev.env`) |
 | `--gpus` | `1` | GPUs per node; on a bare-metal 8-GPU box pass `--gpus 8 --nodes 1` |
 | `--nodes` | `2` | Number of nodes for the job |
@@ -185,7 +186,7 @@ batches are logged with a traceback and skipped; results contain only successful
 | Flag | Default | Meaning |
 |---|---|---|
 | `--test_data_path` | `data/classification_data.json` | Test data (JSON list) |
-| `--model_name` | *(a sample job hash)* | Fine-tuned model id from training |
+| `--model_name` | *(a job hash from the author's deployment)* | Fine tuned model id; replace it with the `model_name` from your own `train_status.json` |
 | `--max_tokens` | `500` | Input + output token budget per request |
 | `--batch_size` | `2` | Prompts per batch |
 | `--inference_mode` | `language_model` | `language_model` or `embedding` |
@@ -202,6 +203,8 @@ batches are logged with a traceback and skipped; results contain only successful
 
 `ml/` adds a `grpo` training mode and an `init_adapter_from` option, so one LoRA adapter is carried across jobs and hot loaded into the running vLLM between cycles. Existing modes are unchanged. `train_llm_grpo_scalarlm.py` (with `utils.py` and `train_job_entrypoint_gpu_pinned.sh`) is the outer loop: each cycle samples completions through the server, scores them with the shared judge in [`../grpo_common`](../grpo_common/README.md), computes group advantages and submits one training job that continues the previous adapter.
 
+GRPO needs the sibling folder `training/llm/grpo_common` from this repo; override its path with `GRPO_COMMON_DIR` (see `utils.py`). Copy `../grpo_common/.env.example` to `.env`, fill it in and `source` it first; it defines `REPO_ROOT`, `GRPO_SHARED_DIR`, `HF_CACHE_DIR`, `GRPO_ENV_DIR` and `HF_TOKEN`.
+
 The image must carry the GRPO mode (`mi355-v1.8`, `h100-v1.8` or newer). Check for `/app/cray/ml/cray_megatron/megatron/grpo_loss.py` inside it before trusting a tag.
 
 ```bash
@@ -209,7 +212,7 @@ python3 -m venv $GRPO_ENV_DIR/env_scalarlm
 $GRPO_ENV_DIR/env_scalarlm/bin/pip install repo/sdk transformers tokenizers jinja2 numpy requests
 ../grpo_common/judge_server.sh start
 $GRPO_ENV_DIR/env_scalarlm/bin/python train_llm_grpo_scalarlm.py \
-  --model $GRPO_SHARED_DIR/models/<org>--<name> --data $GRPO_SHARED_DIR/data/grpo_prompts.jsonl \
+  --model $GRPO_SHARED_DIR/models/<org>--<name> --data ../grpo_common/data/grpo_prompts.jsonl \
   --output-dir <run> --steps 2 --warmup-steps 0 --prompt-batch-size 8 --group-size 4 --max-tokens 256 \
   --keep-zero-spread --start-server --render-nodes /dev/dri/renderD<a> /dev/dri/renderD<b> \
   --image farbodatdocker/scalarlm:mi355-v1.8 --verify
@@ -221,7 +224,7 @@ On H100, give the judge a CUDA vLLM image and its own GPU, and pass GPU indices:
 export GRPO_PLATFORM=cuda
 JUDGE_IMAGE=<cuda-vllm-image> JUDGE_GPU=7 JUDGE_MODEL_DIR=<judge-dir> ../grpo_common/judge_server.sh start
 $GRPO_ENV_DIR/env_scalarlm/bin/python train_llm_grpo_scalarlm.py \
-  --model $GRPO_SHARED_DIR/models/<org>--<name> --data $GRPO_SHARED_DIR/data/grpo_prompts.jsonl \
+  --model $GRPO_SHARED_DIR/models/<org>--<name> --data ../grpo_common/data/grpo_prompts.jsonl \
   --output-dir <run> --steps 2 --warmup-steps 0 --prompt-batch-size 8 --group-size 4 --max-tokens 256 \
   --keep-zero-spread --start-server --render-nodes 0 1 \
   --image farbodatdocker/scalarlm:h100-v1.9 --verify
@@ -293,7 +296,7 @@ docker run -d --name scalarlm --init \
   -p 8000:8000 -p 8001:8001 \
   -e SCALARLM_MODEL=Qwen/Qwen3-0.6B \
   -e SCALARLM_MAX_GPUS_PER_NODE=8 \
-  -v "$PWD/models:/root/.cache/huggingface" \
+  -v /path/to/hf-cache:/root/.cache/huggingface \
   farbodatdocker/scalarlm:mi355-v1.8
 ```
 
