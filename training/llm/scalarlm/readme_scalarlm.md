@@ -33,8 +33,9 @@ The same `ml/` also trains and serves on AWS Trainium2; see [Trainium2](#trainiu
   tensors, not the job config); `ml/nara_offline_eval.py` evaluates noise-aware LoRA on
   DiffusionGemma offline.
 - `repo/` — the full ScalarLM **server** source with the AMD integration applied. Only
-  needed to rebuild the image or change something outside `ml/`. `repo/ml/` is generated at
-  build time and is not source.
+  needed to rebuild the image or change something outside `ml/`. `repo/ml/` is a tracked copy
+  of `ml/` that the image bakes as the server default, used when a job sends no `ml/`.
+  `docs/build_image.sh` keeps it in sync; commit it whenever `ml/` changes.
 - `docs/build_image.sh` — stages `ml/` into `repo/` and builds the server image.
 - `docs/scalarlm_mi355.patch` — the AMD integration as one patch against public upstream
   `supermassive-intelligence/scalarlm` at commit `4566a84`; applying it to a fresh clone at

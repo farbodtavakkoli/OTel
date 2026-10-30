@@ -141,7 +141,7 @@ cd training/llm/scalarlm/docs
 ```
 
 Building by hand, do the three things the script does — stage `ml/` into `repo/ml/`
-(gitignored, not source; staging is what makes the image bake the current recipe), create
+(staging is what makes the image bake the current recipe), create
 `repo/vllm/` (the Dockerfile bind-mounts `./vllm`; a missing directory fails the build with
 `failed to compute cache key: "/vllm": not found`, and it is intentionally empty because
 `VLLM_SOURCE` defaults to `remote`), and label the revision:
@@ -288,7 +288,8 @@ relative to `training/llm/scalarlm/`:
 | `train.py`, `inference.py`, `data/` | the client |
 
 `repo/` is a verbatim upstream tree at commit `4566a84` with the integration applied. It
-has no `.git`, and `repo/ml/` is created by `build_image.sh`. Reconstruct it from upstream
+has no `.git`, and `repo/ml/` is a tracked copy of `ml/` that `build_image.sh` syncs from
+`ml/` before each build. Reconstruct it from upstream
 with:
 
 ```bash
