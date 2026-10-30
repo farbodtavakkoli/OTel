@@ -7,7 +7,7 @@ ScalarLM is an open-source platform for **closed-loop LLM experimentation** — 
 
 It is **CC-0 licensed**. You can fork it, publish with it, build on it, and ship it without restriction or attribution.
 
-Maintained and sponsored by [TensorWave](https://tensorwave.com) and [RelationalAI](https://www.relational.ai)
+Maintained by [AT&T Chief Data Office](https://www.att.com/).
 
 ---
 
@@ -46,8 +46,8 @@ ScalarLM runs on **NVIDIA and AMD GPUs** without code changes. The training stac
 ### 1. Clone and start
 
 ```bash
-git clone git@github.com:tensorwavecloud/scalarlm.git
-cd scalarlm
+git clone https://github.com/farbodtavakkoli/OTel.git
+cd OTel/training/llm/scalarlm/repo
 ./scalarlm up
 ```
 
@@ -141,6 +141,9 @@ ScalarLM deploys any Hugging Face-hosted model. The following have been validate
 
 | Target | Container | Latest Release |
 |---|---|---|
+| NVIDIA H100 | `farbodatdocker/scalarlm` | `farbodatdocker/scalarlm:h100-2.0` |
+| AMD MI355 | `farbodatdocker/scalarlm` | `farbodatdocker/scalarlm:mi355-v1.8` |
+| AWS Trainium2 | `farbodatdocker/scalarlm` | `farbodatdocker/scalarlm:trainium2-v1.0` |
 | NVIDIA BLACKWELL | `gdiamos/scalarlm-nvidia-12.0:latest` | `gdiamos/scalarlm-nvidia-12.0:v1.0` |
 | NVIDIA HOPPER | `gdiamos/scalarlm-nvidia-8.0:latest` | `gdiamos/scalarlm-nvidia-8.0:v1.0` |
 | NVIDIA HOPPER | `gdiamos/scalarlm-nvidia-8.6:latest` | `gdiamos/scalarlm-nvidia-8.6:v1.0` |
