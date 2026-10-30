@@ -199,6 +199,83 @@ def wait_for_job(api_url, model_name, poll_s=2.0, timeout_s=7200):
     raise TimeoutError(f"job {model_name} not COMPLETED after {timeout_s}s")
 
 
+class PersistentSessionEnded(RuntimeError):
+    pass
+
+
+def _job_state(api_url, model_name):
+    try:
+        return http_json(f"{api_url}/v1/megatron/train/{model_name}", timeout=30).get("job_status", {}).get("status")
+    except (urllib.error.URLError, TimeoutError, ConnectionError):
+        return None
+
+
+def start_persistent_trainer(api_url, train_args, tag, init_adapter_from=None):
+    args = dict(train_args, grpo=dict(train_args.get("grpo") or {}, persistent=True),
+                timeout=24 * 3600, init_adapter_from=init_adapter_from)
+    placeholder = [{"prompt": "", "completion": "", "advantage": 0.0, "id": f"persistent-session-{tag}"}]
+    return submit_training_job(api_url, placeholder, args)["job_status"]["model_name"]
+
+
+def persistent_train_step(api_url, jobs_dir, session, seq, dataset, request, timeout_s=7200, poll_s=0.2):
+    job_dir = os.path.join(jobs_dir, session)
+    inbox, outbox = os.path.join(job_dir, "inbox"), os.path.join(job_dir, "outbox")
+    t0 = last_check = time.time()
+
+    def check_alive():
+        state = _job_state(api_url, session)
+        if state in ("COMPLETED", "FAILED"):
+            raise PersistentSessionEnded(f"persistent trainer {session[:12]} is {state}")
+
+    while not os.path.isdir(inbox):
+        if time.time() - last_check > 5:
+            check_alive()
+            last_check = time.time()
+        if time.time() - t0 > timeout_s:
+            raise TimeoutError(f"persistent trainer {session[:12]} not ready after {timeout_s}s")
+        time.sleep(1.0)
+    t_ready = time.time()
+
+    data_name = f"{seq:06d}.jsonl"
+    with open(os.path.join(inbox, data_name + ".tmp"), "w") as f:
+        for row in dataset:
+            f.write(json.dumps(row) + "\n")
+    os.replace(os.path.join(inbox, data_name + ".tmp"), os.path.join(inbox, data_name))
+    req_path = os.path.join(inbox, f"{seq:06d}.json")
+    with open(req_path + ".tmp", "w") as f:
+        json.dump(dict(request, data=data_name), f)
+    os.replace(req_path + ".tmp", req_path)
+
+    out_path = os.path.join(outbox, f"{seq:06d}.json")
+    while not os.path.exists(out_path):
+        if time.time() - last_check > 5:
+            check_alive()
+            last_check = time.time()
+        if time.time() - t0 > timeout_s:
+            raise TimeoutError(f"persistent trainer {session[:12]} gave no result for request {seq} in {timeout_s}s")
+        time.sleep(poll_s)
+    with open(out_path) as f:
+        result = json.load(f)
+    result["wait_ready_s"] = t_ready - t0
+    return result, time.time()
+
+
+def stop_persistent_trainer(api_url, jobs_dir, session, seq, timeout_s=120):
+    inbox = os.path.join(jobs_dir, session, "inbox")
+    if os.path.isdir(inbox):
+        path = os.path.join(inbox, f"{seq:06d}.json")
+        with open(path + ".tmp", "w") as f:
+            json.dump({"stop": True}, f)
+        os.replace(path + ".tmp", path)
+    t0 = time.time()
+    while time.time() - t0 < timeout_s:
+        state = _job_state(api_url, session)
+        if state in ("COMPLETED", "FAILED"):
+            return state
+        time.sleep(2.0)
+    return _job_state(api_url, session)
+
+
 def generate(api_url, model_name, prompt, max_tokens=8, temperature=0.0, timeout_s=900):
     t0 = time.time()
     while time.time() - t0 < timeout_s:
@@ -556,6 +633,8 @@ def parse_args():
     g.add_argument("--keep-zero-spread", action="store_true", help="train on zero-spread groups too (advantage 0)")
     g.add_argument("--no-carry-optimizer", action="store_true", help="fresh AdamW state every job")
     g.add_argument("--no-old-logprobs", action="store_true", help="force the on-policy ratio==1 path")
+    g.add_argument("--persistent-trainer", action="store_true",
+                   help="one training job for the whole run: load and shard the model once, then train each cycle in it")
     r = p.add_argument_group("rft objective")
     r.add_argument("--rft-max-steps", type=int, default=8, help="optimizer steps per SFT job")
     r.add_argument("--rft-learning-rate", type=float, default=1e-4)

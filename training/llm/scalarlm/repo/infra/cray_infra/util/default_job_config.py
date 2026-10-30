@@ -71,6 +71,7 @@ class GrpoConfig(BaseModel):
     # pydantic's extra="ignore" silently drops it.
     clip_eps: float = 0.2     # PPO clip window [1 - eps, 1 + eps] on the token ratio
     kl_beta: float = 0.0      # KL-to-reference coefficient; only 0.0 (no ref model) is implemented
+    persistent: bool = False
 
 
 class ClassificationConfig(BaseModel):

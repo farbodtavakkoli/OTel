@@ -1,3 +1,4 @@
+import hashlib
 import json
 import math
 import os
@@ -33,7 +34,71 @@ def base_train_args(args, lora_regex: str) -> dict:
                 gradient_accumulation_steps=args.rft_grad_accum)
 
 
-def run_loop(args, rows: list, turn_end: str, train_args_base: dict, want_lp: bool, run_dir: str) -> dict:
+class PersistentTrainer:
+    def __init__(self, args, train_args_base):
+        self.args, self.train_args_base = args, train_args_base
+        self.tag = f"{os.path.basename(os.path.abspath(args.output_dir))}-{time.time():.0f}"
+        self.session, self.seq, self.starts = None, 0, 0
+
+    def start(self, init_adapter_from=None):
+        self.starts += 1
+        self.session = utils.start_persistent_trainer(self.args.api_url, self.train_args_base,
+                                                      f"{self.tag}-{self.starts}", init_adapter_from)
+        self.seq = 0
+        print(f"[persistent] trainer session {self.session[:12]} submitted "
+              f"(init_adapter_from={str(init_adapter_from)[:12]})", flush=True)
+
+    def train(self, dataset, train_args, previous_job):
+        for attempt in (1, 2):
+            if self.session is None:
+                self.start(previous_job)
+            self.seq += 1
+            request = {"model_name": hashlib.sha256(f"{self.session}:{self.seq}".encode()).hexdigest(),
+                       "steps": train_args["max_steps"],
+                       "gradient_accumulation_steps": train_args["gradient_accumulation_steps"],
+                       "sampling_seed": train_args["sampling_seed"]}
+            try:
+                result, t_done = utils.persistent_train_step(self.args.api_url, self.args.jobs_dir, self.session,
+                                                             self.seq, dataset, request)
+                return result, t_done, self.session, self.seq
+            except utils.PersistentSessionEnded as e:
+                print(f"  {e}; starting a new trainer session", flush=True)
+                self.session = None
+                if attempt == 2:
+                    raise
+
+    def stop(self):
+        if self.session is None:
+            return
+        state = utils.stop_persistent_trainer(self.args.api_url, self.args.jobs_dir, self.session, self.seq + 1)
+        print(f"[persistent] trainer session {self.session[:12]} stopped: {state}", flush=True)
+        self.session = None
+
+
+def persistent_cycle(persistent, cyc, dataset, train_args, previous_job, t_submit):
+    result, t_done, session, seq = persistent.train(dataset, train_args, previous_job)
+    train_step_s = t_done - t_submit
+    gs, losses = result["grpo_steps"], result["losses"]
+    cyc.update(train_step_s=train_step_s, model_name=result["model_name"],
+               train_args={k: v for k, v in train_args.items() if k in ("gradient_accumulation_steps", "sampling_seed")},
+               train_loss_first=losses[0] if losses else None, train_loss_last=losses[-1] if losses else None,
+               grpo_mean_ratio=gs[0].get("mean_ratio") if gs else None, grpo_clip_frac=gs[0].get("clip_frac") if gs else None,
+               grpo_tokens=gs[0].get("tokens") if gs else None, grpo_steps=gs,
+               trainer_step_times_s=result["step_times_s"], trainer_microbatch_times_s=result["microbatch_times_s"],
+               trainer_from_pretrained_s=None, init_adapter={"persistent_session": session, "request": seq},
+               init_optimizer=None, trainer_on_policy_warning=None, peak_mem_gib=result["peak_mem_gib"],
+               trainer_gpu_env=None, trainer_device=None, trainer_log=None, trainer_wait_ready_s=result["wait_ready_s"],
+               trainer_train_s=result["train_s"], trainer_save_s=result["save_s"])
+    print(f"  train {train_step_s:.1f}s (persistent session {session[:12]} request {seq}; waited "
+          f"{result['wait_ready_s']:.1f}s for the trainer, train {result['train_s']:.1f}s, step times "
+          f"{[round(s, 2) for s in result['step_times_s']]}, save {result['save_s']:.1f}s, peak {result['peak_mem_gib']} GiB, "
+          f"loss {cyc['train_loss_first']} -> {cyc['train_loss_last']}, mean_ratio {cyc['grpo_mean_ratio']} "
+          f"clip_frac {cyc['grpo_clip_frac']})", flush=True)
+    return result["model_name"], train_step_s
+
+
+def run_loop(args, rows: list, turn_end: str, train_args_base: dict, want_lp: bool, run_dir: str,
+             persistent=None) -> dict:
     from judge_reward import RUBRIC_VERSION, score_batch
 
     G, n_cycles = args.group_size, args.warmup_steps + args.steps
@@ -119,29 +184,32 @@ def run_loop(args, rows: list, turn_end: str, train_args_base: dict, want_lp: bo
             train_args.update(gradient_accumulation_steps=max(1, math.ceil(rows_per_rank / args.micro_batch)),
                               init_adapter_from=previous_job)
         t_submit = time.time()
-        status = utils.submit_training_job(args.api_url, dataset, train_args)["job_status"]
-        model_name = status["model_name"]
-        print(f"  submitted job {model_name} ({len(dataset)} rows, "
-              f"init_adapter_from={str(train_args.get('init_adapter_from'))[:12]}) status={status.get('status')}", flush=True)
-        final_status, t_completed = utils.wait_for_job(args.api_url, model_name)
-        train_step_s = t_completed - t_submit
-        log = utils.parse_job_log(os.path.join(args.jobs_dir, model_name))
-        hist = final_status.get("history", [])
-        gs = log["grpo_steps"]
-        cyc.update(train_step_s=train_step_s, model_name=model_name,
-                   train_args={k: v for k, v in train_args.items() if k in ("gradient_accumulation_steps", "sampling_seed", "init_adapter_from")},
-                   train_loss_first=hist[0]["loss"] if hist else None, train_loss_last=hist[-1]["loss"] if hist else None,
-                   grpo_mean_ratio=gs[0]["mean_ratio"] if gs else None, grpo_clip_frac=gs[0]["clip_frac"] if gs else None,
-                   grpo_tokens=gs[0]["tokens"] if gs else None, grpo_steps=gs,
-                   trainer_step_times_s=log["step_times_s"], trainer_microbatch_times_s=log["microbatch_times_s"],
-                   trainer_from_pretrained_s=log["from_pretrained_s"], init_adapter=log["init_adapter"],
-                   init_optimizer=log["init_optimizer"], trainer_on_policy_warning=log["on_policy_warning"],
-                   peak_mem_gib=log["peak_mem_gib"], trainer_gpu_env=log["gpu_env"], trainer_device=log["trainer_device"],
-                   trainer_log=log["log"])
-        print(f"  train {train_step_s:.1f}s (COMPLETED; from_pretrained {log['from_pretrained_s']}s, step times "
-              f"{[round(s, 2) for s in log['step_times_s']]}, peak {log['peak_mem_gib']} GiB, loss {cyc['train_loss_first']} -> "
-              f"{cyc['train_loss_last']}, mean_ratio {cyc['grpo_mean_ratio']} clip_frac {cyc['grpo_clip_frac']}, "
-              f"init_adapter {log['init_adapter']})", flush=True)
+        if persistent is not None:
+            model_name, train_step_s = persistent_cycle(persistent, cyc, dataset, train_args, previous_job, t_submit)
+        else:
+            status = utils.submit_training_job(args.api_url, dataset, train_args)["job_status"]
+            model_name = status["model_name"]
+            print(f"  submitted job {model_name} ({len(dataset)} rows, "
+                  f"init_adapter_from={str(train_args.get('init_adapter_from'))[:12]}) status={status.get('status')}", flush=True)
+            final_status, t_completed = utils.wait_for_job(args.api_url, model_name)
+            train_step_s = t_completed - t_submit
+            log = utils.parse_job_log(os.path.join(args.jobs_dir, model_name))
+            hist = final_status.get("history", [])
+            gs = log["grpo_steps"]
+            cyc.update(train_step_s=train_step_s, model_name=model_name,
+                       train_args={k: v for k, v in train_args.items() if k in ("gradient_accumulation_steps", "sampling_seed", "init_adapter_from")},
+                       train_loss_first=hist[0]["loss"] if hist else None, train_loss_last=hist[-1]["loss"] if hist else None,
+                       grpo_mean_ratio=gs[0]["mean_ratio"] if gs else None, grpo_clip_frac=gs[0]["clip_frac"] if gs else None,
+                       grpo_tokens=gs[0]["tokens"] if gs else None, grpo_steps=gs,
+                       trainer_step_times_s=log["step_times_s"], trainer_microbatch_times_s=log["microbatch_times_s"],
+                       trainer_from_pretrained_s=log["from_pretrained_s"], init_adapter=log["init_adapter"],
+                       init_optimizer=log["init_optimizer"], trainer_on_policy_warning=log["on_policy_warning"],
+                       peak_mem_gib=log["peak_mem_gib"], trainer_gpu_env=log["gpu_env"], trainer_device=log["trainer_device"],
+                       trainer_log=log["log"])
+            print(f"  train {train_step_s:.1f}s (COMPLETED; from_pretrained {log['from_pretrained_s']}s, step times "
+                  f"{[round(s, 2) for s in log['step_times_s']]}, peak {log['peak_mem_gib']} GiB, loss {cyc['train_loss_first']} -> "
+                  f"{cyc['train_loss_last']}, mean_ratio {cyc['grpo_mean_ratio']} clip_frac {cyc['grpo_clip_frac']}, "
+                  f"init_adapter {log['init_adapter']})", flush=True)
 
         sync_s, probe = utils.sync_adapter(args.api_url, model_name, batch[0]["rendered"])
         cyc.update(sync_s=sync_s, sync_probe=probe[:80], cycle_s=rollout_s + scored["timing_s"] + train_step_s + sync_s,
@@ -206,6 +274,7 @@ def main():
         f.write(f"=== {args.label}\n{shlex.join(sys.argv)}\n")
 
     started = False
+    persistent = None
     try:
         if args.start_server:
             utils.ensure_hf_cache_entry(args.model_name, args.model, utils.mount_path(args), args.hf_cache)
@@ -220,6 +289,9 @@ def main():
         print("server health:", h, flush=True)
         if h.get("all") != "up":
             raise SystemExit("ScalarLM server is not fully up")
+        if args.persistent_trainer and args.objective == "grpo":
+            persistent = PersistentTrainer(args, train_args_base)
+            persistent.start()
 
         want_lp = args.objective == "grpo" and not args.no_old_logprobs
         if want_lp:
@@ -229,10 +301,12 @@ def main():
             want_lp = ok
             print(f"old_logprobs from the server: {want_lp} (probe: {len(probe['completion_token_ids'] or [])} tokens)", flush=True)
 
-        summary = run_loop(args, rows, turn_end, train_args_base, want_lp, run_dir)
+        summary = run_loop(args, rows, turn_end, train_args_base, want_lp, run_dir, persistent)
         if args.verify:
             utils.verify(args, summary, run_dir)
     finally:
+        if persistent is not None:
+            persistent.stop()
         if started and not args.keep_server:
             utils.stop_server(args.container_name, os.path.join(run_dir, "server.log"))
 

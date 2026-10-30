@@ -225,6 +225,12 @@ class TrainingLoop:
 
         self.training_state.model_info = self.model_manager.load_model()
 
+        from cray_megatron.megatron.persistent_grpo import PersistentGrpo, is_persistent_grpo
+
+        if is_persistent_grpo(get_job_config()):
+            PersistentGrpo(self).run()
+            return
+
         self.training_loop()
 
         self.checkpoint()

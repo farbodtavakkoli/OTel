@@ -236,6 +236,7 @@ $GRPO_ENV_DIR/env_scalarlm/bin/python train_llm_grpo_scalarlm.py \
 | `--steps` / `--prompt-batch-size` / `--group-size` | 20 / 32 / 8 | cycles, prompts per cycle, completions per prompt |
 | `--render-nodes` | required with `--start-server` | first entry is the vLLM GPU, the rest train; device paths on ROCm, indices on CUDA |
 | `--trainer-gpus` / `--gpu-mem-util` | 1 / 0.85 | use about 0.35 with a single render node |
+| `--persistent-trainer` | off | one training job loads the model once and trains every cycle; needs an image built from this commit or newer |
 | `--keep-zero-spread` | off | also train groups whose rewards are all equal |
 | `--verify` | off | checks adapter continuation, PEFT export and a generate through the hot loaded adapter |
 

@@ -19,13 +19,20 @@ from cray_megatron.megatron.dataset.load_language_model_dataset import (
 
 logger = logging.getLogger(__name__)
 
+_path_override = None
+
+
+def set_dataset_path_override(path):
+    global _path_override
+    _path_override = path
+
 
 def load_grpo_dataset(model, tokenizer, epoch):
     job_config = get_job_config()
     budget = min(
         get_max_position_embeddings(model.config), job_config["max_token_block_size"]
     )
-    rows = _read_rows(get_dataset_path())
+    rows = _read_rows(_path_override or get_dataset_path())
     return GrpoDataset(
         rows,
         tokenizer,
