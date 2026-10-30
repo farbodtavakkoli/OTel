@@ -2,50 +2,50 @@
 
 Training and inference recipes, datasets, benchmarks, and open-weight models for telecom AI.
 
-OTel research includes a [NeurIPS 2026 Spotlight paper](docs/OTel-NeurIPS-2026.pdf) in the Evaluations & Datasets Track and a Breakthrough Impact paper accepted to the [ACM AI Leadership Summit 2026](https://arxiv.org/abs/2608.15436).
+OTel research includes a [NeurIPS 2026 Spotlight paper](https://arxiv.org/pdf/2610.07766) in the Evaluations & Datasets Track and a Breakthrough Impact paper accepted to the [ACM AI Leadership Summit 2026](https://arxiv.org/abs/2608.15436). See [selected blog and media coverage](https://github.com/farbodtavakkoli/OTel/blob/main/docs/OTel-selected-coverage.md) of OTel.
 
 
 <p align="center">
-  <a href="docs/OTel-NeurIPS-2026.pdf">Paper (NeurIPS 2026 Spotlight)</a> |
+  <a href="https://arxiv.org/pdf/2610.07766">Paper (NeurIPS 2026 Spotlight)</a> |
   <a href="https://arxiv.org/abs/2608.15436">Paper (ACM AI Leadership Summit 2026 Breakthrough Impact)</a> |
-  <a href="https://github.com/farbodtavakkoli/OTel">Code</a> |
-  <a href="https://huggingface.co/farbodtavakkoli">Hugging Face</a> |
-  <a href="https://huggingface.co/collections/farbodtavakkoli/otel-llm">LLMs</a> |
-  <a href="https://huggingface.co/collections/farbodtavakkoli/otel-embedding">Embeddings</a> |
-  <a href="https://huggingface.co/collections/farbodtavakkoli/otel-reranker">Rerankers</a> |
+  <a href="https://huggingface.co/collections/farbodtavakkoli/otel-20-llm">OTel-2.0-LLM</a> |
+  <a href="https://huggingface.co/collections/farbodtavakkoli/otel-10-llm">OTel-1.0-LLM</a> |
+  <a href="https://huggingface.co/collections/farbodtavakkoli/otel-10-embedding">OTel-1.0-Embedding</a> |
+  <a href="https://huggingface.co/collections/farbodtavakkoli/otel-10-reranker">OTel-1.0-Reranker</a> |
   <a href="https://huggingface.co/farbodtavakkoli/datasets">Datasets</a>
 </p>
 
-Open Telco (OTel) AI is an open foundation for telecom-specialized AI systems, combining
-domain data and open-weight model releases with reproducible recipes for post-training,
-retrieval, reranking, classification, and serving.
+Open Telco (OTel) AI is an open ecosystem of telecom datasets, benchmarks, models, and
+reproducible training and inference recipes. Its mission is to give telecom operators the
+freedom to choose their models, software, hardware, and infrastructure. With contributions
+from across the industry, OTel provides a shared AI foundation that operators can build,
+adapt, and deploy on their own terms.
 
-Telecom knowledge is precise, versioned, and spread across standards, specifications, and
-RFCs. A model can sound fluent while misunderstanding an interface or answering from
-unsupported context. OTel addresses that with specialized data, open checkpoints, and
-runnable infrastructure recipes for AMD, NVIDIA, Apple, and Intel hardware.
+OTel brings together specialized language, embedding, reranking, decision, classification,
+and safety models with workflows for data curation, post-training, evaluation, benchmarking, and serving. The ecosystem supports multiple software stacks across hardware from AMD, NVIDIA, AWS, Apple, Tenstorrent, and Intel, enabling reproducible experimentation and deployment across platforms.
 
 ## What This Repository Provides
 
-- **27 self-contained training recipes** spanning LLM post-training, embedding,
-  reranking, and classification.
-- **11 inference stacks** covering LLM generation, embeddings, and reranking.
+- **Multiple training recipes** spanning LLM post-training, embedding, reranking,
+  and classification.
+- **Multiple inference stacks** covering LLM generation, embeddings, and reranking,
+  with workload support varying by stack.
 - **SFT, CPT, DPO, GRPO, PPO, OSFT, LoRA, QLoRA, and DoRA** examples.
-- A local sample, pinned requirements, runnable entry point, and detailed README in
-  every recipe folder.
-- Cross-platform paths for **AMD, NVIDIA, Apple, and Intel**.
-- Dataset cards, model cards, and benchmark results published alongside the
-  [Hugging Face releases](https://huggingface.co/farbodtavakkoli).
+- Recipe documentation, dependency requirements, runnable entry points, and
+  sample workflows with installation and verification instructions.
+- Training and inference support on multiple software stacks across hardware from **AMD, NVIDIA, AWS, Apple, Tenstorrent, and Intel.**
+- Telecom datasets, model releases, and reported evaluation results documented
+  in the repository and accompanying
+  [Hugging Face model and dataset cards](https://huggingface.co/farbodtavakkoli).
+  
 
-A GRPO benchmark harness runs nine stacks against one shared judge, reward and dataset:
-`training/llm/grpo_common` plus a `grpo/` folder in each stack, with ScalarLM GRPO in
-`training/llm/scalarlm`.
+For the shared GRPO benchmark harness, see the [GRPO methodology guide](docs/grpo_method.md).
 
 This is a recipe collection, not one monolithic framework. Environments are intentionally
 isolated because packages such as Unsloth, PyLate, DeepSpeed, vLLM, and SGLang can require
 conflicting dependency versions.
 
-## Quick Start
+## Environment Setup
 
 Create `dev.env` at the repository root with your `HF_TOKEN` (needed for gated models and
 datasets). Then pick a recipe, build its environment, and run the smoke test from its README:
@@ -89,7 +89,7 @@ of the stack. Always use the exact install and launch commands from the folder y
 ```text
 .
 |-- training/
-|   |-- llm/                  # 21 framework-specific LLM recipes
+|   |-- llm/                  # Framework-specific LLM recipes
 |   |   |-- <framework>/grpo/ # GRPO benchmark stack for that framework
 |   |   `-- grpo_common/      # shared judge, reward, data and ROCm base image for GRPO
 |   |-- embedding/            # Sentence Transformers, Tevatron, PyLate
@@ -145,34 +145,26 @@ the workloads beneath it.
 |---|---|
 | **AMD Instinct MI355X** (ROCm 7.2) | Training and inference. TensorRT-LLM is NVIDIA-only; the KTransformers ROCm kernel path works but its serving layer is blocked by CUDA-pinned dependencies. |
 | **NVIDIA H100** (CUDA 13) | Training and inference. `training/llm/primus` is AMD-only by design. |
-| **Apple silicon** | Inference through `inference/mlx`. Training paths via MPS/CPU are selected and unverified — confirm support in the recipe README first. |
+| **AWS Trainium2** | Documented training and inference path through ScalarLM using Neuron PyTorch and the vLLM Neuron plugin. Requires a locally built image; runtime adapter loading and GRPO are not supported on this path. See the [Trainium2 guide](training/llm/scalarlm/readme_scalarlm.md#trainium2). |
+| **Apple silicon** | Inference through `inference/mlx`. Training paths via MPS/CPU are selected. Confirm support in the recipe README first. |
 | **Intel hardware** | Selected paths via XPU, SYCL, AMX, and CPU backends — support varies by framework and device. |
-| **Tenstorrent Blackhole Galaxy** | LLM inference through `inference/tenstorrent` (Gemma 4 31B verified). P300X2 is documented by Tenstorrent and unverified. Training is not covered. |
+| **Tenstorrent Blackhole Galaxy** | LLM inference through `inference/tenstorrent`. Training is not covered. |
 
 Not every framework supports every platform. Confirm the exact device and framework
 combination in the recipe README.
 
 ### Scalable training deployment with ScalarLM
 
-For scalable distributed training across AMD and NVIDIA GPU infrastructure, ScalarLM is
-the recommended cross-vendor deployment option. The repository includes a remote
-ScalarLM client recipe under `training/llm/scalarlm`.
+ScalarLM provides scalable distributed training across AMD and NVIDIA GPU infrastructure,
+with an additional documented training and inference path for AWS Trainium2. See the
+[ScalarLM recipe](training/llm/scalarlm/readme_scalarlm.md) for platform requirements and limitations.
 
-The latest available project images are:
-
-```bash
-# AMD Instinct MI355X, includes the GRPO training mode
-docker pull farbodatdocker/scalarlm:mi355-v1.8
-
-# NVIDIA H100, includes the GRPO training mode
-docker pull farbodatdocker/scalarlm:h100-v1.9
-```
-
-ScalarLM ships the training code (`ml/`) from the **client** with each job, so the client
-checkout and the server image must come from the same revision. Each image's runbook,
-acceptance gates and source-revision label are in
-[`training/llm/scalarlm/docs/DOCKER_IMAGE_MI355.md`](training/llm/scalarlm/docs/DOCKER_IMAGE_MI355.md)
-and [`training/llm/scalarlm/docs/DOCKER_IMAGE_H100.md`](training/llm/scalarlm/docs/DOCKER_IMAGE_H100.md).
+ScalarLM ships the training code (`ml/`) from the client with each job, so the client
+checkout and server image must come from the same revision. Image versions, deployment
+commands, and acceptance gates are maintained in the
+[MI355X runbook](training/llm/scalarlm/docs/DOCKER_IMAGE_MI355.md),
+[H100 runbook](training/llm/scalarlm/docs/DOCKER_IMAGE_H100.md), and
+[Trainium2 guide](training/llm/scalarlm/readme_scalarlm.md#trainium2).
 
 ## OTel Data
 
@@ -193,15 +185,16 @@ O-RAN, and TM Forum material combined with AT&T and collaborator data.
 
 ## Models and Reported Results
 
-The complete model roster is available in the
-[LLM](https://huggingface.co/collections/farbodtavakkoli/otel-llm),
-[embedding](https://huggingface.co/collections/farbodtavakkoli/otel-embedding), and
-[reranker](https://huggingface.co/collections/farbodtavakkoli/otel-reranker) collections.
+Explore the model releases in the
+[OTel-2.0-LLM](https://huggingface.co/collections/farbodtavakkoli/otel-20-llm),
+[OTel-1.0-LLM](https://huggingface.co/collections/farbodtavakkoli/otel-10-llm),
+[OTel-1.0-Embedding](https://huggingface.co/collections/farbodtavakkoli/otel-10-embedding), and
+[OTel-1.0-Reranker](https://huggingface.co/collections/farbodtavakkoli/otel-10-reranker) collections.
 Representative releases include:
 
 | Model | Role | Public result or status |
 |---|---|---:|
-| [OTel 2.0 LLM 31B IT](https://huggingface.co/farbodtavakkoli/OTel-2.0-LLM-31B-IT) | Large-scale domain-adapted telecom LLM | Comprehensive public evaluation forthcoming |
+| [OTel-2.0-LLM-31B-IT](https://huggingface.co/farbodtavakkoli/OTel-2.0-LLM-31B-IT) | Large-scale domain-adapted telecom LLM | Comprehensive public evaluation forthcoming |
 | [OTel-LLM-E4B-IT](https://huggingface.co/farbodtavakkoli/OTel-LLM-E4B-IT) | Context-grounded generation (post-paper) | 91.7% +/- 0.4 correctness |
 | [OTel-LLM-8B-A1B-IT](https://huggingface.co/farbodtavakkoli/OTel-LLM-8B-A1B-IT) | Mid-size context-grounded generation (post-paper) | 88.4% +/- 0.5 correctness |
 | [OTel-LLM-27B-IT](https://huggingface.co/farbodtavakkoli/OTel-LLM-27B-IT) | Highest LLM score reported in the paper | 87.8% +/- 0.5 correctness |
@@ -211,20 +204,19 @@ Representative releases include:
 | [OTel-Reranker-8B](https://huggingface.co/farbodtavakkoli/OTel-Reranker-8B) | Highest reported OTel reranking score | 0.947 +/- 0.005 MRR@10 |
 
 Numeric results are for OTel 1.0 models on held-out OTel evaluation partitions, as reported
-in the [OTel paper](docs/OTel-NeurIPS-2026.pdf); standard errors use 1,000 bootstrap
+in the [OTel paper](https://arxiv.org/pdf/2610.07766); standard errors use 1,000 bootstrap
 resamples. `OTel-LLM-E4B-IT` and `OTel-LLM-8B-A1B-IT` were released after the paper and use
 the same protocol, but are not part of the paper's results. LLM correctness is the average
 of two judges (GPT-4o mini and Claude Sonnet 3.5) on answers generated from retrieved
 context, not context-free telecom expertise, and is not a substitute for independent
 evaluation on your deployment domain.
 
-
-> OTel 2.0 training code and a comprehensive public evaluation are forthcoming, the
-> latter as part of **MLPerf** in collaboration with **MLCommons**.
-
 ## Using the Models
 
-### Verify an OTel 2.0 deployment
+### Smoke Test an OTel 2.0 Deployment
+
+After starting an OpenAI compatible server, use its configured model identifier in the
+request below. This checks that the endpoint responds, not which checkpoint it loaded.
 
 ```python
 from openai import OpenAI
@@ -244,9 +236,10 @@ response = client.chat.completions.create(
 print(response.choices[0].message.content)
 ```
 
-The response should identify OTel 2.0 as a model trained by AT&T Chief Data Office. If it
-identifies only as Gemma or Google DeepMind, you are serving the base model or a stale
-mount rather than the OTel 2.0 checkpoint.
+Model self identification is not reliable checkpoint verification. Confirm the loaded
+checkpoint path and pinned revision in the server configuration and startup logs, and
+check that the served model identifier matches your request. A response naming OTel or
+Gemma alone does not establish which weights are loaded.
 
 ### Embeddings
 
@@ -261,24 +254,24 @@ sentences = [
 embeddings = model.encode(sentences, normalize_embeddings=True)
 ```
 
-## Documentation
+## Technical Documentation
 
 | Document | Contents |
 |---|---|
-| [`docs/OTel-NeurIPS-2026.pdf`](docs/OTel-NeurIPS-2026.pdf) | OTel paper — NeurIPS 2026 Spotlight (Evaluations & Datasets Track) |
-| [`OTel ACM paper`](https://arxiv.org/abs/2608.15436) | ACM AI Leadership Summit 2026 — Breakthrough Impact Highlights Track |
-| [`docs/grpo_method.md`](docs/grpo_method.md) · [`docs/grpo_findings.md`](docs/grpo_findings.md) · [`docs/grpo_porting.md`](docs/grpo_porting.md) | GRPO loop, stack comparison results, and ROCm to CUDA porting |
-| [`docs/mi355x_training_notes.md`](docs/mi355x_training_notes.md) | ROCm training lessons, scaling, and failure modes |
-| [`docs/mi355x_inference_notes.md`](docs/mi355x_inference_notes.md) | ROCm serving lessons and FP8 findings |
-| [`docs/h100_training_notes.md`](docs/h100_training_notes.md) | CUDA training lessons and the ROCm→CUDA reversals |
-| [`docs/h100_inference_notes.md`](docs/h100_inference_notes.md) | CUDA serving lessons and TensorRT-LLM/SGLang findings |
-| [`docs/OTel-2.0-blogs.md`](docs/OTel-2.0-blogs.md) · [`docs/OTel-1.0-media-coverage.md`](docs/OTel-1.0-media-coverage.md) | Organizational and independent coverage of the project |
+| [GRPO methodology](docs/grpo_method.md), [findings](docs/grpo_findings.md), and [porting](docs/grpo_porting.md) | Shared benchmark harness, stack comparison results, and ROCm to CUDA porting |
+| [MI355X training notes](docs/mi355x_training_notes.md) | ROCm training lessons, scaling, and failure modes |
+| [MI355X inference notes](docs/mi355x_inference_notes.md) | ROCm serving lessons and FP8 findings |
+| [H100 training notes](docs/h100_training_notes.md) | CUDA training lessons and porting from ROCm |
+| [H100 inference notes](docs/h100_inference_notes.md) | CUDA serving lessons and TensorRT-LLM/SGLang findings |
+| [ScalarLM Trainium2 guide](training/llm/scalarlm/readme_scalarlm.md#trainium2) | Neuron environment, local image build, deployment, and limitations |
 | Each recipe README (`readme_<framework>.md` under `training/`, `README.md` under `inference/`) | Exact installation, smoke and full runs, arguments, outputs, and platform status |
 
 ## Responsible Use and Limitations
 
-**Scope.** OTel 2.0 is a telecom-specific generative model, not a general-purpose one. It
-was not trained or evaluated as an embedding, retrieval, or reranking model — use the
+The following capability and data limitations apply to the OTel 2.0 LLM unless otherwise
+stated. Consult individual model cards for limitations specific to each release.
+
+**Scope.** OTel 2.0 is a telecom-specific generative model, not a general-purpose one. It was not trained or evaluated as an embedding, retrieval, or reranking model — use the
 purpose-built OTel embedding and reranker collections for those stages. Comprehensive
 public capability evaluation is forthcoming; current functional checks are not broad
 quality validation. Direct Q&A and RAG behavior require separate evaluation.
@@ -293,30 +286,18 @@ signaling, vendor CLI and network-OS documentation (Cisco IOS-XR, Juniper JUNOS,
 BNG, Arista EOS), or operator-private designs, OSS/BSS, and change-management data.
 Standards familiarity is not experience with live telemetry or vendor-specific behavior.
 
-**Operations.** The model has not been validated against Methods of Procedure on live or
-digital-twin devices, closed-loop operational tasks (network turn-up, SLA/QoS
+**Operations.** The model has not been validated against Methods of Procedure on live or digital-twin devices, closed-loop operational tasks (network turn-up, SLA/QoS
 configuration, routing-fault repair, incident closure), or defensive network-security
 work. High-impact or agentic use requires verified tools, scoped permissions, audit
 logging, and human review appropriate to the risk.
 
 **Hardware and reproducibility.** AMD MI355X and NVIDIA H100 are the most extensively
-verified platforms; Apple and Intel paths received more limited testing. Not every recipe
-supports every platform — confirm the combination in the recipe README. Pin a model
-revision or release tag for reproducible evaluation.
+verified platforms; Apple and Intel paths received more limited testing. Not every recipe supports every platform — confirm the combination in the recipe README. Pin a model revision or release tag for reproducible evaluation.
 
 Telecom standards change. Verify generated content against the relevant source and
 release before any operational, customer-facing, regulatory, safety, security, or
 network-configuration use.
 
-## Future Work
-
-- Release the OTel 2.0 training implementation and reproducible configuration.
-- Release the comprehensive OTel 2.0 evaluation through MLPerf in collaboration with
-  MLCommons.
-- Add and verify training support on AWS infrastructure and Tenstorrent hardware, inference
-  support on AWS, and benchmark multi node training under a common methodology.
-- Benchmark inference throughput, latency, memory use, and efficiency on AMD Ryzen
-  systems.
 
 ## License
 
@@ -332,7 +313,7 @@ If you use OTel datasets, models, benchmarks, or recipes, please cite:
 ```bibtex
 @inproceedings{tavakkoli2026otel,
   title     = {OTel: Open Telco AI Datasets, Benchmarks, and Models},
-  author    = {Tavakkoli, Farbod and Diamos, Gregory and Church, Kenneth and Kanter, David and Austin, Mark and Karim, Imtiaz and Rahman, Mirza Masfiqur and Debbah, Merouane Abdelkader and Nezami, Zeinab and Maatouk, Ali and Tassiulas, Leandros and Ying, Rex and Sorros, Nick and Powell, Louis and Vasiloglou, Nikolaos and Vaswani, Ashish and Singla, Somanshu and Chaluvaraju, Adarsh},
+  author    = {Tavakkoli, Farbod and others},
   booktitle = {Advances in Neural Information Processing Systems (NeurIPS), Evaluations and Datasets Track},
   year      = {2026},
   url       = {https://github.com/farbodtavakkoli/OTel}
@@ -347,8 +328,8 @@ ROCm; Dell Technologies supplied on-premises training infrastructure; and MLComm
 academic, and research partners contributed evaluation and domain expertise.
 
 Organizational and independent coverage of the project is collected in
-[`docs/OTel-2.0-blogs.md`](docs/OTel-2.0-blogs.md) and
-[`docs/OTel-1.0-media-coverage.md`](docs/OTel-1.0-media-coverage.md).
+[`docs/OTel-2.0-coverage.md`](docs/OTel-2.0-coverage.md) and
+[`docs/OTel-1.0-coverage.md`](docs/OTel-1.0-coverage.md).
 
 ## Contact
 
