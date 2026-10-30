@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the ScalarLM server image from the vendored source in repo/.
 # Copies ml/ into repo/ before building, so the image always bakes the current
-# training recipe. repo/ml/ is a build artifact and is gitignored.
+# training recipe.
 #
 # Usage:
 #   ./build_image.sh                              # auto-detect target, build + label
