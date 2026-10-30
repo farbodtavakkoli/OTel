@@ -165,7 +165,7 @@ The latest available project images are:
 docker pull farbodatdocker/scalarlm:mi355-v1.8
 
 # NVIDIA H100, includes the GRPO training mode
-docker pull farbodatdocker/scalarlm:h100-v1.8
+docker pull farbodatdocker/scalarlm:h100-v1.9
 ```
 
 ScalarLM ships the training code (`ml/`) from the **client** with each job, so the client

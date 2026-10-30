@@ -9,15 +9,17 @@ is in [`../readme_scalarlm.md`](../readme_scalarlm.md). The AMD image and the sh
 
 | Tag | Hardware |
 |---|---|
-| `farbodatdocker/scalarlm:h100-v1.8` | NVIDIA H100 (`sm_90`), GRPO, native Muse Glimmer |
+| `farbodatdocker/scalarlm:h100-v1.9` | NVIDIA H100 (`sm_90`), GRPO, native Muse Glimmer, EFA |
 | `farbodatdocker/scalarlm:mi355-v1.8` | AMD MI355X (ROCm), see the other runbook |
 
 ```bash
-docker pull farbodatdocker/scalarlm:h100-v1.8
+docker pull farbodatdocker/scalarlm:h100-v1.9
 ```
 
-`h100-v1.8` supports `ddp`, `fsdp` and `pytorch_fsdp`, LoRA, full parameter training and the
-GRPO mode, and serves and trains `meta-models/Muse-Glimmer-30B`. It replaces `h100-v1.7`.
+`h100-v1.9` supports `ddp`, `fsdp` and `pytorch_fsdp`, LoRA, full parameter training and the
+GRPO mode, and serves and trains `meta-models/Muse-Glimmer-30B`. It replaces `h100-v1.8` and adds
+EFA for multi node NCCL and a server shutdown that stops only its own processes. `h100-v1.8`
+replaced `h100-v1.7`.
 
 | Component | Version |
 |---|---|
@@ -27,18 +29,20 @@ GRPO mode, and serves and trains `meta-models/Muse-Glimmer-30B`. It replaces `h1
 | transformers | 5.19.0 (pin `>=5.17,<5.20`), tokenizers 0.23.3 |
 | opencv | 5.0.0.93 built against system OpenSSL 3, no bundled OpenSSL |
 | Extras | `mlflow-skinny` |
+| EFA | EFA installer 1.51.0 userspace: libfabric `2.7.0amzn2.0`, `aws-ofi-nccl` 1.22.0, `rdma-core` 65 |
 
 The image runs natively on drivers with CUDA 12.9 or newer. Identify a pulled image by its
 revision label, not the tag:
 
 ```bash
-docker inspect farbodatdocker/scalarlm:h100-v1.8 \
+docker inspect farbodatdocker/scalarlm:h100-v1.9 \
   --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+# h100-v1.9 -> e93b0fb1384ef11cb1afa5de90a314c9b9cb2c4d
 # h100-v1.8 -> c44453419e41d831b7caaebce7ebcedc3f608468
-# digest    -> sha256:8094eb166244ae6c9087944f863a10272860a4e747dbd65ef195812899aa7709
+# v1.8 digest -> sha256:8094eb166244ae6c9087944f863a10272860a4e747dbd65ef195812899aa7709
 ```
 
-The label `c444534` is a local build commit. On GitHub the same image code is commit
+The `h100-v1.8` label `c444534` is a local build commit. On GitHub the same image code is commit
 `36c54e359456bb1be4cdb964d36c9197198749cd`.
 
 Helm chart:
@@ -46,7 +50,7 @@ Helm chart:
 ```yaml
 image:
   repository: farbodatdocker/scalarlm
-  tag: h100-v1.8
+  tag: h100-v1.9
   pullPolicy: Always
 ```
 
@@ -59,7 +63,7 @@ docker run -d --name scalarlm --gpus '"device=0"' --ipc host --shm-size=64g \
   -e SCALARLM_MODEL=Qwen/Qwen3-0.6B -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 \
   --cap-add SYS_PTRACE -p 8000:8000 -p 8001:8001 \
   -v /path/to/hf-cache:/root/.cache/huggingface \
-  farbodatdocker/scalarlm:h100-v1.8
+  farbodatdocker/scalarlm:h100-v1.9
 
 curl http://localhost:8000/v1/health
 # {"api":"up","vllm":"up","all":"up"}
@@ -87,14 +91,22 @@ Notes:
 7. On a host without the NVIDIA container toolkit, pass `/dev/nvidia*` and the driver libraries
    with `--device` and `-v` instead of `--gpus`, and run `ldconfig` in the container. The
    entrypoint then prints "driver was not detected", yet `torch.cuda.is_available()` is true.
+8. Multi node over EFA needs no job setting. The image sets `FI_PROVIDER=efa` and
+   `FI_EFA_USE_DEVICE_RDMA=1`, and NCCL loads the plugin on its own. With `NCCL_DEBUG=INFO`, an
+   EFA host logs `NET/OFI` with provider `efa`. A host without EFA logs
+   `aws-ofi-nccl initialization failed` once per rank, and NCCL falls back to InfiniBand or sockets. Keep
+   `FI_PROVIDER=efa` on InfiniBand hosts: without it the plugin takes over through libfabric and
+   cut bus bandwidth from 10 to 3 GB/s in our test.
+9. When the server shuts down it kills only its own process tree (the uvicorn supervisor, the
+   worker, vLLM and their children), so other processes in the same container survive.
 
 ## Acceptance checks
 
 Run gate 1 with the runner script, not `pytest` directly:
 
 ```bash
-./run_unit_tests.sh h100-v1.8              # expect: 835 passed, 2 deselected
-WITH_CMD=1 ./run_unit_tests.sh h100-v1.8   # also runs the two cmd/ tests: 837 passed
+./run_unit_tests.sh h100-v1.9              # expect: 837 passed, 2 deselected
+WITH_CMD=1 ./run_unit_tests.sh h100-v1.9   # also runs the two cmd/ tests: 839 passed
 ```
 
 A bare `python3 -m pytest test/unit` reports 18 failures on either vendor's image. They come
@@ -104,20 +116,26 @@ from the harness: the FSDP tests need the `torchrun` rendezvous variables, and t
 The script uses `--gpus all`. On a host without the container toolkit, run the same command it
 runs inside the container with the manual passthrough from note 7.
 
-Results on 8xH100 (driver 580) for `h100-v1.8`, model `meta-models/Muse-Glimmer-30B`:
+Results on 8xH100 (driver 580) for `h100-v1.9`, model `meta-models/Muse-Glimmer-30B`:
 
 | Check | Result |
 |---|---|
 | Build time torch stack checks | pass after base, vLLM and infra layers |
 | `/etc/ld.so.conf.d/` | no `cuda-compat` entry |
-| Compressed size | 13.3 GB (AI Runtime limit 20 GB) |
+| Compressed size | 13.35 GB (AI Runtime limit 20 GB) |
 | `import cv2` with `OPENSSL_FORCE_FIPS_MODE=1` | OK |
-| Unit suite, 1 GPU visible | 835 passed, 2 deselected, 0 skipped |
+| Unit suite, 1 GPU visible | 837 passed, 2 deselected, 0 skipped |
 | vLLM generation, TP 1 | correct answers, about 75 tok/s single stream |
-| Full parameter SFT, `pytorch_fsdp`, 8 GPUs, 4096 tokens | step 0 18 s, then about 3.0 s/step, 55.5 GiB peak, final checkpoint saved |
-| LoRA GRPO, 4 prompts x 4 completions | about 77 s/step, 0 rollout errors, old log probs 16/16, ratio 0.997 to 1.0006 |
+| Full parameter SFT, `pytorch_fsdp`, 8 GPUs, 4096 tokens | step 0 16.5 s, then about 3.1 s/step, 55.5 GiB peak |
+| NCCL all reduce, 8 GPUs, NVLink | 242 GB/s bus bandwidth (`h100-v1.8`: 231 GB/s) |
+| NCCL over InfiniBand, no EFA | stays on `NET/IB`, 10.2 GB/s (`h100-v1.8`: 10.0 GB/s) |
+| Server shutdown after the vLLM engine dies | exits 137, an unrelated Python process in the container survives (`h100-v1.8` killed it) |
+| LoRA GRPO, 4 steps of 4 prompts x 4 completions | about 80 s/step, 0 rollout errors, old log probs 16/16, ratio 0.996 to 1.0003, reward 0.12 to 0.62 |
 
-Gates 2 to 5 from `DOCKER_IMAGE_MI355.md` were not rerun on `h100-v1.8`. When you run them:
+EFA itself was not tested here: this host has InfiniBand and no EFA devices. The 2 node run on
+AI Runtime is the check for it.
+
+Gates 2 to 5 from `DOCKER_IMAGE_MI355.md` were not rerun on `h100-v1.9`. When you run them:
 
 1. Gates 3 to 5 need a running server.
 2. Run gate 3 with no `ml/` in the client's working directory, so the client uses the image's
@@ -135,14 +153,14 @@ and stamps the provenance labels:
 
 ```bash
 cd training/llm/scalarlm/docs
-TARGET=nvidia IMAGE_TAG=h100-v1.8 ./build_image.sh
+TARGET=nvidia IMAGE_TAG=h100-v1.9 ./build_image.sh
 ```
 
 For a CUDA 13 host (untested):
 
 ```bash
 EXTRA_BUILD_ARGS="--build-arg CUDA_VERSION=13.0.3 --build-arg TORCH_CUDA_INDEX=cu130" \
-  TARGET=nvidia IMAGE_TAG=h100-v1.8 ./build_image.sh
+  TARGET=nvidia IMAGE_TAG=h100-v1.9 ./build_image.sh
 ```
 
 Build from a clean checkout, or the revision label ends in `-dirty`. The Dockerfile uses BuildKit
@@ -163,7 +181,7 @@ shared with the AMD build. It needs `RANK`, `LOCAL_RANK` and `WORLD_SIZE`, which
 To change only `ml/` or pin a model:
 
 ```dockerfile
-FROM farbodatdocker/scalarlm:h100-v1.8
+FROM farbodatdocker/scalarlm:h100-v1.9
 COPY ml/ /app/cray/ml/
 ENV SCALARLM_MODEL=Qwen/Qwen3-0.6B
 ```

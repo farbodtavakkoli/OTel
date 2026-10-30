@@ -224,7 +224,7 @@ $GRPO_ENV_DIR/env_scalarlm/bin/python train_llm_grpo_scalarlm.py \
   --model $GRPO_SHARED_DIR/models/<org>--<name> --data $GRPO_SHARED_DIR/data/grpo_prompts.jsonl \
   --output-dir <run> --steps 2 --warmup-steps 0 --prompt-batch-size 8 --group-size 4 --max-tokens 256 \
   --keep-zero-spread --start-server --render-nodes 0 1 \
-  --image farbodatdocker/scalarlm:h100-v1.8 --verify
+  --image farbodatdocker/scalarlm:h100-v1.9 --verify
 ```
 
 | Flag | Default | Meaning |
@@ -252,11 +252,11 @@ Runbooks: `docs/DOCKER_IMAGE_MI355.md` (AMD) and `docs/DOCKER_IMAGE_H100.md` (NV
 | Tag | Hardware |
 |---|---|
 | `farbodatdocker/scalarlm:mi355-v1.8` | AMD MI355X, gfx950 / ROCm 7.2.4, includes GRPO |
-| `farbodatdocker/scalarlm:h100-v1.8` | NVIDIA H100, sm_90 / CUDA 12.9, vLLM v0.32, includes GRPO and Muse Glimmer |
+| `farbodatdocker/scalarlm:h100-v1.9` | NVIDIA H100, sm_90 / CUDA 12.9, vLLM v0.32, includes GRPO, Muse Glimmer and EFA |
 
 ```bash
 docker pull farbodatdocker/scalarlm:mi355-v1.8     # AMD MI355X
-docker pull farbodatdocker/scalarlm:h100-v1.8      # NVIDIA H100
+docker pull farbodatdocker/scalarlm:h100-v1.9      # NVIDIA H100
 ```
 
 Build either from source (the script auto-detects the vendor; set `TARGET` to be explicit):
@@ -264,7 +264,7 @@ Build either from source (the script auto-detects the vendor; set `TARGET` to be
 ```bash
 cd docs
 TARGET=amd    IMAGE_TAG=mi355-v1.8 ./build_image.sh
-TARGET=nvidia IMAGE_TAG=h100-v1.8  ./build_image.sh
+TARGET=nvidia IMAGE_TAG=h100-v1.9  ./build_image.sh
 ```
 
 Read an image's source revision from its `org.opencontainers.image.revision` label with
@@ -279,7 +279,7 @@ docker run -d --name scalarlm --gpus '"device=0"' --ipc host --shm-size=64g \
   -e SCALARLM_MAX_GPUS_PER_NODE=8 \
   --cap-add SYS_PTRACE -p 8000:8000 -p 8001:8001 \
   -v /path/to/hf-cache:/root/.cache/huggingface \
-  farbodatdocker/scalarlm:h100-v1.8
+  farbodatdocker/scalarlm:h100-v1.9
 # curl http://localhost:8000/v1/health -> {"api":"up","vllm":"up","all":"up"}
 ```
 

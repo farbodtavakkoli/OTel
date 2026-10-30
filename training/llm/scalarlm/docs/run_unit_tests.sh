@@ -4,11 +4,11 @@
 # Run it against a built image:
 #   ./run_unit_tests.sh                     # defaults to the current tag for this host
 #   ./run_unit_tests.sh mi355-v1.8
-#   ./run_unit_tests.sh h100-v1.8
+#   ./run_unit_tests.sh h100-v1.9
 #   WITH_CMD=1 ./run_unit_tests.sh          # also run the two cmd/ tests (see below)
 #
 # Expected: mi355-v1.8 827 passed, 829 with WITH_CMD=1.
-#           h100-v1.8 835 passed, 837 with WITH_CMD=1.
+#           h100-v1.9 837 passed, 839 with WITH_CMD=1.
 #
 # Two things must be set up or the suite reports 18 false failures. Both are
 # harness requirements, not product defects:
@@ -50,7 +50,7 @@ if [ $# -ge 1 ]; then
 elif [ -d /opt/rocm ] || command -v rocm-smi >/dev/null 2>&1; then
     TAG="${IMAGE_TAG:-mi355-v1.8}"
 elif command -v nvidia-smi >/dev/null 2>&1; then
-    TAG="${IMAGE_TAG:-h100-v1.8}"
+    TAG="${IMAGE_TAG:-h100-v1.9}"
 else
     echo "ERROR: cannot detect GPU vendor; pass a tag, e.g. ./run_unit_tests.sh mi355-v1.8"
     exit 1
