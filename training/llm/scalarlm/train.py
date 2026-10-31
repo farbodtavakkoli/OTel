@@ -147,16 +147,16 @@ def format_conversation(example, model_type):
 # Format example for training
 def format_for_scalarlm(example, config):
     if config.gradient_calculation == 'output_tokens':
-        # Split: put prompt in 'input' (masked), completion + reasoning in 'output' (gradient computed)
         prompt = str(example.get('prompt', '')) or ""
         completion = str(example.get('completion', '')) or ""
         reasoning = str(example.get('reasoning', '')) or ""
 
-        # Format input portion with model-specific tokens (empty completion/reasoning)
-        input_text = format_conversation({'prompt': prompt, 'completion': '', 'reasoning': ''}, model_type=config.model_type)
-        
-        # Format output portion with model-specific tokens (empty prompt)
-        output_text = format_conversation({'prompt': '', 'completion': completion, 'reasoning': reasoning}, model_type=config.model_type)
+        completion_marker = "\x00SCALARLM_COMPLETION\x00"
+        reasoning_marker = "\x00SCALARLM_REASONING\x00"
+        template = format_conversation({'prompt': prompt, 'completion': completion_marker, 'reasoning': reasoning_marker}, model_type=config.model_type)
+        split = min(template.find(m) for m in (completion_marker, reasoning_marker) if m in template)
+        input_text = template[:split]
+        output_text = template[split:].replace(reasoning_marker, reasoning).replace(completion_marker, completion)
         return {'input': input_text, 'output': output_text}
     elif config.gradient_calculation == 'entire_sequence':
         full_text = format_conversation(example, model_type=config.model_type)
