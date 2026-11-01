@@ -15,14 +15,9 @@ OTel research includes a [NeurIPS 2026 Spotlight paper](https://arxiv.org/pdf/26
   <a href="https://huggingface.co/farbodtavakkoli/datasets">Datasets</a>
 </p>
 
-Open Telco (OTel) AI is an open ecosystem of telecom datasets, benchmarks, models, and
-reproducible training and inference recipes. Its mission is to give telecom operators the
-freedom to choose their models, software, hardware, and infrastructure. With contributions
-from across the industry, OTel provides a shared AI foundation that operators can build,
-adapt, and deploy on their own terms.
+Open Telco (OTel) AI is an open ecosystem of telecom datasets, benchmarks, models, and reproducible training and inference recipes. OTel’s mission is to give telecom operators the freedom to choose their models, software, hardware, and infrastructure. With contributions from across the industry, OTel has built a shared, open-source AI foundation that enables operators to build, adapt, and deploy AI on their own terms.
 
-OTel brings together specialized language, embedding, reranking, decision, classification,
-and safety models with workflows for data curation, post-training, evaluation, benchmarking, and serving. The ecosystem supports multiple software stacks across hardware from AMD, NVIDIA, AWS, Apple, Tenstorrent, and Intel, enabling reproducible experimentation and deployment across platforms.
+OTel has expanded beyond open telecom datasets and specialized embedding, reranking, language, decision, classification, and safety models to include a reproducible training and inference ecosystem. The ecosystem supports multiple software stacks across hardware from AMD, NVIDIA, AWS, Apple, Tenstorrent, and Intel. Our work was accepted as a Spotlight at NeurIPS 2026 in the Evaluations & Datasets Track.
 
 ## What This Repository Provides
 
