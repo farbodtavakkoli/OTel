@@ -30,7 +30,7 @@ Inference loads from a checkpoint directory; training writes to one. Post-traini
 |---|---|
 | Developer laptop | `docker-compose up cray-nvidia` (or `cray-amd`, `cray`) |
 | Single node | Prebuilt container from `gdiamos/scalarlm-*:latest` |
-| Kubernetes cluster | Helm chart in `deployment/helm/gemma_270m_tw/scalarlm/` |
+| Kubernetes cluster | Helm chart in `deployment/helm/gemma_270m/scalarlm/` |
 
 All three targets run the **same container** and the **same Python packages**; only storage, networking, and GPU count differ.
 
@@ -113,7 +113,7 @@ scalarlm/
 │   └── cli/                  #   `scalarlm logs/plot/ls/squeue/...` CLI
 │
 ├── deployment/               # Helm charts and ansible playbooks for k8s deploy
-│   └── helm/gemma_270m_tw/scalarlm/   # api/vllm/megatron deployments, PVCs, cloudflare tunnel
+│   └── helm/gemma_270m/scalarlm/      # api/vllm/megatron deployments, PVCs, cloudflare tunnel
 │
 ├── frontend/                 # Static assets (logo, etc.)
 ├── ui/                       # First-party React SPA (served at /app/* by FastAPI)
@@ -515,7 +515,7 @@ Per-job entrypoint (`train_job_entrypoint.sh`) is called by `sbatch`, sets GPU/M
 
 ## 8. Kubernetes Deployment (`deployment/helm/`)
 
-`deployment/helm/gemma_270m_tw/scalarlm/` is a reference Helm chart tuned for TensorWave's Gemma 270M deployment. Fork it per-model.
+`deployment/helm/gemma_270m/scalarlm/` is a reference Helm chart tuned for a Gemma 270M deployment. Fork it per-model.
 
 ### 8.1 Templates
 
@@ -701,7 +701,7 @@ A short directory for navigating the code:
 | SDK sync API | `sdk/masint/api/supermassive_intelligence.py:6` | `SupermassiveIntelligence` |
 | SDK async engine | `sdk/masint/engines/async_cray.py:17` | `AsyncCray` |
 | Bashly CLI spec | `cmd/bashly.yml` | — |
-| Helm chart | `deployment/helm/gemma_270m_tw/scalarlm/` | — |
+| Helm chart | `deployment/helm/gemma_270m/scalarlm/` | — |
 
 ---
 

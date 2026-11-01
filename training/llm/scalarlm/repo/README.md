@@ -7,7 +7,7 @@ ScalarLM is an open-source platform for **closed-loop LLM experimentation** — 
 
 It is **CC-0 licensed**. You can fork it, publish with it, build on it, and ship it without restriction or attribution.
 
-Maintained by [AT&T Chief Data Office](https://www.att.com/).
+Maintained by Farbod Tavakkoli at [AT&T Chief Data Office](https://www.att.com/).
 
 ---
 
@@ -37,7 +37,7 @@ See the [Architecture page](https://www.scalarlm.com/architecture/) for a full d
 
 ## GPU Agnostic
 
-ScalarLM runs on **NVIDIA and AMD GPUs** without code changes. The training stack is built on PyTorch, and the inference stack inherits vLLM's hardware support. Deployments at TensorWave run on AMD MI300X hardware; the same Helm charts and `ml/` directory work on NVIDIA A100 and H100 clusters.
+ScalarLM runs on **NVIDIA and AMD GPUs** without code changes. The training stack is built on PyTorch, and the inference stack inherits vLLM's hardware support. The same Helm charts and `ml/` directory work on AMD MI300X and NVIDIA A100 and H100 clusters.
 
 ---
 

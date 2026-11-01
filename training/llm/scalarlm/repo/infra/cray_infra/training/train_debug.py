@@ -1,4 +1,4 @@
-"""Debug switches for the training path (from tensorwavecloud/ScalarLM PR #5).
+"""Debug switches for the training path (from upstream ScalarLM PR #5).
 
 CRAY_TRAIN_DEBUG=1   -> per-rank stderr tracing of distributed init/collectives
 CRAY_FAULT_HANDLER=1 -> faulthandler with a periodic traceback dump, which is how

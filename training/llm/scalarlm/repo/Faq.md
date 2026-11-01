@@ -123,7 +123,7 @@ Yes. Swap in a custom loss in the training loop at:
 ml/cray_megatron/megatron/training_loop.py
 ```
 
-See the [source on GitHub](https://github.com/tensorwavecloud/ScalarLM/blob/main/ml/cray_megatron/megatron/training_loop.py).
+See the [source on GitHub](https://github.com/farbodtavakkoli/OTel/blob/main/training/llm/scalarlm/ml/cray_megatron/megatron/training_loop.py).
 
 ---
 
@@ -168,7 +168,7 @@ ScalarLM shifts away from classic batch-based training. Its definitions of "step
 
 **1. No conventional batching.** ScalarLM flattens all training examples into a single continuous token stream. There is no `batch_size` parameter.
 
-**2. Token chunks (blocks).** The token stream is split into fixed-length chunks controlled by `max_token_block_size`. Each chunk contains the same number of tokens, so every GPU processes an identical workload per step. See the [chunking source](https://github.com/tensorwavecloud/ScalarLM/blob/main/ml/cray_megatron/megatron/dataset/load_dataset.py).
+**2. Token chunks (blocks).** The token stream is split into fixed-length chunks controlled by `max_token_block_size`. Each chunk contains the same number of tokens, so every GPU processes an identical workload per step. See the [chunking source](https://github.com/farbodtavakkoli/OTel/blob/main/training/llm/scalarlm/ml/cray_megatron/megatron/dataset/load_dataset.py).
 
 **3. Steps vs. epochs.**
 
@@ -199,4 +199,4 @@ Yes. See the [Save Fine-tuned Model to Hugging Face](https://www.scalarlm.com/sa
 
 ---
 
-*For more, visit [scalarlm.com](https://www.scalarlm.com) or open a [GitHub issue](https://github.com/tensorwavecloud/scalarlm/issues).*
+*For more, visit [scalarlm.com](https://www.scalarlm.com) or open a [GitHub issue](https://github.com/farbodtavakkoli/OTel/issues).*

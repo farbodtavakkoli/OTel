@@ -550,7 +550,7 @@ upload_base_path: /mnt/queue/inference_requests
 log_directory: /mnt/logs
 ```
 
-The reference Helm chart (`deployment/helm/gemma_270m_tw/scalarlm/`) already mounts `scalarlm-jobs` at `/app/cray/jobs` and `scalarlm-cache` at `/root/.cache/huggingface`; add a PVC for the queue paths if you want crash-safe inference across pod rolls.
+The reference Helm chart (`deployment/helm/gemma_270m/scalarlm/`) already mounts `scalarlm-jobs` at `/app/cray/jobs` and `scalarlm-cache` at `/root/.cache/huggingface`; add a PVC for the queue paths if you want crash-safe inference across pod rolls.
 
 ### 7.6 Extra vLLM flags not in Config
 

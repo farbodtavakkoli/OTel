@@ -47,7 +47,7 @@ LOCAL_DIRECTORY="$( cd "$( dirname "${CRAY_TRAINING_JOB_CONFIG_PATH}" )" >/dev/n
 export PYTHONPATH="${LOCAL_DIRECTORY}/ml:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 
-# NCCL/RCCL launcher (tensorwavecloud/ScalarLM PR #5)
+# NCCL/RCCL launcher (upstream ScalarLM PR #5)
 # ONE torchrun per node, each spawning one worker per GPU. nproc-per-node comes
 # from Slurm's ntasks-per-node, NOT PR #5's OMPI_COMM_WORLD_LOCAL_SIZE, which is
 # 1 on a single node and would quietly train an 8-GPU job on one GPU.

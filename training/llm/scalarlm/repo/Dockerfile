@@ -136,7 +136,7 @@ ENV BASE_NAME=cpu
 # MI355X (gfx950) port: rocm-base-mi300:v0.9926 ships torch 2.9, but the
 # vllm-fork pin (v0.27.1 era, #223) needs torch >= 2.12 stable-ABI headers
 # (torch/csrc/stable/accelerator.h). rocm/primus provides torch 2.12+rocm7.15
-# built for gfx942;gfx950. Same base swap the tensorwavecloud AMD PR (#5) made.
+# built for gfx942;gfx950. Same base swap the upstream ScalarLM AMD PR (#5) made.
 FROM rocm/primus:v26.5 AS amd
 
 ENV BASE_NAME=amd

@@ -1,6 +1,6 @@
 """NCCL/RCCL collectives via torch.distributed.
 
-Ported from tensorwavecloud/ScalarLM PR #5 ("move from mpi/ucx collectives to
+Ported from upstream ScalarLM PR #5 ("move from mpi/ucx collectives to
 nccl"). This is a drop-in replacement for the hand-written ``gpu_aware_mpi`` C++
 extension: same function names, same call signatures, so every call site only
 changes its import line.

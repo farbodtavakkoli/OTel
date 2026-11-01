@@ -10,7 +10,7 @@ index 8ec0a7d..9de9fb0 100644
 +# MI355X (gfx950) port: rocm-base-mi300:v0.9926 ships torch 2.9, but the
 +# vllm-fork pin (v0.27.1 era, #223) needs torch >= 2.12 stable-ABI headers
 +# (torch/csrc/stable/accelerator.h). rocm/primus provides torch 2.12+rocm7.15
-+# built for gfx942;gfx950. Same base swap the tensorwavecloud AMD PR (#5) made.
++# built for gfx942;gfx950. Same base swap the upstream ScalarLM AMD PR (#5) made.
 +FROM rocm/primus:v26.5 AS amd
  
  ENV BASE_NAME=amd
@@ -176,7 +176,7 @@ index 0000000..1ba1040
 @@ -0,0 +1,219 @@
 +"""NCCL/RCCL collectives via torch.distributed.
 +
-+Ported from tensorwavecloud/ScalarLM PR #5 ("move from mpi/ucx collectives to
++Ported from upstream ScalarLM PR #5 ("move from mpi/ucx collectives to
 +nccl"). This is a drop-in replacement for the hand-written ``gpu_aware_mpi`` C++
 +extension: same function names, same call signatures, so every call site only
 +changes its import line.
@@ -1917,7 +1917,7 @@ index 0000000..2f2d584
 --- /dev/null
 +++ b/infra/cray_infra/training/train_debug.py
 @@ -0,0 +1,21 @@
-+"""Debug switches for the training path (from tensorwavecloud/ScalarLM PR #5).
++"""Debug switches for the training path (from upstream ScalarLM PR #5).
 +
 +CRAY_TRAIN_DEBUG=1   -> per-rank stderr tracing of distributed init/collectives
 +CRAY_FAULT_HANDLER=1 -> faulthandler with a periodic traceback dump, which is how
@@ -3418,7 +3418,7 @@ index 0314005..3494e98 100755
  export PYTHONPATH="${LOCAL_DIRECTORY}/ml:${PYTHONPATH:-}"
 +export PYTHONUNBUFFERED=1
 +
-+# --- NCCL/RCCL launcher (tensorwavecloud/ScalarLM PR #5) ---------------------
++# --- NCCL/RCCL launcher (upstream ScalarLM PR #5) ---------------------
 +# The collectives layer is torch.distributed with the nccl backend, which needs
 +# the torchrun rendezvous environment (RANK / LOCAL_RANK / WORLD_SIZE /
 +# MASTER_ADDR / MASTER_PORT) rather than mpirun's OMPI_* variables.
