@@ -1,0 +1,13 @@
+# Application dependencies for the validated native TorchNeuron 2.14 profile.
+# Native torch, torch-neuronx, neuronx-cc, and nki come from the base environment.
+torchvision==0.29.0
+Pillow==12.3.0
+transformers @ git+https://github.com/huggingface/transformers.git@50e35cc0ca18ec19b80653690de553e6decf74f5
+sentence-transformers==6.2.0
+datasets==5.1.0
+accelerate==1.15.0
+numpy==2.5.2
+protobuf==6.33.6
+grpcio-tools==1.76.0
+huggingface-hub==2.3.0
+safetensors==0.8.0
