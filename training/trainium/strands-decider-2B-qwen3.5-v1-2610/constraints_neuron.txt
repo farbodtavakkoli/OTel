@@ -1,0 +1,5 @@
+# Prevent pip replacing the preinstalled native framework profile.
+torch==2.14.0
+torch-neuronx==2.14.3.0.1+b1b6c66
+neuronx-cc==2.28.7631.0+8f7b0cf5
+nki==0.7.0+37713544100.gfede04bb

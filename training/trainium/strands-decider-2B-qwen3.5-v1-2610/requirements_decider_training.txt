@@ -1,0 +1,19 @@
+# Native torch/compiler packages are supplied by the validated base environment.
+transformers==5.17.0
+peft==0.21.0
+accelerate==1.15.0
+huggingface-hub==1.33.0
+safetensors==0.8.0
+tokenizers==0.23.3
+python-dateutil==2.9.0.post0
+setuptools==84.2.0
+setuptools-scm==8.3.1
+wheel==0.48.0
+pydantic==2.14.1
+typer==0.27.3
+rich==15.0.0
+PyYAML==6.0.3
+fastapi==0.149.0
+uvicorn==0.54.0
+numpy==2.5.4
+urllib3==2.8.0
