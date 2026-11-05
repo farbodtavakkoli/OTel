@@ -68,6 +68,22 @@ def test_chunked_causal_loss_no_targets_is_finite_zero():
     assert torch.count_nonzero(logits.grad) == 0
 
 
+@pytest.mark.parametrize("mode", ["language_model", "grpo"])
+def test_default_language_precision_is_compensated_bf16(mode):
+    from cray_infra.util.default_job_config import JobConfig
+    config = JobConfig(job_directory="job", training_data_path="data", dataset_hash="hash", training_mode=mode)
+    assert config.training_storage_dtype == "bfloat16"
+    assert config.optimizer_type == "compensated_adamw"
+    explicit = JobConfig(job_directory="job", training_data_path="data", dataset_hash="hash", training_mode=mode, training_storage_dtype="float32")
+    assert explicit.training_storage_dtype == "float32" and explicit.optimizer_type == "adamw"
+
+
+def test_non_language_precision_defaults_remain_unchanged():
+    from cray_infra.util.default_job_config import JobConfig
+    config = JobConfig(job_directory="job", training_data_path="data", dataset_hash="hash", training_mode="embedding")
+    assert config.training_storage_dtype == "float32" and config.optimizer_type == "adamw"
+
+
 def test_grpo_and_sft_precision_are_wired():
     source = (ROOT / "models/load_model.py").read_text()
     assert 'in ("language_model", "grpo")' in source

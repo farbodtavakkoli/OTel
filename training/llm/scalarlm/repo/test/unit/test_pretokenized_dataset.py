@@ -96,6 +96,113 @@ def test_packing_masks_document_starts_and_preserves_interior_turn_masks(
     assert item["position_ids"].tolist() == list(range(8)) * 2
 
 
+def test_ten_plus_ten_rows_are_not_split_at_budget_sixteen(
+    loader, model, monkeypatch, tmp_path
+):
+    row = {
+        "input_ids": list(range(10, 20)),
+        "labels": list(range(10, 20)),
+        "attention_mask": [1] * 10,
+    }
+    configure(loader, monkeypatch, tmp_path, [row, row], pretokenized_dataset=True)
+    items = list(loader.load_language_model_dataset(model, ForbiddenTokenizer(), epoch=0))
+    assert len(items) == 2
+    for item in items:
+        assert item["input_ids"].tolist() == row["input_ids"] + [0] * 6
+        assert item["labels"].tolist() == [-100] + row["labels"][1:] + [-100] * 6
+        assert item["attention_mask"].tolist() == [1] * 10 + [0] * 6
+        assert item["position_ids"].tolist() == list(range(10)) + [0] * 6
+        assert item["document_ids"].tolist() == [0] * 10 + [1] * 6
+
+
+@pytest.mark.parametrize(
+    "lengths,groups",
+    [
+        ([], []),
+        ([2], [[0]]),
+        ([16], [[0]]),
+        ([16, 16], [[0], [1]]),
+        ([14, 2], [[0, 1]]),
+        ([2, 14], [[0, 1]]),
+        ([15, 2], [[0], [1]]),
+        ([2, 15], [[0], [1]]),
+        ([10, 10], [[0], [1]]),
+        ([8, 8, 2], [[0, 1], [2]]),
+        ([10, 6, 16, 2], [[0, 1], [2], [3]]),
+        ([10, 10, 6], [[0], [1, 2]]),
+        ([7, 7, 3, 13, 2], [[0, 1], [2, 3], [4]]),
+    ],
+)
+def test_whole_row_greedy_packing_boundaries(
+    loader, model, monkeypatch, tmp_path, lengths, groups
+):
+    rows = [
+        {
+            "input_ids": [10 + i] * length,
+            "labels": [10 + i] * length,
+            "attention_mask": [1] * length,
+            "auxiliary_mask": [2 + i] * length,
+        }
+        for i, length in enumerate(lengths)
+    ]
+    configure(loader, monkeypatch, tmp_path, rows, pretokenized_dataset=True)
+    dataset = {
+        key: [row[key] for row in rows]
+        for key in ("input_ids", "labels", "attention_mask", "auxiliary_mask")
+    }
+    original = copy.deepcopy(dataset)
+    pack = loader.get_pack_function(model, ForbiddenTokenizer())
+    result = pack(dataset)
+    expected = {key: [] for key in (*dataset, "position_ids", "document_ids")}
+    for group in groups:
+        ids, labels, positions, documents, auxiliary = [], [], [], [], []
+        for doc_idx, row_idx in enumerate(group):
+            length = lengths[row_idx]
+            ids.extend(rows[row_idx]["input_ids"])
+            labels.extend([-100] + rows[row_idx]["labels"][1:])
+            positions.extend(range(length))
+            documents.extend([doc_idx] * length)
+            auxiliary.extend(rows[row_idx]["auxiliary_mask"])
+        real_length = len(ids)
+        pad_count = 16 - real_length
+        expected["input_ids"].append(ids + [0] * pad_count)
+        expected["labels"].append(labels + [-100] * pad_count)
+        expected["attention_mask"].append([1] * real_length + [0] * pad_count)
+        expected["auxiliary_mask"].append(auxiliary + [0] * pad_count)
+        expected["position_ids"].append(positions + [0] * pad_count)
+        expected["document_ids"].append(documents + [len(group)] * pad_count)
+    assert result == expected
+    assert dataset == original
+    assert pack(dataset) == expected
+
+
+def test_whole_row_packing_rejects_misaligned_auxiliary_stream(
+    loader, model, row, monkeypatch, tmp_path
+):
+    configure(loader, monkeypatch, tmp_path, [row], pretokenized_dataset=True)
+    dataset = {key: [value] for key, value in row.items()}
+    dataset["auxiliary_mask"] = [[1]]
+    with pytest.raises(ValueError, match="misaligned auxiliary_mask"):
+        loader.get_pack_function(model, ForbiddenTokenizer())(dataset)
+
+
+@pytest.mark.parametrize("setting", [None, False])
+def test_legacy_packing_keeps_concatenate_then_split_behavior(
+    loader, model, monkeypatch, tmp_path, setting
+):
+    settings = {} if setting is None else {"pretokenized_dataset": setting}
+    configure(loader, monkeypatch, tmp_path, [], **settings)
+    dataset = {
+        "input_ids": [list(range(10, 20)), list(range(20, 30))],
+        "labels": [list(range(10, 20)), list(range(20, 30))],
+        "attention_mask": [[1] * 10, [1] * 10],
+    }
+    result = loader.get_pack_function(model, CharacterTokenizer())(dataset)
+    assert result["input_ids"] == [list(range(10, 26)), list(range(26, 30)) + [0] * 12]
+    assert result["position_ids"] == [list(range(10)) + list(range(6)), list(range(6, 10)) + [0] * 12]
+    assert result["document_ids"] == [[0] * 10 + [1] * 6, [1] * 4 + [2] * 12]
+
+
 @pytest.mark.parametrize("setting", [None, False])
 def test_legacy_input_output_still_tokenizes_and_supervises_appended_eos(
     loader, model, monkeypatch, tmp_path, setting

@@ -215,6 +215,49 @@ def get_pack_function(model, tokenizer=None):
     if budget <= 0:
         raise ValueError("max_token_block_size must be positive")
 
+    if job_config.get("pretokenized_dataset", False):
+        validate_row = get_pretokenized_validate_function(model)
+
+        def pack_whole_rows(dataset):
+            keys = list(dict.fromkeys([*dataset, "position_ids", "document_ids"]))
+            result = {key: [] for key in keys}
+            block = {key: [] for key in keys}
+            doc_idx = 0
+
+            def flush():
+                pad_count = budget - len(block["input_ids"])
+                pad_values = {
+                    "input_ids": pad_token_id,
+                    "labels": -100,
+                    "position_ids": 0,
+                    "document_ids": doc_idx,
+                }
+                for key in keys:
+                    result[key].append(block[key] + [pad_values.get(key, 0)] * pad_count)
+                    block[key] = []
+
+            for i in range(len(dataset["input_ids"])):
+                row = {key: dataset[key][i] for key in dataset}
+                validate_row(row)
+                doc_len = len(row["input_ids"])
+                for key, values in row.items():
+                    if len(values) != doc_len:
+                        raise ValueError(f"Tokenized row {i} has misaligned {key}")
+                if len(block["input_ids"]) + doc_len > budget:
+                    flush()
+                    doc_idx = 0
+                row["labels"] = [-100] + row["labels"][1:]
+                row["position_ids"] = list(range(doc_len))
+                row["document_ids"] = [doc_idx] * doc_len
+                for key in keys:
+                    block[key].extend(row[key])
+                doc_idx += 1
+            if block["input_ids"]:
+                flush()
+            return result
+
+        return pack_whole_rows
+
     def pack(dataset):
         # position_ids and document_ids are what stop packed docs bleeding into each other.
 
