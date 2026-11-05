@@ -42,6 +42,32 @@ def test_chunked_grpo_logprobs_match_full_values_and_gradients():
     torch.testing.assert_close(env["_selected_logprobs"](logits.detach(), targets), expected.detach())
 
 
+@pytest.mark.parametrize("length", [127, 128, 129, 259])
+def test_chunked_causal_loss_matches_masked_shifted_cross_entropy(length):
+    from cray_megatron.megatron.chunked_loss import chunked_causal_loss
+    torch.manual_seed(7)
+    logits = torch.randn(2, length, 31, requires_grad=True)
+    ref = logits.detach().clone().requires_grad_(True)
+    labels = torch.randint(31, (2, length))
+    labels[:, ::3] = -100
+    actual = chunked_causal_loss(logits, labels, 31)
+    expected = torch.nn.functional.cross_entropy(ref[:, :-1].reshape(-1, 31), labels[:, 1:].reshape(-1), ignore_index=-100)
+    torch.testing.assert_close(actual, expected)
+    actual.backward()
+    expected.backward()
+    torch.testing.assert_close(logits.grad, ref.grad)
+    torch.testing.assert_close(chunked_causal_loss(logits.detach(), labels, 31), expected.detach())
+
+
+def test_chunked_causal_loss_no_targets_is_finite_zero():
+    from cray_megatron.megatron.chunked_loss import chunked_causal_loss
+    logits = torch.randn(1, 129, 31, requires_grad=True)
+    loss = chunked_causal_loss(logits, torch.full((1, 129), -100), 31)
+    assert loss == 0
+    loss.backward()
+    assert torch.count_nonzero(logits.grad) == 0
+
+
 def test_grpo_and_sft_precision_are_wired():
     source = (ROOT / "models/load_model.py").read_text()
     assert 'in ("language_model", "grpo")' in source

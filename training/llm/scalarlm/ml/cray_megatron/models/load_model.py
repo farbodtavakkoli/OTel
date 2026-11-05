@@ -364,6 +364,9 @@ def materialize_model(model_info):
         if storage_dtype == "bfloat16" and job_config.get("optimizer_type") != "compensated_adamw":
             raise ValueError("BF16 training storage requires compensated_adamw")
         compute_dtype = prepare_training_precision(model_info["model"], storage_dtype)
+    if job_config.get("training_mode") == "language_model" and job_config.get("training_storage_dtype") == "bfloat16":
+        from cray_megatron.megatron.chunked_loss import chunked_causal_loss
+        model_info["model"].loss_function = chunked_causal_loss
     logger.info("Training mixed precision compute dtype=%s", compute_dtype)
     sync_freshly_initialized_heads(model_info["model"])
 
