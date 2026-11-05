@@ -148,6 +148,15 @@ class JobConfig(BaseModel):
     training_storage_dtype: Literal["float32", "bfloat16"] = "float32"
     pretokenized_dataset: bool = False
 
+    @model_validator(mode="before")
+    @classmethod
+    def default_language_training_precision(cls, values):
+        if isinstance(values, dict) and values.get("training_mode", "language_model") in ("language_model", "grpo"):
+            values = dict(values)
+            values.setdefault("training_storage_dtype", "bfloat16")
+            values.setdefault("optimizer_type", "compensated_adamw" if values["training_storage_dtype"] == "bfloat16" else "adamw")
+        return values
+
     # Freeze every parameter whose NAME contains any of these substrings, e.g.
     # ["vision_model", "vision_tower", "multi_modal_projector", "visual"] to train a
     # multimodal model's language tower only. Accepts a list or a comma-separated

@@ -52,6 +52,30 @@ def test_effective_parameter_tracks_fp32_adamw(steps, weight_decay):
     assert set(optimizer.state[param]) == {"step", "exp_avg", "exp_avg_sq", "residual"}
 
 
+def test_four_microbatch_bf16_accumulation_against_fp32():
+    initial = torch.linspace(-1, 1, 127).bfloat16()
+    param = torch.nn.Parameter(initial.clone())
+    ref = torch.nn.Parameter(initial.float())
+    optimizer = CompensatedAdamW([param], lr=1e-5, chunk_size=17)
+    reference_optimizer = torch.optim.AdamW([ref], lr=1e-5)
+    maximum_gradient_error = 0.0
+    for step in range(5):
+        optimizer.zero_grad(set_to_none=True)
+        reference_optimizer.zero_grad(set_to_none=True)
+        for microbatch in range(4):
+            grad = (torch.sin(torch.arange(127).float() * .1 + step * .01 + microbatch * .03) + .2).bfloat16()
+            (param * (grad / 4)).sum().backward()
+            (ref * (grad.float() / 4)).sum().backward()
+        assert param.grad.dtype == torch.bfloat16
+        maximum_gradient_error = max(maximum_gradient_error, (param.grad.float() - ref.grad).abs().max().item())
+        optimizer.step()
+        reference_optimizer.step()
+    effective_error = (effective_parameter(param, optimizer) - ref.detach()).abs().max().item()
+    print(f"accumulation=4 steps=5 max_gradient_error={maximum_gradient_error:.9g} max_effective_error={effective_error:.9g}")
+    assert maximum_gradient_error < .02
+    assert effective_error < 2e-6
+
+
 def test_small_updates_eventually_change_bf16_weights():
     param = torch.nn.Parameter(torch.ones(4, dtype=torch.bfloat16))
     optimizer = CompensatedAdamW([param], lr=1e-5, weight_decay=0, chunk_size=2)
