@@ -359,8 +359,11 @@ def materialize_model(model_info):
     from cray_megatron.models.training_precision import prepare_training_precision
 
     compute_dtype = None
-    if job_config.get("training_mode") == "language_model":
-        compute_dtype = prepare_training_precision(model_info["model"])
+    if job_config.get("training_mode") in ("language_model", "grpo"):
+        storage_dtype = job_config.get("training_storage_dtype", "float32")
+        if storage_dtype == "bfloat16" and job_config.get("optimizer_type") != "compensated_adamw":
+            raise ValueError("BF16 training storage requires compensated_adamw")
+        compute_dtype = prepare_training_precision(model_info["model"], storage_dtype)
     logger.info("Training mixed precision compute dtype=%s", compute_dtype)
     sync_freshly_initialized_heads(model_info["model"])
 
