@@ -679,7 +679,9 @@ class TrainingLoop:
         if is_multimodal(model_config):
             forward_kwargs["mm_token_type_ids"] = torch.zeros_like(input_ids)
 
-        logits = model(**forward_kwargs).logits  # [B, L, V], model dtype
+        compute_dtype = getattr(model, "_training_compute_dtype", None)
+        with torch.autocast(device_type=input_ids.device.type, dtype=compute_dtype or torch.bfloat16, enabled=compute_dtype is not None):
+            logits = model(**forward_kwargs).logits
 
         # Position t predicts token t+1: shift, then gather the sampled token's log-prob.
         targets = input_ids[:, 1:]
@@ -1196,6 +1198,9 @@ def get_optimizer(model):
         f"Initializing {optimizer_type} optimizer for {len(trainable)} trainable parameters"
     )
 
+    if optimizer_type == "compensated_adamw":
+        from cray_megatron.megatron.compensated_adamw import CompensatedAdamW
+        return CompensatedAdamW(trainable, lr=learning_rate)
     if optimizer_type == "adamw":
         return AdamW(trainable, lr=learning_rate)
     elif optimizer_type == "sgd":
@@ -1284,10 +1289,15 @@ def _selected_logprobs(logits, targets):
 
     rows = []
     for b in range(logits.shape[0]):
-        if logits.requires_grad:
-            rows.append(checkpoint(_row_logprobs, logits[b], targets[b], use_reentrant=False))
-        else:
-            rows.append(_row_logprobs(logits[b], targets[b]))
+        chunks = []
+        for start in range(0, logits.shape[1], 128):
+            values = logits[b, start:start + 128]
+            tokens = targets[b, start:start + 128]
+            if logits.requires_grad:
+                chunks.append(checkpoint(_row_logprobs, values, tokens, use_reentrant=False))
+            else:
+                chunks.append(_row_logprobs(values, tokens))
+        rows.append(torch.cat(chunks, dim=0))
     return torch.stack(rows, dim=0)
 
 

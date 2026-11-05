@@ -15,26 +15,41 @@ logger = logging.getLogger(__name__)
 
 
 def load_language_model_dataset(model, tokenizer, epoch):
-    hf_dataset = datasets.IterableDataset.from_generator(
-        make_dataset_generator(),
-        features=datasets.Features(
+    pretokenized = get_job_config().get("pretokenized_dataset", False)
+    if pretokenized:
+        features = datasets.Features(
+            {
+                key: datasets.Sequence(datasets.Value(dtype="int64"))
+                for key in ("input_ids", "labels", "attention_mask")
+            }
+        )
+        validate_row = get_pretokenized_validate_function(model)
+    else:
+        features = datasets.Features(
             {
                 "input": datasets.Value(dtype="string"),
                 "output": datasets.Value(dtype="string"),
             }
-        ),
+        )
+        validate_row = None
+    hf_dataset = datasets.IterableDataset.from_generator(
+        make_dataset_generator(validate_row),
+        features=features,
     )
     shuffled_dataset = hf_dataset.shuffle(seed=42 + epoch, buffer_size=256)
     split_dataset = split_dataset_by_node(shuffled_dataset)
 
-    tokenized_dataset = split_dataset.map(
-        get_tokenize_function(model, tokenizer),
-        batched=True,
-        remove_columns=[
-            "input",
-            "output",
-        ],
-    )
+    if pretokenized:
+        tokenized_dataset = split_dataset
+    else:
+        tokenized_dataset = split_dataset.map(
+            get_tokenize_function(model, tokenizer),
+            batched=True,
+            remove_columns=[
+                "input",
+                "output",
+            ],
+        )
 
     packed_dataset = tokenized_dataset.map(
         get_pack_function(model, tokenizer),
@@ -46,15 +61,55 @@ def load_language_model_dataset(model, tokenizer, epoch):
     return torch_dataset
 
 
-def make_dataset_generator():
+def make_dataset_generator(validate_row=None):
     def read_dataset():
         dataset_path = get_dataset_path()
         with open(dataset_path) as dataset_file:
             reader = jsonlines.Reader(dataset_file)
             for obj in reader:
-                yield obj
+                yield validate_row(obj) if validate_row is not None else obj
 
     return read_dataset
+
+
+def get_pretokenized_validate_function(model):
+    config = getattr(model.config, "text_config", model.config)
+    vocab_size = config.vocab_size
+    budget = min(
+        get_max_position_embeddings(model.config),
+        get_job_config()["max_token_block_size"],
+    )
+
+    def validate_row(row):
+        keys = ("input_ids", "labels", "attention_mask")
+        if not isinstance(row, dict) or any(
+            not isinstance(row.get(key), list) for key in keys
+        ):
+            raise ValueError("Pretokenized rows require input_ids, labels and attention_mask lists")
+        ids, labels, attention = (row[key] for key in keys)
+        if len(ids) < 2 or len(ids) > budget:
+            raise ValueError(f"Pretokenized row length must be between 2 and packing budget {budget}")
+        if len(labels) != len(ids) or len(attention) != len(ids):
+            raise ValueError("Pretokenized row has misaligned labels or attention_mask")
+        if any(type(token) is not int or not 0 <= token < vocab_size for token in ids):
+            raise ValueError("Pretokenized input_ids must be integer token ids within the model vocabulary")
+        if any(
+            type(label) is not int or (label != -100 and label != token)
+            for token, label in zip(ids, labels)
+        ):
+            raise ValueError("Pretokenized labels must be -100 or the corresponding input token id")
+        if any(type(mask) is not int or mask not in (0, 1) for mask in attention):
+            raise ValueError("Pretokenized attention_mask must contain integer 0 or 1 values")
+        if any(label != -100 and mask == 0 for label, mask in zip(labels, attention)):
+            raise ValueError("Pretokenized labels must mask unattended tokens with -100")
+        if not any(
+            labels[i] != -100 and attention[i - 1] == 1 and attention[i] == 1
+            for i in range(1, len(ids))
+        ):
+            raise ValueError("Pretokenized row must contain a supervised shifted target")
+        return {key: row[key] for key in keys}
+
+    return validate_row
 
 
 def get_dataset_path():

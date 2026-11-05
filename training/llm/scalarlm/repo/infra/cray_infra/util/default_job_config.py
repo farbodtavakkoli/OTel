@@ -145,6 +145,8 @@ class JobConfig(BaseModel):
     # are also constructed over trainable parameters only. An unknown value logs a
     # warning and falls back to AdamW rather than failing the job.
     optimizer_type: str = "adamw"
+    training_storage_dtype: Literal["float32", "bfloat16"] = "float32"
+    pretokenized_dataset: bool = False
 
     # Freeze every parameter whose NAME contains any of these substrings, e.g.
     # ["vision_model", "vision_tower", "multi_modal_projector", "visual"] to train a
