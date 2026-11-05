@@ -45,7 +45,11 @@ def doc_mask_decision(batch, seq_len: int, model_config, max_4d_mask_seq_len: in
     if "document_ids" not in batch:
         return NONE
     if is_multimodal(model_config):
-        return SKIP_MULTIMODAL
+        text_only_glimmer = getattr(model_config, "model_type", None) == "muse_glimmer" and not any(
+            key in batch for key in ("pixel_values", "pixel_values_videos", "image_grid_thw", "video_grid_thw")
+        )
+        if not text_only_glimmer:
+            return SKIP_MULTIMODAL
     if has_ssm_layers(model_config):
         return SKIP_SSM
     if seq_len > max_4d_mask_seq_len:

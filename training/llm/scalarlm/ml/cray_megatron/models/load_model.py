@@ -211,8 +211,9 @@ def materialize_model(model_info):
     load_kwargs = {"torch_dtype": _resolve_dtype(job_config) or "auto"}
     # Shared by both from_pretrained calls, so the flag reaches SDPA and the eager fallback alike.
     load_kwargs["trust_remote_code"] = bool(job_config.get("trust_remote_code", False))
+    sharded = get_size() > 1 and job_config.get("distribution_strategy", "fsdp") in ("fsdp", "pytorch_fsdp")
     if on_gpu:
-        load_kwargs["device_map"] = {"": device}
+        load_kwargs["device_map"] = {"": "cpu" if sharded else device}
         load_kwargs["low_cpu_mem_usage"] = True
 
     if is_classification:
@@ -355,7 +356,12 @@ def materialize_model(model_info):
         f"model dtype conversion latency: {total_time:.2f}s ({total_time/60:.1f} minutes)"
     )
 
-    # Must happen BEFORE the distribution strategy wraps/shards the model.
+    from cray_megatron.models.training_precision import prepare_training_precision
+
+    compute_dtype = None
+    if job_config.get("training_mode") == "language_model":
+        compute_dtype = prepare_training_precision(model_info["model"])
+    logger.info("Training mixed precision compute dtype=%s", compute_dtype)
     sync_freshly_initialized_heads(model_info["model"])
 
     model_info["model"] = model_info["distribution_strategy"]["strategy"](
@@ -365,7 +371,7 @@ def materialize_model(model_info):
     if is_main_rank():
         logger.info(f"Model: {model_info['model']}")
 
-    if on_gpu:
+    if on_gpu and not sharded:
         # device_map already materialized the model on-device; a further .to(device) would re-peak.
         logger.info(
             f"Model already on device via device_map: "

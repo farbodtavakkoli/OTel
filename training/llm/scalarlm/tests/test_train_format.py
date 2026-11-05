@@ -75,6 +75,28 @@ def test_qwen3_split_point(train):
     assert row["output"] == "A mobile standard.<|im_end|>"
 
 
+def test_schedule_client_round_trips(train, monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["train.py", "--warmup_steps", "2", "--scheduler_type", "cosine", "--dtype", "float32"])
+    args = train.build_train_args(train.parse_args())
+    assert args["warmup_steps"] == 2
+    assert args["scheduler_type"] == "cosine"
+    assert args["dtype"] == "float32"
+
+
+def test_schedule_client_defaults_remain_linear(train, monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["train.py"])
+    args = train.build_train_args(train.parse_args())
+    assert args["warmup_steps"] == 0
+    assert args["scheduler_type"] == "linear"
+    assert args["dtype"] == "auto"
+
+
+def test_schedule_client_rejects_unknown_scheduler(train, monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["train.py", "--scheduler_type", "bad"])
+    with pytest.raises(SystemExit):
+        train.parse_args()
+
+
 def test_entire_sequence_unchanged(train):
     config = Namespace(gradient_calculation="entire_sequence", model_type="qwen3")
     row = train.format_for_scalarlm(EXAMPLE, config)

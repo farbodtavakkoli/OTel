@@ -3,7 +3,7 @@ import logging
 import torch
 import torch.nn as nn
 from torch.distributed.device_mesh import init_device_mesh
-from torch.distributed.fsdp import fully_shard
+from torch.distributed.fsdp import MixedPrecisionPolicy, fully_shard
 
 from cray_infra.training.distributed import get_rank, get_size
 from cray_infra.util.get_job_config import get_job_config
@@ -86,6 +86,11 @@ class PyTorchFSDP(nn.Module):
                 job_config.get("reshard_after_forward", False)
             )
         }
+        compute_dtype = getattr(model, "_training_compute_dtype", None)
+        if compute_dtype is not None:
+            self._fully_shard_kwargs["mp_policy"] = MixedPrecisionPolicy(
+                param_dtype=compute_dtype, reduce_dtype=torch.float32
+            )
         if mesh is not None:
             self._fully_shard_kwargs["mesh"] = mesh
 
