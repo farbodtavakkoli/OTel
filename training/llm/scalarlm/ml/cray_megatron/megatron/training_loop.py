@@ -549,7 +549,8 @@ class TrainingLoop:
                 causal = torch.ones(
                     seq_len, seq_len, device=device, dtype=torch.bool
                 ).tril()
-                forward_kwargs["attention_mask"] = (same_doc & causal).unsqueeze(1)
+                valid_keys = batch["attention_mask"].to(device).bool().unsqueeze(1)
+                forward_kwargs["attention_mask"] = (same_doc & causal & valid_keys).unsqueeze(1)
             forward_kwargs["position_ids"] = batch["position_ids"].to(device)
         elif decision == SKIP_SEQLEN:
             _warn_doc_mask_skipped(seq_len)
@@ -562,7 +563,11 @@ class TrainingLoop:
             )
 
         # forward pass
-        loss = self.training_state.model_info["model"](**forward_kwargs).loss
+        model = self.training_state.model_info["model"]
+        compute_dtype = getattr(model, "_training_compute_dtype", None)
+        device_type = forward_kwargs["input_ids"].device.type
+        with torch.autocast(device_type=device_type, dtype=compute_dtype or torch.bfloat16, enabled=compute_dtype is not None):
+            loss = model(**forward_kwargs).loss
 
         # Scale loss to account for accumulation
         scaled_loss = loss / gradient_accumulation_steps
@@ -1214,27 +1219,25 @@ def get_warmup_steps():
 
 def get_scheduler(optimizer, max_steps):
     warmup_steps = get_warmup_steps()
-    if warmup_steps <= 0:
-        return torch.optim.lr_scheduler.LinearLR(
-            optimizer,
-            start_factor=1.0,
-            end_factor=0.0,
-            total_iters=max_steps,
+    scheduler_type = get_job_config().get("scheduler_type", "linear")
+    if max_steps <= 0 or not 0 <= warmup_steps < max_steps:
+        raise ValueError("max_steps must be positive and warmup_steps must be less than max_steps")
+    if scheduler_type not in ("linear", "cosine"):
+        raise ValueError(f"Unknown scheduler_type {scheduler_type!r}")
+    decay_steps = max_steps - warmup_steps
+    if scheduler_type == "cosine":
+        decay = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=decay_steps)
+    else:
+        decay = torch.optim.lr_scheduler.LinearLR(
+            optimizer, start_factor=1.0, end_factor=0.0, total_iters=decay_steps
         )
-
-    # Ramp from lr/1000 to lr over warmup_steps, then decay linearly to 0.
-    decay_steps = max(1, max_steps - warmup_steps)
+    if warmup_steps == 0:
+        return decay
     warmup = torch.optim.lr_scheduler.LinearLR(
         optimizer,
         start_factor=1e-3,
         end_factor=1.0,
         total_iters=warmup_steps,
-    )
-    decay = torch.optim.lr_scheduler.LinearLR(
-        optimizer,
-        start_factor=1.0,
-        end_factor=0.0,
-        total_iters=decay_steps,
     )
     return torch.optim.lr_scheduler.SequentialLR(
         optimizer,

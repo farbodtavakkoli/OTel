@@ -124,10 +124,14 @@ def add_eos_token(tokens, model, tokenizer):
         else:
             eos_token = model.generation_config.eos_token_id
 
-    tokens["input_ids"] = [input_ids + [eos_token] for input_ids in tokens["input_ids"]]
-    tokens["attention_mask"] = [
-        attention_mask + [1] for attention_mask in tokens["attention_mask"]
-    ]
+    if eos_token is None:
+        return tokens
+    for i, input_ids in enumerate(tokens["input_ids"]):
+        if not input_ids or input_ids[-1] != eos_token:
+            tokens["input_ids"][i] = input_ids + [eos_token]
+            tokens["attention_mask"][i] = tokens["attention_mask"][i] + [1]
+            if "labels" in tokens:
+                tokens["labels"][i] = tokens["labels"][i] + [eos_token]
 
     return tokens
 
@@ -153,9 +157,8 @@ def get_pack_function(model, tokenizer=None):
         get_max_position_embeddings(model.config), job_config["max_token_block_size"]
     )
 
-    # One RNG per pack function, seeded per job, for deterministic sampling.
-    sampling_seed = job_config.get("sampling_seed", 42)
-    rng = random.Random(sampling_seed)
+    if budget <= 0:
+        raise ValueError("max_token_block_size must be positive")
 
     def pack(dataset):
         # position_ids and document_ids are what stop packed docs bleeding into each other.
@@ -172,23 +175,18 @@ def get_pack_function(model, tokenizer=None):
             doc_len = len(ids)
 
             if doc_len > budget:
-                # Keep the original indices as position_ids so RoPE still sees the true token distances.
-                indices = sorted(rng.sample(range(doc_len), budget))
-
-                compressed_input_ids.extend([ids[idx] for idx in indices])
-                compressed_labels.extend([labels[idx] for idx in indices])
-                compressed_position_ids.extend(indices)
-                current_doc_len = budget
-            else:
-                compressed_input_ids.extend(ids)
-                compressed_labels.extend(labels)
-                compressed_position_ids.extend(range(doc_len))
-                current_doc_len = doc_len
-
-            compressed_document_ids.extend([doc_idx] * current_doc_len)
+                raise ValueError(
+                    f"Tokenized row {i} has {doc_len} tokens, exceeding packing budget {budget}; "
+                    "no tokens were truncated. Increase max_token_block_size or prepare the data explicitly."
+                )
+            if len(labels) != doc_len:
+                raise ValueError(f"Tokenized row {i} has misaligned labels")
+            compressed_input_ids.extend(ids)
+            compressed_labels.extend([-100] + labels[1:] if doc_len else [])
+            compressed_position_ids.extend(range(doc_len))
+            compressed_document_ids.extend([doc_idx] * doc_len)
             doc_idx += 1
 
-        # Other keys are packed in a second pass with an identically seeded rng.
         concatenated_dataset = {
             "input_ids": compressed_input_ids,
             "labels": compressed_labels,
@@ -196,23 +194,12 @@ def get_pack_function(model, tokenizer=None):
             "document_ids": compressed_document_ids,
         }
         extra_keys = [k for k in dataset.keys() if k not in concatenated_dataset]
-        if extra_keys:
-            replay_rng = random.Random(sampling_seed)
-            for i in range(len(dataset["input_ids"])):
-                doc_len = len(dataset["input_ids"][i])
-                if doc_len > budget:
-                    indices = sorted(replay_rng.sample(range(doc_len), budget))
-                    for k in extra_keys:
-                        val = dataset[k][i]
-                        if k not in concatenated_dataset:
-                            concatenated_dataset[k] = []
-                        concatenated_dataset[k].extend([val[idx] for idx in indices])
-                else:
-                    for k in extra_keys:
-                        val = dataset[k][i]
-                        if k not in concatenated_dataset:
-                            concatenated_dataset[k] = []
-                        concatenated_dataset[k].extend(val)
+        for k in extra_keys:
+            concatenated_dataset[k] = []
+            for i, val in enumerate(dataset[k]):
+                if len(val) != len(dataset["input_ids"][i]):
+                    raise ValueError(f"Tokenized row {i} has misaligned {k}")
+                concatenated_dataset[k].extend(val)
 
         # Pad the tail to a whole block rather than truncating: short blocks fail torch.stack.
         total_length = len(concatenated_dataset.get("input_ids", []))

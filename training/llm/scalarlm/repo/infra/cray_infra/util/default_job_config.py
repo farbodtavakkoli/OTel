@@ -1,6 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
-from typing import Optional, Union
+from typing import Literal, Optional, Union
 
 
 class LoraConfig(BaseModel):
@@ -116,7 +116,14 @@ class JobConfig(BaseModel):
 
     # Linear warmup before the LinearLR decay; 0 disables it. Recommended 1-5%
     # of max_steps for LoRA on large models, to avoid early-training NaN bursts.
-    warmup_steps: int = 0
+    warmup_steps: int = Field(default=0, ge=0)
+    scheduler_type: Literal["linear", "cosine"] = "linear"
+
+    @model_validator(mode="after")
+    def validate_schedule(self):
+        if self.max_steps <= 0 or self.warmup_steps >= self.max_steps:
+            raise ValueError("max_steps must be positive and warmup_steps must be less than max_steps")
+        return self
 
     # 0 disables; otherwise log torch.cuda.memory_allocated/reserved
     # every N steps. Used to distinguish a real leak (allocated

@@ -42,6 +42,9 @@ def parse_args():
     # without it a passed flag stays a str and the server fails comparing it.
     parser.add_argument('--max_steps', default = 11, type=int)
     parser.add_argument('--learning_rate', default = 0.0005, type=float)
+    parser.add_argument('--warmup_steps', default=0, type=int)
+    parser.add_argument('--scheduler_type', default='linear', choices=['linear', 'cosine'])
+    parser.add_argument('--dtype', default='auto', choices=['auto', 'float32', 'float16', 'bfloat16'])
     parser.add_argument('--batch_size', default = 2, type=int)
     parser.add_argument('--max_token_block_size', default = 1762, type=int)
 
@@ -223,6 +226,9 @@ def build_train_args(config):
         # Scheduling / shape
         "max_steps": config.max_steps,
         "learning_rate": config.learning_rate,
+        "warmup_steps": getattr(config, "warmup_steps", 0),
+        "scheduler_type": getattr(config, "scheduler_type", "linear"),
+        "dtype": getattr(config, "dtype", "auto"),
         "gpus": config.gpus,
         "nodes": config.nodes,
         "batch_size": config.batch_size,

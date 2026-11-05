@@ -1,0 +1,11 @@
+FROM farbodatdocker/scalarlm:h100-v2.3@sha256:bcedc555f0427087ccd082755e74494a3678d248a54458c3e49e30e4faa0b05b
+ARG REVISION
+COPY ml /app/cray/ml
+COPY infra/cray_infra/util/default_job_config.py /app/cray/infra/cray_infra/util/default_job_config.py
+COPY test/unit/test_training_patch.py /app/cray/test/unit/test_training_patch.py
+RUN python -m compileall -q /app/cray/ml /app/cray/infra/cray_infra/util/default_job_config.py
+LABEL maintainer="Farbod Tavakkoli <farbodtavakoli@gmail.com>"
+LABEL org.opencontainers.image.authors="Farbod Tavakkoli <farbodtavakoli@gmail.com>"
+LABEL org.opencontainers.image.revision="${REVISION}"
+LABEL org.opencontainers.image.version="h100-v2.4"
+CMD ["/app/cray/scripts/start_one_server.sh"]
