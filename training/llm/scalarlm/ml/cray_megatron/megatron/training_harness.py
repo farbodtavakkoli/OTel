@@ -57,6 +57,8 @@ def get_status():
     try:
         with open(os.path.join(get_training_job_directory(), "status.json"), "r") as f:
             return json.load(f)
+    except FileNotFoundError:
+        return {"status": "unknown"}
     except Exception as e:
         logger.error(f"Error loading job status: {e}")
         return {"status": "unknown"}

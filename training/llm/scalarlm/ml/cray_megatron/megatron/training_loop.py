@@ -1070,9 +1070,9 @@ class TrainingLoop:
         )
 
     def print_device_info(self):
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         idx = self.training_state.model_info["distribution_strategy"]["device"]
-        logger.info(f"Using device {device}:{idx}")
+        device = f"cuda:{idx}" if isinstance(idx, int) else str(idx)
+        logger.info(f"Using device {device}")
 
 
 def get_callbacks(trainer):

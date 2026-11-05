@@ -228,7 +228,7 @@ $GRPO_ENV_DIR/env_scalarlm/bin/python train_llm_grpo_scalarlm.py \
   --model $GRPO_SHARED_DIR/models/<org>--<name> --data ../grpo_common/data/grpo_prompts.jsonl \
   --output-dir <run> --steps 2 --warmup-steps 0 --prompt-batch-size 8 --group-size 4 --max-tokens 256 \
   --keep-zero-spread --start-server --render-nodes 0 1 \
-  --image farbodatdocker/scalarlm:h100-v1.9 --verify
+  --image farbodatdocker/scalarlm:h100-v2.3 --verify
 ```
 
 | Flag | Default | Meaning |
@@ -237,7 +237,7 @@ $GRPO_ENV_DIR/env_scalarlm/bin/python train_llm_grpo_scalarlm.py \
 | `--steps` / `--prompt-batch-size` / `--group-size` | 20 / 32 / 8 | cycles, prompts per cycle, completions per prompt |
 | `--render-nodes` | required with `--start-server` | first entry is the vLLM GPU, the rest train; device paths on ROCm, indices on CUDA |
 | `--trainer-gpus` / `--gpu-mem-util` | 1 / 0.85 | use about 0.35 with a single render node |
-| `--persistent-trainer` | off | one training job loads the model once and trains every cycle; needs an image built from this commit or newer |
+| `--persistent-trainer` | off | one training job loads the model once and trains every cycle; needs `h100-2.0` or newer |
 | `--keep-zero-spread` | off | also train groups whose rewards are all equal |
 | `--verify` | off | checks adapter continuation, PEFT export and a generate through the hot loaded adapter |
 
@@ -257,11 +257,11 @@ Runbooks: `docs/DOCKER_IMAGE_MI355.md` (AMD) and `docs/DOCKER_IMAGE_H100.md` (NV
 | Tag | Hardware |
 |---|---|
 | `farbodatdocker/scalarlm:mi355-v1.8` | AMD MI355X, gfx950 / ROCm 7.2.4, includes GRPO |
-| `farbodatdocker/scalarlm:h100-v1.9` | NVIDIA H100, sm_90 / CUDA 12.9, vLLM v0.32, includes GRPO, Muse Glimmer and EFA |
+| `farbodatdocker/scalarlm:h100-v2.3` | NVIDIA H100, sm_90 / CUDA 12.9, vLLM v0.32, includes GRPO, persistent GRPO trainer, Muse Glimmer and EFA |
 
 ```bash
 docker pull farbodatdocker/scalarlm:mi355-v1.8     # AMD MI355X
-docker pull farbodatdocker/scalarlm:h100-v1.9      # NVIDIA H100
+docker pull farbodatdocker/scalarlm:h100-v2.3      # NVIDIA H100
 ```
 
 Build either from source (the script auto-detects the vendor; set `TARGET` to be explicit):
@@ -269,8 +269,11 @@ Build either from source (the script auto-detects the vendor; set `TARGET` to be
 ```bash
 cd docs
 TARGET=amd    IMAGE_TAG=mi355-v1.8 ./build_image.sh
-TARGET=nvidia IMAGE_TAG=h100-v1.9  ./build_image.sh
+TARGET=nvidia IMAGE_TAG=h100-v2.3  ./build_image.sh
 ```
+
+`h100-v2.3` adds over `h100-v2.2`: `hf_xet` pinned in the trainer requirements, no false `Error loading job status`
+line when a new job starts, and a clean `Using device cuda:N` log line.
 
 Read an image's source revision from its `org.opencontainers.image.revision` label with
 `docker inspect`; do not infer it from the tag. Both images are self-starting — `docker run
@@ -284,7 +287,7 @@ docker run -d --name scalarlm --gpus '"device=0"' --ipc host --shm-size=64g \
   -e SCALARLM_MAX_GPUS_PER_NODE=8 \
   --cap-add SYS_PTRACE -p 8000:8000 -p 8001:8001 \
   -v /path/to/hf-cache:/root/.cache/huggingface \
-  farbodatdocker/scalarlm:h100-v1.9
+  farbodatdocker/scalarlm:h100-v2.3
 # curl http://localhost:8000/v1/health -> {"api":"up","vllm":"up","all":"up"}
 ```
 
