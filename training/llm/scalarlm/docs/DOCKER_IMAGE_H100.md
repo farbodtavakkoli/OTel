@@ -9,17 +9,17 @@ is in [`../readme_scalarlm.md`](../readme_scalarlm.md). The AMD image and the sh
 
 | Tag | Hardware |
 |---|---|
-| `farbodatdocker/scalarlm:h100-v1.9` | NVIDIA H100 (`sm_90`), GRPO, native Muse Glimmer, EFA |
+| `farbodatdocker/scalarlm:h100-v2.3` | NVIDIA H100 (`sm_90`), GRPO, native Muse Glimmer, EFA |
 | `farbodatdocker/scalarlm:mi355-v1.8` | AMD MI355X (ROCm), see the other runbook |
 
 ```bash
-docker pull farbodatdocker/scalarlm:h100-v1.9
+docker pull farbodatdocker/scalarlm:h100-v2.3
 ```
 
-`h100-v1.9` supports `ddp`, `fsdp` and `pytorch_fsdp`, LoRA, full parameter training and the
-GRPO mode, and serves and trains `meta-models/Muse-Glimmer-30B`. It replaces `h100-v1.8` and adds
-EFA for multi node NCCL and a server shutdown that stops only its own processes. `h100-v1.8`
-replaced `h100-v1.7`.
+`h100-v2.3` supports `ddp`, `fsdp` and `pytorch_fsdp`, LoRA, full parameter training and
+persistent GRPO, and serves and trains `meta-models/Muse-Glimmer-30B`. It adds the `hf_xet`
+pin and fixes the missing status and device log messages over `h100-v2.2`.
+EFA and server shutdown scoped to its own processes remain included.
 
 | Component | Version |
 |---|---|
@@ -35,8 +35,10 @@ The image runs natively on drivers with CUDA 12.9 or newer. Identify a pulled im
 revision label, not the tag:
 
 ```bash
-docker inspect farbodatdocker/scalarlm:h100-v1.9 \
+docker inspect farbodatdocker/scalarlm:h100-v2.3 \
   --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+# h100-v2.3 -> 320f00f4c951619d0c4d2000d7d9cc71b0c6d698
+# v2.3 local digest -> sha256:bcedc555f0427087ccd082755e74494a3678d248a54458c3e49e30e4faa0b05b
 # h100-v1.9 -> e93b0fb1384ef11cb1afa5de90a314c9b9cb2c4d
 # h100-v1.8 -> c44453419e41d831b7caaebce7ebcedc3f608468
 # v1.8 digest -> sha256:8094eb166244ae6c9087944f863a10272860a4e747dbd65ef195812899aa7709
@@ -50,7 +52,7 @@ Helm chart:
 ```yaml
 image:
   repository: farbodatdocker/scalarlm
-  tag: h100-v1.9
+  tag: h100-v2.3
   pullPolicy: Always
 ```
 
@@ -63,7 +65,7 @@ docker run -d --name scalarlm --gpus '"device=0"' --ipc host --shm-size=64g \
   -e SCALARLM_MODEL=Qwen/Qwen3-0.6B -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 \
   --cap-add SYS_PTRACE -p 8000:8000 -p 8001:8001 \
   -v /path/to/hf-cache:/root/.cache/huggingface \
-  farbodatdocker/scalarlm:h100-v1.9
+  farbodatdocker/scalarlm:h100-v2.3
 
 curl http://localhost:8000/v1/health
 # {"api":"up","vllm":"up","all":"up"}
@@ -105,8 +107,8 @@ Notes:
 Run gate 1 with the runner script, not `pytest` directly:
 
 ```bash
-./run_unit_tests.sh h100-v1.9              # expect: 837 passed, 2 deselected
-WITH_CMD=1 ./run_unit_tests.sh h100-v1.9   # also runs the two cmd/ tests: 839 passed
+./run_unit_tests.sh h100-v2.3              # expect: 855 passed, 2 deselected
+WITH_CMD=1 ./run_unit_tests.sh h100-v2.3   # expect: 857 passed; includes the two cmd tests
 ```
 
 A bare `python3 -m pytest test/unit` reports 18 failures on either vendor's image. They come
@@ -116,7 +118,23 @@ from the harness: the FSDP tests need the `torchrun` rendezvous variables, and t
 The script uses `--gpus all`. On a host without the container toolkit, run the same command it
 runs inside the container with the manual passthrough from note 7.
 
-Results on 8xH100 (driver 580) for `h100-v1.9`, model `meta-models/Muse-Glimmer-30B`:
+Verified on `h100-v2.3`, model `meta-models/Muse-Glimmer-30B`:
+
+| Check | Result |
+|---|---|
+| Revision | `320f00f4c951619d0c4d2000d7d9cc71b0c6d698`, no dirty suffix |
+| `hf_xet` | 1.8.0, import and Xet availability checks passed |
+| Unit suite | 855 passed, 2 deselected |
+| Full parameter SFT, 8 GPUs | 5 steps, final loss 0.0047, completed with exit 0 |
+| Final SFT checkpoint | `checkpoint_4.pt`, about 171 GB, saved successfully |
+| Persistent LoRA GRPO, 8 GPUs | 5 cycles, completed with exit 0 |
+
+These are smoke tests on tiny samples, not model quality evaluations. Local MLflow metric
+uploads were unavailable; the metrics were preserved in logs. The earlier five record SFT
+attempt left three of eight ranks empty and timed out. Use at least one record per rank.
+The GRPO launcher's final server kill is expected teardown.
+
+Historical results on 8xH100 (driver 580) for `h100-v1.9`, model `meta-models/Muse-Glimmer-30B`:
 
 | Check | Result |
 |---|---|
@@ -153,14 +171,14 @@ and stamps the provenance labels:
 
 ```bash
 cd training/llm/scalarlm/docs
-TARGET=nvidia IMAGE_TAG=h100-v1.9 ./build_image.sh
+TARGET=nvidia IMAGE_TAG=h100-v2.3 ./build_image.sh
 ```
 
 For a CUDA 13 host (untested):
 
 ```bash
 EXTRA_BUILD_ARGS="--build-arg CUDA_VERSION=13.0.3 --build-arg TORCH_CUDA_INDEX=cu130" \
-  TARGET=nvidia IMAGE_TAG=h100-v1.9 ./build_image.sh
+  TARGET=nvidia IMAGE_TAG=h100-v2.3 ./build_image.sh
 ```
 
 Build from a clean checkout, or the revision label ends in `-dirty`. The Dockerfile uses BuildKit
@@ -181,7 +199,7 @@ shared with the AMD build. It needs `RANK`, `LOCAL_RANK` and `WORLD_SIZE`, which
 To change only `ml/` or pin a model:
 
 ```dockerfile
-FROM farbodatdocker/scalarlm:h100-v1.9
+FROM farbodatdocker/scalarlm:h100-v2.3
 COPY ml/ /app/cray/ml/
 ENV SCALARLM_MODEL=Qwen/Qwen3-0.6B
 ```
@@ -197,8 +215,10 @@ scratch.
 
 ```bash
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
-docker login -u <dockerhub-username>
-docker push <namespace>/scalarlm:<tag>
+read -rsp 'Docker Hub token: ' DOCKER_TOKEN; printf '\n'
+printf '%s' "$DOCKER_TOKEN" | docker login -u farbodatdocker --password-stdin
+unset DOCKER_TOKEN
+docker push farbodatdocker/scalarlm:h100-v2.3
 ```
 
 Docker Hub needs a Personal Access Token as the password (hub.docker.com, Account Settings,

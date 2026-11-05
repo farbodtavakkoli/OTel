@@ -141,7 +141,7 @@ ScalarLM deploys any Hugging Face-hosted model. The following have been validate
 
 | Target | Container | Latest Release |
 |---|---|---|
-| NVIDIA H100 | `farbodatdocker/scalarlm` | `farbodatdocker/scalarlm:h100-2.0` |
+| NVIDIA H100 | `farbodatdocker/scalarlm` | `farbodatdocker/scalarlm:h100-v2.3` |
 | AMD MI355 | `farbodatdocker/scalarlm` | `farbodatdocker/scalarlm:mi355-v1.8` |
 | AWS Trainium2 | `farbodatdocker/scalarlm` | `farbodatdocker/scalarlm:trainium2-v1.0` |
 | NVIDIA BLACKWELL | `gdiamos/scalarlm-nvidia-12.0:latest` | `gdiamos/scalarlm-nvidia-12.0:v1.0` |
