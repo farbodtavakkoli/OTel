@@ -18,7 +18,7 @@ LoRA / tokenformer / full-parameter training on FSDP or DDP.
 > `docker inspect` against the checkout you are submitting from.
 
 **Hardware:** the client is pure Python and runs anywhere. The server image is built for
-AMD MI355X (gfx950 / ROCm 7.2.4, RCCL) or NVIDIA H100 (sm_90 / CUDA 13, NCCL).
+AMD MI355X (gfx950 / ROCm 7.2.4, RCCL) or NVIDIA H100 (sm_90 / CUDA 12.9, NCCL).
 The same `ml/` also trains and serves on AWS Trainium2; see [Trainium2](#trainium2).
 
 ## Files
@@ -43,7 +43,7 @@ The same `ml/` also trains and serves on AWS Trainium2; see [Trainium2](#trainiu
 - `docs/DOCKER_IMAGE_MI355.md`, `docs/DOCKER_IMAGE_H100.md` — server-image runbooks.
 - `data/` — small sample datasets for each mode.
 
-There is exactly one `ml/` tree in version control — this one — so the image always bakes
+`ml/` is the canonical recipe; `repo/ml/` is its tracked, synchronized copy, so the image always bakes
 the recipe you see here.
 
 ## Setup
