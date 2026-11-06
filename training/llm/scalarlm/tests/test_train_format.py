@@ -97,6 +97,64 @@ def test_schedule_client_rejects_unknown_scheduler(train, monkeypatch):
         train.parse_args()
 
 
+def test_sft_defaults_to_full_parameter_compensated_bf16(train, monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["train.py"])
+    config = train.parse_args()
+    assert config.optimizer_type is None
+    args = train.build_train_args(config)
+    assert args["adapter_type"] == "none"
+    assert args["training_storage_dtype"] == "bfloat16"
+    assert args["optimizer_type"] == "compensated_adamw"
+    assert args["dtype"] == "auto"
+
+
+@pytest.mark.parametrize("storage,optimizer", [("float32", "adamw"), ("bfloat16", "compensated_adamw")])
+def test_sft_storage_override_infers_optimizer(train, monkeypatch, storage, optimizer):
+    monkeypatch.setattr(sys, "argv", ["train.py", "--training_storage_dtype", storage])
+    args = train.build_train_args(train.parse_args())
+    assert args["training_storage_dtype"] == storage
+    assert args["optimizer_type"] == optimizer
+
+
+@pytest.mark.parametrize("storage", ["float32", "bfloat16"])
+@pytest.mark.parametrize("optimizer", ["compensated_adamw", "adamw", "sgd", "rmsprop"])
+def test_sft_explicit_optimizer_is_preserved(train, monkeypatch, storage, optimizer):
+    monkeypatch.setattr(sys, "argv", ["train.py", "--training_storage_dtype", storage,
+                                      "--optimizer_type", optimizer, "--adapter_type", "lora"])
+    args = train.build_train_args(train.parse_args())
+    assert args["adapter_type"] == "lora"
+    assert args["training_storage_dtype"] == storage
+    assert args["optimizer_type"] == optimizer
+
+
+@pytest.mark.parametrize("mode", ["embedding", "classification"])
+def test_nonlanguage_modes_keep_float32_adamw_defaults(train, monkeypatch, mode):
+    monkeypatch.setattr(sys, "argv", ["train.py", "--training_mode", mode])
+    args = train.build_train_args(train.parse_args())
+    assert args["training_storage_dtype"] == "float32"
+    assert args["optimizer_type"] == "adamw"
+
+
+@pytest.mark.parametrize("optimizer", [None, "adamw", "sgd"])
+def test_older_namespace_without_storage_dtype_remains_supported(train, monkeypatch, optimizer):
+    monkeypatch.setattr(sys, "argv", ["train.py"])
+    config = train.parse_args()
+    del config.training_storage_dtype
+    config.optimizer_type = optimizer
+    args = train.build_train_args(config)
+    assert args["training_storage_dtype"] == "bfloat16"
+    assert args["optimizer_type"] == (optimizer or "compensated_adamw")
+
+
+@pytest.mark.parametrize("flag", ["--training_storage_dtype", "--optimizer_type"])
+def test_sft_precision_cli_rejects_unknown_choices(train, monkeypatch, capsys, flag):
+    monkeypatch.setattr(sys, "argv", ["train.py", flag, "invalid"])
+    with pytest.raises(SystemExit) as error:
+        train.parse_args()
+    assert error.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err
+
+
 def test_entire_sequence_unchanged(train):
     config = Namespace(gradient_calculation="entire_sequence", model_type="qwen3")
     row = train.format_for_scalarlm(EXAMPLE, config)

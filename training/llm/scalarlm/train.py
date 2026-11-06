@@ -64,9 +64,10 @@ def parse_args():
     parser.add_argument('--adapter_type', default='none', choices=['lora', 'tokenformer', 'none'],
                         help='lora: recommended for most use cases; tokenformer: may need recipe '
                              'changes; none: full parameter training')
-    parser.add_argument('--optimizer_type', default='adamw', choices=['adamw', 'sgd', 'rmsprop'],
-                        help='New optimizers must also be added to the server-side training loop '
-                             '(ml/cray_megatron/megatron/training_loop.py)')
+    parser.add_argument('--training_storage_dtype', default=None, choices=['bfloat16', 'float32'],
+                        help='Default: bfloat16 for language_model, float32 for other modes')
+    parser.add_argument('--optimizer_type', default=None, choices=['compensated_adamw', 'adamw', 'sgd', 'rmsprop'],
+                        help='Default: compensated_adamw for bfloat16 storage, adamw for float32')
     parser.add_argument('--gradient_accumulation_steps', default=4, type=int)
     parser.add_argument('--gradient_checkpointing', default=True, type=_str2bool)
     parser.add_argument('--distribution_strategy', default='fsdp',
@@ -222,6 +223,10 @@ def get_dataset(config):
     return dataset
 
 def build_train_args(config):
+    training_storage_dtype = getattr(config, 'training_storage_dtype', None) or (
+        'bfloat16' if config.training_mode == 'language_model' else 'float32')
+    optimizer_type = getattr(config, 'optimizer_type', None) or (
+        'compensated_adamw' if training_storage_dtype == 'bfloat16' else 'adamw')
     return {
         # Scheduling / shape
         "max_steps": config.max_steps,
@@ -249,7 +254,8 @@ def build_train_args(config):
         },
         "sampling_seed": config.sampling_seed,
 
-        "optimizer_type": config.optimizer_type,
+        "training_storage_dtype": training_storage_dtype,
+        "optimizer_type": optimizer_type,
         "gradient_accumulation_steps": config.gradient_accumulation_steps,
         "gradient_checkpointing": config.gradient_checkpointing,
         "distribution_strategy": config.distribution_strategy,

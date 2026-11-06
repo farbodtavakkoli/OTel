@@ -620,6 +620,10 @@ def parse_args():
     p.add_argument("--temperature", type=float, default=1.0)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--concurrency", type=int, default=256, help="parallel /v1/completions requests")
+    p.add_argument("--adapter-type", choices=("none", "lora"), default="lora")
+    p.add_argument("--training-storage-dtype", choices=("bfloat16", "float32"), default="bfloat16")
+    p.add_argument("--optimizer-type", choices=("compensated_adamw", "adamw", "sgd", "rmsprop"), default=None,
+                   help="default: compensated_adamw for bfloat16 storage, adamw for float32")
     p.add_argument("--lora-r", type=int, default=16)
     p.add_argument("--lora-alpha", type=int, default=32)
     p.add_argument("--lora-regex", default=None, help="PEFT target_modules regex (default: derived from the model class)")
@@ -631,7 +635,7 @@ def parse_args():
     g.add_argument("--ppo-epochs", type=int, default=1, help="optimizer steps per cycle (max_steps)")
     g.add_argument("--clip-eps", type=float, default=0.2)
     g.add_argument("--keep-zero-spread", action="store_true", help="train on zero-spread groups too (advantage 0)")
-    g.add_argument("--no-carry-optimizer", action="store_true", help="fresh AdamW state every job")
+    g.add_argument("--no-carry-optimizer", action="store_true", help="fresh optimizer state every job")
     g.add_argument("--no-old-logprobs", action="store_true", help="force the on-policy ratio==1 path")
     g.add_argument("--persistent-trainer", action="store_true",
                    help="one training job for the whole run: load and shard the model once, then train each cycle in it")
@@ -664,6 +668,8 @@ def parse_args():
     v.add_argument("--verify-prompt", action="append", default=None)
     p.add_argument("--dry-run", action="store_true", help="print the server command, train_args and plan, then exit")
     args = p.parse_args()
+    args.optimizer_type = args.optimizer_type or (
+        "compensated_adamw" if args.training_storage_dtype == "bfloat16" else "adamw")
     args.model = os.path.abspath(args.model)
     args.model_name = args.model_name or served_model_name(args.model)
     args.jobs_dir = os.path.abspath(args.jobs_dir or os.path.join(args.output_dir, "jobs"))

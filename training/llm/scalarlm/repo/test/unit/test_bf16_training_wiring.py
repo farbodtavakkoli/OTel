@@ -18,6 +18,54 @@ def test_bf16_storage_preserves_frozen_parameters():
     assert torch.equal(model.bias, bias)
 
 
+@pytest.mark.parametrize(
+    "base_dtype,storage_dtype,expected_compute,expected_storage",
+    [
+        (torch.bfloat16, "bfloat16", torch.bfloat16, torch.bfloat16),
+        (torch.bfloat16, "float32", torch.bfloat16, torch.float32),
+        (torch.float32, "bfloat16", None, torch.float32),
+    ],
+)
+def test_peft_precision_with_promoted_adapters(
+    base_dtype, storage_dtype, expected_compute, expected_storage
+):
+    from peft import LoraConfig, get_peft_model
+    from transformers import LlamaConfig, LlamaForCausalLM
+    from cray_megatron.megatron.compensated_adamw import CompensatedAdamW
+
+    torch.manual_seed(7)
+    base = LlamaForCausalLM(LlamaConfig(
+        vocab_size=32, hidden_size=16, intermediate_size=32,
+        num_hidden_layers=1, num_attention_heads=2, num_key_value_heads=2,
+    )).to(dtype=base_dtype)
+    model = get_peft_model(base, LoraConfig(
+        r=2, target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM",
+    ))
+    trainable = [p for p in model.parameters() if p.requires_grad]
+    frozen = [(p, p.detach().clone()) for p in model.parameters() if not p.requires_grad]
+    assert trainable and frozen
+    assert {p.dtype for p in trainable} == {torch.float32}
+    assert {p.dtype for p, _ in frozen} == {base_dtype}
+    assert prepare_training_precision(model, storage_dtype) == expected_compute
+    assert model._training_compute_dtype == expected_compute
+    assert {p.dtype for p in trainable} == {expected_storage}
+    optimizer_cls = CompensatedAdamW if expected_storage == torch.bfloat16 else torch.optim.AdamW
+    optimizer = optimizer_cls(trainable, lr=1e-2)
+    before = [p.detach().clone() for p in trainable]
+    tokens = torch.tensor([[1, 2, 3, 4]])
+    with torch.autocast("cpu", dtype=torch.bfloat16, enabled=expected_compute is not None):
+        loss = model(input_ids=tokens, labels=tokens).loss
+    assert torch.isfinite(loss)
+    loss.backward()
+    assert all(p.grad is not None and p.grad.dtype == expected_storage for p in trainable)
+    optimizer.step()
+    assert any(not torch.equal(p, old) for p, old in zip(trainable, before))
+    for param, old in frozen:
+        assert param.dtype == base_dtype
+        assert param.grad is None
+        assert torch.equal(param, old)
+
+
 def test_invalid_storage_rejected():
     with pytest.raises(ValueError, match="storage dtype"):
         prepare_training_precision(torch.nn.Linear(2, 2), "float16")
