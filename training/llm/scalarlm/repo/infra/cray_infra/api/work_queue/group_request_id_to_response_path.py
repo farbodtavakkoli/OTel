@@ -1,4 +1,3 @@
-
 from cray_infra.util.get_config import get_config
 
 import os

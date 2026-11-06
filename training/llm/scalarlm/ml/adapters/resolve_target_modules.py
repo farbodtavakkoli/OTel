@@ -2,10 +2,8 @@ import re
 
 import torch.nn as nn
 
-# PEFT's sentinel for "adapt every linear layer except the output head".
 ALL_LINEAR = "all-linear"
 
-# A numbered per-expert projection (`...experts.0.w1`); grouped-expert MoEs have none.
 _SEPARATE_EXPERT_RE = re.compile(r"(?:^|\.)experts\.\d+\.")
 
 
@@ -45,7 +43,7 @@ def _ssm_mixer_prefixes(model) -> set[str]:
     prefixes: set[str] = set()
     for name, module in model.named_modules():
         if ".mamba" in name or ".linear_attn" in name:
-            continue  # matched by name; no need for the signature fallback
+            continue
         if any(pname == "A_log" for pname, _ in module.named_parameters(recurse=False)):
             prefixes.add(name)
     return prefixes
@@ -78,29 +76,24 @@ def _moe_servable_linear_paths(model, output_embeddings, separate_experts=False)
             continue
         if output_embeddings is not None and module is output_embeddings:
             continue
-        if module_name.endswith("lm_head"):  # head, when output_embeddings is None
+        if module_name.endswith("lm_head"):
             continue
         if _is_ssm_linear(module_name, ssm_prefixes):
-            # SSM / linear-attention projections — not servable by the .pt LoRA path.
             continue
-        # The MoE router / gate: adapting it would perturb expert selection.
         leaf = module_name.rsplit(".", 1)[-1]
         if leaf in ("gate", "router") or leaf.endswith("_gate"):
             continue
-        # DeepSeek MLA latent projections: the serve-side kernel absorbs them.
         if leaf in ("kv_a_proj_with_mqa", "kv_b_proj"):
             continue
-        # DiffusionGemma's router (`...router.proj`), which the leaf check above misses.
         if ".router." in module_name:
             continue
-        # Per-expert projections are servable only in the separate-expert layout.
         if _SEPARATE_EXPERT_RE.search(module_name):
             if separate_experts:
                 paths.append(module_name)
             continue
-        if ".experts" in module_name:  # grouped/fused experts container — not .pt-serveable
+        if ".experts" in module_name:
             continue
-        if ".block_sparse_moe" in module_name:  # GraniteMoe grouped experts + router.layer
+        if ".block_sparse_moe" in module_name:
             continue
         paths.append(module_name)
     return paths
@@ -115,7 +108,6 @@ def resolve_target_parameters(model) -> list[str]:
         if name.rsplit(".", 1)[-1] != "experts":
             continue
         for pname, param in module.named_parameters(recurse=False):
-            # A batched (num_experts, in, out) projection, not a router/norm scalar.
             if param.dim() >= 2:
                 leaves.add(pname)
     return sorted(leaves)
@@ -125,7 +117,6 @@ def resolve_target_modules(model, target_modules):
     if target_modules != ALL_LINEAR:
         return target_modules
 
-    # Exclude the output projection by identity, so heads not named "lm_head" match.
     output_embeddings = None
     if hasattr(model, "get_output_embeddings"):
         output_embeddings = model.get_output_embeddings()
@@ -137,14 +128,12 @@ def resolve_target_modules(model, target_modules):
             def _under_decoder(name):
                 return name == prefix or name.startswith(prefix + ".")
             if _is_moe_model(model):
-                # Multimodal MoE: scope to the decoder AND apply the MoE-servable filter.
                 separate = _has_separate_experts(model)
                 paths = _moe_servable_linear_paths(
                     model, output_embeddings, separate_experts=separate)
                 scoped = sorted(p for p in paths if _under_decoder(p))
                 if scoped:
                     return scoped
-                # Nothing matched under the decoder — fall through rather than adapt nothing.
             else:
                 return sorted(
                     name
@@ -153,18 +142,14 @@ def resolve_target_modules(model, target_modules):
                     and module is not output_embeddings
                     and _under_decoder(name)
                 )
-        # get_decoder() returned a module we couldn't locate — fall through to the dense path.
 
     if _is_moe_model(model):
-        # MoE: full paths for attention + dense MLP, plus separate-layout expert projections.
         separate = _has_separate_experts(model)
         paths = _moe_servable_linear_paths(model, output_embeddings, separate_experts=separate)
         if paths:
             return sorted(paths)
-        # Nothing matched (unusual arch) — fall through to the dense path.
 
     if _has_ssm_layers(model):
-        # Dense hybrid SSM: full paths for attention + MLP, excluding the SSM mixer subtree.
         ssm_prefixes = _ssm_mixer_prefixes(model)
         paths = sorted(
             name
@@ -176,7 +161,6 @@ def resolve_target_modules(model, target_modules):
         )
         if paths:
             return paths
-        # Nothing outside the SSM mixer (pure Mamba) — fall through to the dense path.
 
     names = set()
     for module_name, module in model.named_modules():
@@ -185,6 +169,6 @@ def resolve_target_modules(model, target_modules):
         if output_embeddings is not None and module is output_embeddings:
             continue
         names.add(module_name.split(".")[-1])
-    names.discard("lm_head")  # belt-and-suspenders when get_output_embeddings()==None
+    names.discard("lm_head")
 
     return sorted(names)

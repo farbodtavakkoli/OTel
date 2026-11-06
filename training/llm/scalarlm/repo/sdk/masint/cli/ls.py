@@ -60,4 +60,3 @@ def print_all_model_info(models):
     for model in models:
         row = " | ".join(f"{str(model[key]):<{max_lengths[key]}}" for key in keys)
         print(row)
-

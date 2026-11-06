@@ -17,7 +17,6 @@ def get_dataset(count):
     return dataset
 
 def get_image(url):
-    # Get the image and return a base64 encoded string
     response = requests.get(url)
     if response.status_code == 200:
         return "data:image/jpeg;base64," + base64.b64encode(response.content).decode('utf-8')
@@ -34,4 +33,3 @@ results = llm.generate(
 )
 
 print(results)
-

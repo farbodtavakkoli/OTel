@@ -1,20 +1,3 @@
-/**
- * IndexedDB-backed conversation + message store.
- *
- * Two object stores:
- *   - "conversations" keyed by id; secondary index on updatedAt (desc in UI via sort)
- *   - "messages" keyed by [conversationId, createdAt, id] (array keyPath) with
- *      a secondary index on conversationId for cursor-range reads
- *
- * Design notes:
- *   - Metadata is small; putting everything in IDB (not splitting conversation
- *     titles into localStorage) keeps the storage story simple.
- *   - Listener pattern: every write fires a subscriber callback so React state
- *     can resync without polling. Keeps the component layer free of
- *     per-operation cache invalidation logic.
- *   - Wraps each IDBRequest in a Promise. No library.
- */
-
 const DB_NAME = "scalarlm-chat";
 const DB_VERSION = 1;
 const STORE_CONV = "conversations";
@@ -25,11 +8,6 @@ export interface Conversation {
   title: string;
   model: string;
   systemPrompt?: string;
-  /**
-   * Per-conversation max_tokens for completion requests. When undefined the
-   * field is omitted from the OpenAI-shape request body and the server's
-   * default applies.
-   */
   maxTokens?: number;
   createdAt: number;
   updatedAt: number;
@@ -40,12 +18,9 @@ export interface Message {
   conversationId: string;
   role: "user" | "assistant" | "system";
   content: string;
-  /** Model that generated this assistant turn; undefined for user/system rows. */
   modelAtSend?: string;
   createdAt: number;
-  /** Set when the message is fully streamed (or failed); in-flight messages have null. */
   completedAt: number | null;
-  /** Populated from the terminal usage block of the stream when available. */
   tokenCount?: number;
 }
 
@@ -81,10 +56,6 @@ function promisify<T>(req: IDBRequest<T>): Promise<T> {
   });
 }
 
-/**
- * Wait for an IDBTransaction to commit. Transactions emit `complete`, not
- * `success` — do NOT feed one into promisify().
- */
 function txDone(tx: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
@@ -101,7 +72,6 @@ function notify() {
     try {
       l();
     } catch {
-      // subscriber threw — don't let it take out others
     }
   }
 }
@@ -110,10 +80,6 @@ export function subscribe(listener: Listener): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
-
-// ---------------------------------------------------------------------------
-// Conversations
-// ---------------------------------------------------------------------------
 
 export async function listConversations(): Promise<Conversation[]> {
   const db = await openDB();
@@ -146,7 +112,6 @@ export async function deleteConversation(id: string): Promise<void> {
   const db = await openDB();
   const tx = db.transaction([STORE_CONV, STORE_MSG], "readwrite");
   tx.objectStore(STORE_CONV).delete(id);
-  // Delete every message row within this conversation via the cursor range.
   const msgStore = tx.objectStore(STORE_MSG);
   const range = IDBKeyRange.bound([id, -Infinity, ""], [id, Infinity, "\uffff"]);
   await new Promise<void>((resolve, reject) => {
@@ -164,10 +129,6 @@ export async function deleteConversation(id: string): Promise<void> {
   });
   notify();
 }
-
-// ---------------------------------------------------------------------------
-// Messages
-// ---------------------------------------------------------------------------
 
 export async function listMessages(
   conversationId: string,
@@ -192,7 +153,6 @@ export async function appendMessage(message: Message): Promise<void> {
 export async function updateMessage(
   message: Message,
 ): Promise<void> {
-  // The compound keyPath means put() replaces the exact row.
   return appendMessage(message);
 }
 
@@ -209,13 +169,7 @@ export async function deleteMessage(
   notify();
 }
 
-// ---------------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------------
-
 export function newConversationId(): string {
-  // crypto.randomUUID is available in all evergreen browsers and secure
-  // contexts (including localhost). Fall back to a low-entropy id otherwise.
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
   }
@@ -229,7 +183,6 @@ export function newMessageId(): string {
   return `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/** Derive a short title from the first user message. */
 export function deriveTitle(content: string, limit = 60): string {
   const cleaned = content.trim().replace(/\s+/g, " ");
   if (cleaned.length <= limit) return cleaned || "(empty)";

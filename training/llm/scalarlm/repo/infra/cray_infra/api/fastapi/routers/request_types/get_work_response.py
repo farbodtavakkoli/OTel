@@ -14,8 +14,6 @@ class GetWorkResponse(BaseModel):
     request_type: str
     model: Optional[str] = None
     max_tokens: Optional[int] = None
-    # Present for queue-backed /v1/chat/completions requests. ``prompt``
-    # remains available for admission/accounting and request inspection.
     chat_request: Optional[dict[str, Any]] = None
 
 

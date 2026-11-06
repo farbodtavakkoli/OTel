@@ -11,7 +11,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# List of memcpy sizes, in bytes, should be multiples of the page size
 memcpy_sizes = [4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576]
 
 def main():
@@ -44,7 +43,6 @@ def benchmark_send_recv(data_size):
     if rank == 1:
         torch.zero_(sendbuf)
 
-    # Timing the collective operation
     barrier()
     t0 = time.time()
     for i in range(0, num_iters * 2, 2):
@@ -52,11 +50,10 @@ def benchmark_send_recv(data_size):
     barrier()
     dt = time.time() - t0
 
-    # Verify correctness
     assert torch.allclose(sendbuf, torch.full_like(sendbuf, 1), atol=1e-6), "Verification failed"
 
     total_data = data_size * 4 * num_iters
-    bandwidth = (total_data / dt) / 1e9  # GB/s
+    bandwidth = (total_data / dt) / 1e9
     return {
         "size": data_size,
         "time": dt,
@@ -82,4 +79,3 @@ def launch_mpi_p2p():
 
 if __name__ == '__main__':
     main()
-

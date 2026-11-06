@@ -17,11 +17,6 @@ async def check_health():
 
 
 def get_all_health(healths):
-    """
-    Aggregate sub-component statuses. A component's status is either the
-    string "up" or a dict with `status: "down"`; anything else (or any
-    "down") drags the overall health down.
-    """
     def is_up(h) -> bool:
         if h == "up":
             return True

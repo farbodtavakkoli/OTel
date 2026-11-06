@@ -16,7 +16,6 @@ def load_dataset(model, tokenizer, epoch):
     if is_diffusion(getattr(model, "config", None)):
         return load_diffusion_dataset(model, tokenizer, epoch)
     elif training_mode == "grpo":
-        # One row per sampled completion with its advantage and sampling log-probs.
         return load_grpo_dataset(model, tokenizer, epoch)
     elif training_mode == "embedding":
         return load_embedding_dataset(model, tokenizer, epoch)

@@ -27,7 +27,6 @@ from cray_infra.training.training_job_context import training_job_context
 block_sizes = [2 ** i for i in range(10)]
 
 def send_recv_test(block):
-    # cross the network bisection
     rank = get_rank()
     bisection_rank = get_size() // 2
 
@@ -38,14 +37,9 @@ def send_recv_test(block):
     neighbor = (rank + bisection_rank) % get_size()
 
     if rank < bisection_rank:
-        # Sender's payload identifies the sender.
         send(torch.full((block,), float(rank + 1), dtype=torch.float32), neighbor)
         print(f"[send] rank {rank} -> rank {neighbor} block={block}")
     else:
-        # Receive into a ZEROED buffer and assert. The old test recv'd into a
-        # buffer pre-filled with ones and only printed, so a recv() that filled a
-        # GPU copy and never wrote back to this CPU tensor looked like success --
-        # which is precisely the defect this stack had to fix.
         received_tensor = torch.zeros(block, dtype=torch.float32)
         recv(received_tensor, neighbor)
 

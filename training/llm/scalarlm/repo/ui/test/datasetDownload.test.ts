@@ -1,10 +1,3 @@
-/**
- * Unit tests for the DatasetPanel download helpers. The Download link is
- * shown even while the panel is collapsed (row count unknown), so the URL
- * builder must work without a limit and the label must degrade to a generic
- * "Download" when total is undefined.
- */
-
 import { describe, expect, it } from "vitest";
 
 import { datasetDownloadUrl, downloadAllLabel } from "../src/routes/train/DatasetPanel";

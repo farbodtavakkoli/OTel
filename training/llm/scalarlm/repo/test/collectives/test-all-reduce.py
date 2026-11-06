@@ -30,9 +30,6 @@ def allreduce_test(block):
     world_size = get_size()
     rank = get_rank()
 
-    # Rank r contributes (r+1), so a correct SUM is world*(world+1)/2 -- a value
-    # no rank holds locally. Contributing ones (as this test used to) cannot
-    # distinguish a real reduction from no reduction at all.
     my_tensor = torch.full((block,), float(rank + 1), dtype=torch.float32)
 
     allreduce(my_tensor)
@@ -59,4 +56,3 @@ with training_job_context():
 
 
 main()
-

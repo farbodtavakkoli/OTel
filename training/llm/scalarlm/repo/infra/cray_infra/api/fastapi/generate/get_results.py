@@ -6,7 +6,6 @@ from cray_infra.api.fastapi.generate.poll_for_responses import poll_for_response
 
 
 async def get_results(request: GetResultsRequest):
-
     unique_group_request_ids = set()
 
     for request_id in request.request_ids:

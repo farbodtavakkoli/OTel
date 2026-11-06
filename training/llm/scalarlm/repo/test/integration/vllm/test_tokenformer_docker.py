@@ -1,26 +1,18 @@
 #!/usr/bin/env python3
-"""
-Integration test for tokenformer in Docker container
-This test should ONLY be run inside the Docker container where vLLM is properly built
-"""
-
 import sys
 
 import pytest
 import torch
 
-# Add paths for Docker container
 sys.path.insert(0, "/app/cray/vllm")
 sys.path.insert(0, "/app/cray/infra")
 
 
 @pytest.mark.asyncio
 async def test_tokenformer_manager_in_docker():
-    """Test TokenformerModelManager works in Docker environment"""
     import torch.nn as nn
     from vllm.tokenformer.tokenformer_model_manager import TokenformerModelManager
 
-    # Create a simple mock model
     class SimpleModel(nn.Module):
         def __init__(self):
             super().__init__()
@@ -38,7 +30,6 @@ async def test_tokenformer_manager_in_docker():
 
 @pytest.mark.asyncio
 async def test_cpu_model_runner_with_tokenformer():
-    """Test CPUModelRunner can use tokenformer in Docker"""
     from vllm.v1.worker.cpu_model_runner import CPUModelRunner
     from vllm.config import (
         VllmConfig,
@@ -51,7 +42,6 @@ async def test_cpu_model_runner_with_tokenformer():
         LoadConfig,
     )
 
-    # Create minimal configs for testing
     model_config = ModelConfig(
         model="microsoft/DialoGPT-small",
         tokenizer="microsoft/DialoGPT-small",
@@ -78,7 +68,6 @@ async def test_cpu_model_runner_with_tokenformer():
     device_config = DeviceConfig(device="cpu")
     load_config = LoadConfig()
 
-    # Create VllmConfig
     vllm_config = VllmConfig(
         model_config=model_config,
         cache_config=cache_config,
@@ -90,12 +79,10 @@ async def test_cpu_model_runner_with_tokenformer():
         lora_config=None,
     )
 
-    # Test that CPUModelRunner can be created successfully
     runner = CPUModelRunner(vllm_config, torch.device("cpu"))
     assert runner is not None
     assert runner.device == torch.device("cpu")
 
-    # Test with LoRA config
     lora_config = LoRAConfig(
         enable_tokenformer=True, max_lora_rank=8, max_loras=2, max_cpu_loras=2
     )
@@ -119,8 +106,6 @@ async def test_cpu_model_runner_with_tokenformer():
 
 @pytest.mark.asyncio
 async def test_tokenformer_imports():
-    """Test all tokenformer-related imports work in Docker"""
-    # These imports should all work
     from vllm.tokenformer.tokenformer_model_manager import (
         TokenformerModelManager,
         TokenformerModel,

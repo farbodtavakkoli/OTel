@@ -48,7 +48,6 @@ def load_model_config():
 
     model_name = job_config["llm_name"]
 
-    # Opt-in execution of a repo's custom modeling code; defaults False.
     trust_remote_code = bool(job_config.get("trust_remote_code", False))
 
     model_config = AutoConfig.from_pretrained(
@@ -164,7 +163,6 @@ def _materialize_embedding(model_info):
     )
     model_info["model"].to(device)
 
-    # CoSENTLoss takes the wrapped model so its forward runs through the distribution strategy.
     model_info["loss"] = CoSENTLoss(model_info["model"])
     return model_info
 
@@ -172,7 +170,6 @@ def _materialize_embedding(model_info):
 def materialize_model(model_info):
     job_config = get_job_config()
 
-    # Embedding training swaps in a SentenceTransformer pair and shares none of the load path below.
     if job_config.get("training_mode") == "embedding":
         return _materialize_embedding(model_info)
 
@@ -180,13 +177,11 @@ def materialize_model(model_info):
 
     attn_impl = _resolve_attn_impl(job_config)
 
-    # Routing order matters: diffusion must be checked before multimodal.
     is_classification = job_config["training_mode"] == "classification"
 
     if is_classification:
         model_cls = AutoModelForSequenceClassification
     elif is_diffusion(model_info["model_config"]):
-        # No Auto* class accepts DiffusionGemmaConfig; imported lazily so other modes still run.
         from transformers.models.diffusion_gemma import (
             DiffusionGemmaForBlockDiffusion,
         )
@@ -202,14 +197,11 @@ def materialize_model(model_info):
         attn_impl,
     )
 
-    # Load weights straight onto the target GPU to avoid a transient ~2x memory peak.
     device = model_info["distribution_strategy"]["device"]
     on_gpu = isinstance(device, int) or (
         isinstance(device, torch.device) and device.type == "cuda"
     )
-    # Resolved before load so an fp32 checkpoint is not materialized full-width under device_map.
     load_kwargs = {"torch_dtype": _resolve_dtype(job_config) or "auto"}
-    # Shared by both from_pretrained calls, so the flag reaches SDPA and the eager fallback alike.
     load_kwargs["trust_remote_code"] = bool(job_config.get("trust_remote_code", False))
     sharded = get_size() > 1 and job_config.get("distribution_strategy", "fsdp") in ("fsdp", "pytorch_fsdp")
     if on_gpu:
@@ -230,7 +222,6 @@ def materialize_model(model_info):
         if classification.get("label2id"):
             load_kwargs["label2id"] = classification["label2id"]
 
-        # Head dropout goes on the config and its attribute name is architecture-specific.
         dropout = classification.get("dropout")
         if dropout is not None:
             config_obj = model_info["model_config"]
@@ -265,7 +256,6 @@ def materialize_model(model_info):
             **load_kwargs,
         )
     except (ValueError, ImportError, RuntimeError) as e:
-        # Some configs reject SDPA at load time; eager is the universal fallback.
         if attn_impl != "eager":
             logger.warning(
                 "from_pretrained refused attn_implementation=%s (%s); "
@@ -288,7 +278,6 @@ def materialize_model(model_info):
     )
 
     if is_classification:
-        # HF pools the last non-pad token via config.pad_token_id; None raises at batch_size > 1.
         tokenizer = model_info["tokenizer"]
         if tokenizer.pad_token_id is None:
             tokenizer.pad_token = tokenizer.eos_token
@@ -302,11 +291,9 @@ def materialize_model(model_info):
         if text_config is not config_obj:
             text_config.pad_token_id = tokenizer.pad_token_id
 
-    # use_cache allocates an unused DynamicCache on every training forward; memory-only.
     model_info["model"].config.use_cache = False
 
     if job_config.get("gradient_checkpointing", False):
-        # Must run on the bare HF model before PEFT wraps it, or LoRA gets zero grad.
         logger.info("Enabling gradient checkpointing")
         model_info["model"].gradient_checkpointing_enable(
             gradient_checkpointing_kwargs={"use_reentrant": False}
@@ -324,18 +311,13 @@ def materialize_model(model_info):
         f"create_tokenformer_model latency: {total_time:.2f}s ({total_time/60:.1f} minutes)"
     )
 
-    # `init_adapter_from`: continue an earlier job's adapter instead of a zero-initialised one.
-    # Before freeze/dtype/sharding so every strategy shards the loaded weights, not fresh ones.
     init_ckpt = maybe_init_adapter_from(model_info["model"])
     if init_ckpt is not None:
-        # Kept for the training loop, which may also carry the optimizer moments over.
         model_info["init_adapter_checkpoint"] = init_ckpt
 
-    # Applied AFTER the adapter so it also freezes adapter params on excluded towers.
     apply_freeze_layer_keywords(model_info["model"], job_config)
 
     start_time = time.time()
-    # Per-job dtype wins over global cray-config.yaml; both default to "auto".
     job_dtype = job_config.get("dtype", "auto")
     config_dtype = job_dtype if job_dtype != "auto" else get_config()["dtype"]
 
@@ -361,8 +343,6 @@ def materialize_model(model_info):
     compute_dtype = None
     if job_config.get("training_mode") in ("language_model", "grpo"):
         storage_dtype = job_config.get("training_storage_dtype", "float32")
-        if storage_dtype == "bfloat16" and job_config.get("optimizer_type") != "compensated_adamw":
-            raise ValueError("BF16 training storage requires compensated_adamw")
         compute_dtype = prepare_training_precision(model_info["model"], storage_dtype)
     if job_config.get("training_mode") == "language_model" and job_config.get("training_storage_dtype") == "bfloat16":
         from cray_megatron.megatron.chunked_loss import chunked_causal_loss
@@ -378,7 +358,6 @@ def materialize_model(model_info):
         logger.info(f"Model: {model_info['model']}")
 
     if on_gpu and not sharded:
-        # device_map already materialized the model on-device; a further .to(device) would re-peak.
         logger.info(
             f"Model already on device via device_map: "
             f"{model_info['distribution_strategy']['device']}"

@@ -1,10 +1,3 @@
-"""
-Unit tests for the chunked upload protocol (docs/chunked-upload.md).
-
-Critical guard: the chunked reconstruction path must produce a byte-identical
-archive and an identical job directory to the legacy single-POST path.
-"""
-
 import hashlib
 import json
 import os
@@ -24,7 +17,6 @@ from cray_infra.training import chunked_upload
 
 
 def _configure(tmp_path, monkeypatch, **overrides):
-    """Point config at tmp dirs so init/finalize stage under tmp_path."""
     staging = tmp_path / "upload_sessions"
     jobs = tmp_path / "jobs"
     ml = tmp_path / "ml"
@@ -47,7 +39,6 @@ def _configure(tmp_path, monkeypatch, **overrides):
 
 
 def _make_archive(tmp_path):
-    """Build a small gzipped tar with a dataset, return (path, bytes)."""
     data_file = tmp_path / "dataset.jsonlines"
     data_file.write_text("\n".join(json.dumps({"x": i}) for i in range(100)))
 
@@ -130,11 +121,10 @@ async def test_write_chunk_unknown_session(tmp_path, monkeypatch):
 async def test_finalize_missing_chunk_returns_409(tmp_path, monkeypatch):
     _configure(tmp_path, monkeypatch)
     _, archive_bytes = _make_archive(tmp_path)
-    chunk_size = max(1, len(archive_bytes) // 3)  # force at least 3 chunks
+    chunk_size = max(1, len(archive_bytes) // 3)
     resp, num_chunks = await _run_init({"model": "m"}, archive_bytes, chunk_size)
-    assert num_chunks >= 2  # ensure this test is meaningful
+    assert num_chunks >= 2
 
-    # upload all but the last chunk
     chunks = list(_chunks_of(archive_bytes, chunk_size))
     for i, c in enumerate(chunks[:-1]):
         await chunked_upload.write_chunk(
@@ -166,14 +156,11 @@ async def test_full_roundtrip_reconstructs_and_extracts(tmp_path, monkeypatch):
         UploadFinalizeRequest(upload_id=resp.upload_id)
     )
 
-    # dataset extracted to job dir
     assert os.path.exists(final_path)
     assert final_path.endswith("dataset.jsonlines")
     assert "job_directory" in train_args
     assert "dataset_hash" in train_args
-    # ml dir copied in
     assert os.path.isdir(os.path.join(train_args["job_directory"], "ml"))
-    # session cleaned up
     assert not (tmp_path / "upload_sessions" / resp.upload_id).exists()
 
 
@@ -185,7 +172,6 @@ async def test_reap_stale_uploads(tmp_path, monkeypatch):
     fresh, _ = await _run_init({"model": "fresh"}, archive_bytes, 4096)
     stale, _ = await _run_init({"model": "stale"}, archive_bytes, 4096)
 
-    # backdate the stale session's manifest
     stale_dir = tmp_path / "upload_sessions" / stale.upload_id
     manifest = json.loads((stale_dir / "manifest.json").read_text())
     manifest["created_at"] = time.time() - 10_000

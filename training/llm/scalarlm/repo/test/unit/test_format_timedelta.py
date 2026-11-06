@@ -1,10 +1,3 @@
-"""
-Unit tests for format_timedelta in launch_training_job.py.
-
-Contract under test: docs/training-lifecycle.md §3.2 — walltime is emitted
-to sbatch as `DD-HH:MM:SS`, including day-boundary wrap-around.
-"""
-
 import datetime
 
 import pytest
@@ -33,7 +26,5 @@ def test_format_timedelta_formats_dd_hh_mm_ss(seconds, expected):
 
 
 def test_format_timedelta_pads_to_two_digits():
-    # 9 seconds must emit "09", not "9" — the sbatch walltime parser expects
-    # zero-padded fields.
     out = format_timedelta(datetime.timedelta(seconds=9))
     assert out == "0-00:00:09"

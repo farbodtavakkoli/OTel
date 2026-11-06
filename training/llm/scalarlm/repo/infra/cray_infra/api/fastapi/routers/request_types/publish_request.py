@@ -4,14 +4,6 @@ from pydantic import BaseModel, Field
 
 
 class PublishRequest(BaseModel):
-    """
-    Body of POST /v1/megatron/train/{job_hash}/publish. Drives a SLURM
-    publish job; see ui/docs/publish-to-hf.md.
-
-    The HF token is forwarded to sbatch via env-var export and is never
-    written to disk or argv on the API pod side.
-    """
-
     mode: str = Field(
         default="merged",
         description="`merged` to fold LoRA into base, `adapter` for a PEFT-format adapter repo.",

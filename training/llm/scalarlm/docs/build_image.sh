@@ -1,27 +1,8 @@
 #!/usr/bin/env bash
-# Build the ScalarLM server image from the vendored source in repo/.
-# Copies ml/ into repo/ before building, so the image always bakes the current
-# training recipe.
-#
-# Usage:
-#   ./build_image.sh                              # auto-detect target, build + label
-#   TARGET=amd    IMAGE_TAG=mi355-v1.8 ./build_image.sh
-#   TARGET=nvidia IMAGE_TAG=h100-v1.9  ./build_image.sh
-#
-# Targets:
-#   amd     MI355X (gfx950/ROCm). Runbook: DOCKER_IMAGE_MI355.md.
-#   nvidia  H100 (sm_90/CUDA). Runbook: DOCKER_IMAGE_H100.md. This Dockerfile route
-#           builds and is verified on an 8xH100 host (vLLM compiled sm_90, merged
-#           server native); needs docker buildx + DOCKER_BUILDKIT=1 (the Dockerfile
-#           uses BuildKit RUN --mount cache syntax).
-
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# This script lives in docs/, while the trees it builds from (repo/, ml/) sit in
-# the scalarlm folder above it. Resolve either layout so the script keeps working
-# if it is moved back alongside them.
 if [ -d "$HERE/repo" ] && [ -d "$HERE/ml" ]; then
     SCALARLM_DIR="$HERE"
 elif [ -d "$HERE/../repo" ] && [ -d "$HERE/../ml" ]; then
@@ -79,10 +60,6 @@ echo "==> Target: $TARGET  ->  $IMAGE"
 [ -d "$REPO_DIR" ] || { echo "ERROR: $REPO_DIR not found (vendored server source)"; exit 1; }
 [ -d "$ML_DIR" ]   || { echo "ERROR: $ML_DIR not found (the training recipe)"; exit 1; }
 
-# The Dockerfile bind-mounts ./vllm. It must exist or the build dies with
-#   failed to compute cache key: "/vllm": not found
-# It is intentionally empty: VLLM_SOURCE defaults to 'remote' and vLLM is cloned
-# at the commit pinned in the Dockerfile.
 mkdir -p "$REPO_DIR/vllm"
 
 echo "==> Staging ml/ into repo/ (single source of truth: $ML_DIR)"
@@ -114,10 +91,6 @@ else
 fi
 
 echo "==> Building $BUILD_STAGE from $REPO_DIR"
-# --network=host: the in-build vLLM clone fails TLS without it.
-# On amd, TORCH_CUDA_ARCH_LIST=gfx942 is an inherited build-arg NAME; inside the
-# Dockerfile PYTORCH_ROCM_ARCH governs and covers gfx950. Do not "fix" it to
-# gfx950 without re-running the arch check in DOCKER_IMAGE_MI355.md section 2.
 docker build --network=host --platform linux/amd64 \
     --build-arg BASE_NAME="$BASE_NAME" \
     --build-arg TORCH_CUDA_ARCH_LIST="$ARCH_LIST" \

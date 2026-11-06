@@ -127,10 +127,6 @@ async def job_dataset(
 
 @megatron_router.get("/train/{job_hash}/dataset/download")
 async def job_dataset_download(job_hash: str, limit: int | None = None):
-    """
-    Stream the job's dataset.jsonlines verbatim as an attachment.
-    Omit `limit` for the full file; pass `limit=N` for the first N rows.
-    """
     return download_dataset(job_hash, limit=limit)
 
 
@@ -141,10 +137,6 @@ async def job_checkpoints(job_hash: str):
 
 @megatron_router.post("/train/{job_hash}/publish")
 async def submit_publish_job(job_hash: str, request: PublishRequest):
-    """
-    Submit a publish-to-HF SLURM job. Returns immediately with the
-    publish_job_id; the UI polls /publish/status for progress.
-    """
     return launch_publish_job(
         job_hash,
         mode=request.mode,
@@ -159,13 +151,11 @@ async def submit_publish_job(job_hash: str, request: PublishRequest):
 
 @megatron_router.get("/train/{job_hash}/publish/status")
 async def publish_status(job_hash: str):
-    """Latest publish status.json for this training job."""
     return get_publish_status(job_hash)
 
 
 @megatron_router.post("/train/{job_hash}/publish/cancel")
 async def publish_cancel(job_hash: str):
-    """scancel the in-flight publish job; returns the resulting status."""
     return cancel_publish_job(job_hash)
 
 
@@ -179,11 +169,6 @@ async def publish_logs(
     before_byte_offset: int | None = None,
     before_count: int | None = None,
 ):
-    """
-    NDJSON tail of the latest publish job's publish.log. Same wire
-    shape as /v1/health/logs/{service}; the UI reuses the same
-    streamNdjsonLogOnce consumer.
-    """
     try:
         return StreamingResponse(
             content=publish_logs_generator(

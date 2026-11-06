@@ -1,23 +1,6 @@
 import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
-/**
- * Global keybindings:
- *   g c   → /chat
- *   g t   → /train
- *   g m   → /metrics
- *   g o   → /models
- *   g s   → /settings
- *   ?     → open cheatsheet (via onShowCheatsheet)
- *   y     → copy current URL to clipboard
- *   /     → focus the first [data-search] input on the page
- *
- * Any of these are suppressed if the user is currently typing inside an
- * editable element (input/textarea/contenteditable). That includes the
- * composer in chat and every field in the submit modal.
- *
- * Two-key sequences (g-something) expire after 1500ms.
- */
 export function useKeyboardShortcuts(options: {
   onShowCheatsheet: () => void;
 }) {
@@ -42,11 +25,9 @@ export function useKeyboardShortcuts(options: {
     };
 
     const onKey = (e: KeyboardEvent) => {
-      // Don't hijack browser shortcuts.
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (isEditable(e.target)) return;
 
-      // First half of a g-chord.
       if (gPending) {
         const target = keyToRoute(e.key);
         if (target) {
@@ -72,12 +53,10 @@ export function useKeyboardShortcuts(options: {
         case "y": {
           e.preventDefault();
           navigator.clipboard?.writeText(window.location.href).catch(() => {
-            /* ignored */
           });
           return;
         }
         case "/": {
-          // Focus the first search input on the page if there is one.
           const input = document.querySelector<HTMLInputElement>(
             'input[type="search"], [data-search="true"]',
           );
@@ -97,7 +76,6 @@ export function useKeyboardShortcuts(options: {
       window.removeEventListener("keydown", onKey);
       if (gTimer) clearTimeout(gTimer);
     };
-    // location isn't strictly needed but resets chord state on nav.
   }, [navigate, location.pathname, options]);
 }
 

@@ -1,4 +1,3 @@
-
 from cray_infra.util.get_config import get_config
 
 import persistqueue
@@ -10,7 +9,6 @@ import json
 
 logger = logging.getLogger(__name__)
 
-# Import observability metrics
 try:
     from cray_infra.observability.prometheus_metrics import queue_depth, queue_wait_time_seconds
     METRICS_AVAILABLE = True
@@ -26,24 +24,17 @@ class InferenceWorkQueue:
 
     async def put(self, request):
         async with self.lock:
-            # `timestamp` is read by clear_acked_requests_from_queue to decide
-            # when to recycle a stuck unack'd row; kept for backwards
-            # compatibility with that consumer. `enqueue_time` is the same
-            # value under the new observability-friendly name used by
-            # Prometheus queue_wait_time metrics below.
             now = time.time()
             request["timestamp"] = now
             request["enqueue_time"] = now
             request_id = self.queue.put(request)
 
-            # Update queue depth metric
             if METRICS_AVAILABLE:
                 try:
                     current_depth = len(self.queue)
                     model = request.get("model", "unknown")
                     queue_depth.labels(model=model).set(current_depth)
 
-                    # Structured log
                     logger.info(json.dumps({
                         "event": "work_queued",
                         "request_id": request_id,
@@ -73,14 +64,10 @@ class InferenceWorkQueue:
 
                 item = raw_item["data"]
                 dequeue_time = time.time()
-                # Both names set for the same reason as in put(): timestamp
-                # is consumed by the ack-timeout recycle path, dequeue_time
-                # by the metrics emitter below.
                 item["timestamp"] = dequeue_time
                 item["dequeue_time"] = dequeue_time
                 request_id = raw_item["pqid"]
 
-                # Emit queue wait time metric
                 if METRICS_AVAILABLE and item:
                     try:
                         enqueue_time = item.get("enqueue_time", dequeue_time)
@@ -89,11 +76,9 @@ class InferenceWorkQueue:
 
                         queue_wait_time_seconds.labels(model=model).observe(wait_time)
 
-                        # Update queue depth
                         current_depth = len(self.queue)
                         queue_depth.labels(model=model).set(current_depth)
 
-                        # Structured log
                         logger.info(json.dumps({
                             "event": "work_dequeued",
                             "request_id": request_id,
@@ -186,17 +171,6 @@ class InferenceWorkQueue:
             return self.queue.unack_count()
 
     async def pending_request_count(self) -> int:
-        """
-        Total number of *prompts* in flight — sums `request_count`
-        across every queue entry that's not yet acked.
-
-        persistqueue's `__len__` only counts ready entries and
-        `unack_count` only counts claimed-but-not-finished entries.
-        Neither reflects the per-prompt fanout that push_into_queue
-        records on each entry's payload, so a single
-        `llm.generate(["a","b","c"])` looked like 1 / 0 to those
-        counters but is 3 in-flight prompts to the user.
-        """
         async with self.lock:
             results = self.queue.queue()
             total = 0
@@ -205,8 +179,6 @@ class InferenceWorkQueue:
                     status = int(result.get("status", 0))
                 except (TypeError, ValueError):
                     continue
-                # Skip terminal states (acked / ack_failed). Anything
-                # else — ready, unack, inited — counts as in flight.
                 if status in (
                     int(persistqueue.AckStatus.acked),
                     int(persistqueue.AckStatus.ack_failed),
@@ -256,4 +228,3 @@ def get_file_backed_inference_work_queue(auto_resume=False):
     path = config["inference_work_queue_path"]
 
     return InferenceWorkQueue(path=path, auto_resume=auto_resume)
-

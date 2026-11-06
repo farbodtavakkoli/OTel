@@ -1,6 +1,4 @@
 #!/bin/bash
-# Stop observability stack
-
 set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -13,7 +11,6 @@ echo "========================================"
 
 cd "$PROJECT_ROOT"
 
-# Stop all services (including GPU profile if it was started)
 docker-compose -f docker-compose.observability.yaml --profile gpu down
 
 echo ""

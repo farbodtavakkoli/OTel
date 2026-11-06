@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""
-Integration test for CPUModelRunner with tokenformer adapter management
-Tests the full flow of loading and managing tokenformer adapters
-"""
-
 import pytest
 import torch
 import torch.nn as nn
@@ -12,7 +7,6 @@ import os
 import sys
 from pathlib import Path
 
-# Add vllm to path
 sys.path.insert(
     0,
     os.path.join(
@@ -23,8 +17,6 @@ sys.path.insert(
 
 
 class SimpleModel(nn.Module):
-    """Simple model for testing that supports LoRA"""
-
     def __init__(self):
         super().__init__()
         self.linear = nn.Linear(10, 10)
@@ -36,12 +28,10 @@ class SimpleModel(nn.Module):
 
 @pytest.fixture
 def temp_adapter_path():
-    """Create a temporary directory with mock adapter files"""
     with tempfile.TemporaryDirectory() as tmpdir:
         adapter_dir = Path(tmpdir) / "adapter1"
         adapter_dir.mkdir()
 
-        # Create a mock adapter file
         mock_weights = {
             "model_state_dict": {
                 "tokenformer.weight": torch.rand(10, 10),
@@ -54,14 +44,10 @@ def temp_adapter_path():
 
 
 class TestCPUTokenformerIntegration:
-    """Integration tests for CPU tokenformer functionality"""
-
     def test_tokenformer_manager_initialization(self):
-        """Test that tokenformer manager can be initialized"""
         import torch.nn as nn
         from vllm.tokenformer.tokenformer_model_manager import TokenformerModelManager
 
-        # Create a simple mock model
         class SimpleModel(nn.Module):
             def __init__(self):
                 super().__init__()
@@ -75,10 +61,8 @@ class TestCPUTokenformerIntegration:
         assert manager.model is not None
 
     def test_tokenformer_model_creation(self, temp_adapter_path):
-        """Test creating and loading a tokenformer model"""
         from vllm.tokenformer.tokenformer_model_manager import TokenformerModel
 
-        # Test loading a tokenformer model from checkpoint
         tokenformer = TokenformerModel.from_local_checkpoint(
             temp_adapter_path, torch.device("cpu")
         )
@@ -92,12 +76,10 @@ class TestCPUTokenformerIntegration:
         )
 
     def test_tokenformer_integration_with_runner_mixin(self):
-        """Test LoRAModelRunnerMixin integration with tokenformer"""
         import torch.nn as nn
         from vllm.tokenformer.tokenformer_model_manager import TokenformerModelManager
         from vllm.v1.worker.lora_model_runner_mixin import LoRAModelRunnerMixin
 
-        # Create a mock model that supports lora/tokenformer
         class MockLLMModel(nn.Module):
             def __init__(self):
                 super().__init__()
@@ -106,7 +88,6 @@ class TestCPUTokenformerIntegration:
         model = MockLLMModel()
         device = torch.device("cpu")
 
-        # Test TokenformerModelManager as used in LoRAModelRunnerMixin
         manager = TokenformerModelManager(model=model, device=device)
 
         assert manager.model is not None
@@ -116,7 +97,6 @@ class TestCPUTokenformerIntegration:
 
 @pytest.mark.parametrize("has_lora_config", [True, False])
 def test_cpu_runner_lora_config_handling(has_lora_config):
-    """Test that LoRAModelRunnerMixin correctly handles presence/absence of LoRA config"""
     import torch.nn as nn
     from vllm.v1.worker.lora_model_runner_mixin import LoRAModelRunnerMixin
     from vllm.config import LoRAConfig, VllmConfig
@@ -135,7 +115,6 @@ def test_cpu_runner_lora_config_handling(has_lora_config):
         else None
     )
 
-    # Create a mock model that supports lora
     class MockModel(nn.Module):
         def __init__(self):
             super().__init__()
@@ -148,18 +127,15 @@ def test_cpu_runner_lora_config_handling(has_lora_config):
     model = MockModel()
     device = torch.device("cpu")
 
-    # Create runner mixin instance
     mixin = LoRAModelRunnerMixin()
 
     if has_lora_config:
-        # Patch supports_lora to return True for our mock model
         from unittest.mock import patch
 
         with patch(
             "vllm.v1.worker.lora_model_runner_mixin.supports_lora",
             return_value=True,
         ):
-            # Test loading model with LoRA config
             result_model = mixin.load_lora_model(model, vllm_config, device)
             assert result_model is not None
             assert isinstance(mixin.lora_manager, TokenformerModelManager)

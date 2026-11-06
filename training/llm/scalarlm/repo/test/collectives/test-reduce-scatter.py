@@ -30,9 +30,6 @@ def reduce_scatter_test(block):
     world_size = get_size()
     rank = get_rank()
 
-    # Rank r contributes (r+1) everywhere; each output shard is therefore the
-    # SUM world*(world+1)/2. The old version summed ones into an output that was
-    # pre-filled with ones and then printed the INPUT, so it could not fail.
     input_tensor = torch.full((world_size * block,), float(rank + 1), dtype=torch.float32)
     output_tensor = torch.zeros(block, dtype=torch.float32)
 
@@ -60,4 +57,3 @@ with training_job_context():
 
 
 main()
-

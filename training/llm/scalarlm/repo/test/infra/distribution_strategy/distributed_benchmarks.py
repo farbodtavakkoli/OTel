@@ -1,5 +1,3 @@
-"""Shared distributed collective benchmarks using cray_infra.training.distributed."""
-
 import time
 
 import torch

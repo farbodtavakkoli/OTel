@@ -1,24 +1,3 @@
-"""
-End-to-end validation of the whitespace-heartbeat technique against a
-real `AsyncOpenAI` client over a real localhost socket.
-
-The technique only matters because of how httpx handles the `read`
-timeout — it's "max time between bytes," not "max total time" — so
-the test has to exercise an actual TCP socket. An ASGI in-memory
-transport would skip the layer the heartbeat is designed to defeat.
-
-Layout:
-  - The positive case mounts a `/v1/chat/completions` route that
-    sleeps 3× the configured read timeout while emitting whitespace
-    heartbeats. The OpenAI client is configured with that short read
-    timeout. If the heartbeat works, the call completes; if it
-    doesn't, the SDK raises `APITimeoutError`.
-  - The negative case mounts a `/v1-baseline/chat/completions` route
-    that does the same sleep with no heartbeats. It must fail with
-    `APITimeoutError` — otherwise the positive case's success doesn't
-    actually prove the heartbeat is doing the work.
-"""
-
 import asyncio
 import socket
 import time
@@ -144,11 +123,6 @@ def _build_client(base_url: str) -> AsyncOpenAI:
 
 @pytest.mark.asyncio
 async def test_heartbeat_keeps_connection_alive_past_read_timeout():
-    """
-    Heartbeat every 0.2s lets a 3s response complete under a 1s read
-    timeout. Asserts the response parses and the wall time was
-    actually long enough that the timeout path had to fire.
-    """
     async with _running_server(_build_app()) as port:
         client = _build_client(f"http://127.0.0.1:{port}/v1")
         try:
@@ -175,11 +149,6 @@ async def test_heartbeat_keeps_connection_alive_past_read_timeout():
 
 @pytest.mark.asyncio
 async def test_no_heartbeat_times_out_at_read_timeout():
-    """
-    Negative control: same wait, no heartbeats. Must hit the read
-    timeout, otherwise the positive test's success could be due to
-    something other than the heartbeat keeping the connection alive.
-    """
     async with _running_server(_build_app()) as port:
         client = _build_client(f"http://127.0.0.1:{port}/v1-baseline")
         try:

@@ -52,7 +52,6 @@ async def get_work(request: GetWorkRequest):
         )
 
         for i in range(batch_size - 1):
-
             next_request, request_id = await get_work_item_no_wait(inference_work_queue)
 
             if next_request is None:

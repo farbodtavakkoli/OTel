@@ -1,19 +1,3 @@
-"""
-Manual restart of a non-running training job.
-
-Companion to the auto-relaunch reconciler in restart_megatron_jobs.py
-(which re-queues TRAINING/QUEUED jobs that fell out of squeue on a
-SLURM slice timeout — see docs/training-lifecycle.md §5.4). This module
-covers the operator-initiated case from the UI: a FAILED or CANCELLED
-job whose user wants to resume from the last checkpoint.
-
-Resume itself is automatic — TrainingLoop.resume_from_checkpoint
-(ml/cray_megatron/megatron/training_loop.py) reads the latest
-checkpoint and replays optimizer/scheduler/RNG/data-cursor state on
-every slice start. All we have to do here is clear the prior error
-fields from status.json and call start_slurm_job again.
-"""
-
 import json
 import logging
 import os
@@ -29,11 +13,6 @@ from cray_infra.training.launch_training_job import start_slurm_job
 logger = logging.getLogger(__name__)
 
 
-# Statuses we'll accept restart from. FAILED is the headline case
-# (sbatch failure, OOM, crash). CANCELLED is included so a user who
-# cancelled and now wants to pick up where they left off can use the
-# same button — same disk state, same restart path. QUEUED/TRAINING
-# would double-launch a live job; COMPLETED has nothing to resume.
 _RESTARTABLE_STATUSES = frozenset({"FAILED", "CANCELLED"})
 
 
@@ -74,10 +53,6 @@ async def restart(job_hash: str):
 
     reset_status_for_restart(job_directory_path)
 
-    # start_slurm_job rewrites status/job_id/start_time on top of our
-    # cleared row via run_sbatch's own write_job_status; the error/
-    # output fields we just dropped stay dropped because that writer
-    # merges new fields into existing rather than truncating.
     start_slurm_job(job_config)
 
     refreshed, _ = get_training_job_status(job_hash)
@@ -89,15 +64,6 @@ async def restart(job_hash: str):
 
 
 def reset_status_for_restart(job_directory_path: str) -> None:
-    """
-    Drop the FAILED/CANCELLED-era error fields and set status to QUEUED.
-
-    The TrainDetail UI surfaces `job_status.error` directly; leaving it
-    in place after a successful restart would show a stale red error
-    chip next to a QUEUED badge. `output` is the captured sbatch
-    stderr from the previous failure (launch_training_job.py:320) —
-    same reason to drop.
-    """
     status_filepath = os.path.join(job_directory_path, "status.json")
     try:
         with open(status_filepath, "r") as file:

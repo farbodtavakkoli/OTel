@@ -68,12 +68,6 @@ logger = logging.getLogger(__name__)
 
 
 class _InflightCounter:
-    """
-    Mutable holder for the number of requests the worker has dispatched
-    to vLLM but not yet seen finish_work for. A plain int doesn't work
-    because nested coroutines need a shared reference.
-    """
-
     __slots__ = ("count",)
 
     def __init__(self):
@@ -81,10 +75,6 @@ class _InflightCounter:
 
 
 async def create_generate_worker(server_status):
-    """
-    Create a worker that processes generate requests from the queue.
-    Uses configurable vLLM engine (HTTP or direct) for processing.
-    """
     logger.info("=" * 60)
     logger.info("STARTING GENERATE WORKER")
     logger.info("=" * 60)
@@ -94,18 +84,12 @@ async def create_generate_worker(server_status):
 
     app = await server_status.get_app()
 
-    # Main worker loop
     session: Optional[aiohttp.ClientSession] = None
 
     tasks = []
 
     loaded_adaptor_count = 0
 
-    # Bounded concurrency: vLLM's own scheduler doesn't apply admission
-    # backpressure and our get_batch_size KV-cache heuristic overestimates
-    # capacity (the cache peek doesn't reflect requests sitting in vLLM's
-    # waiting queue). Without this cap the loop flood-pulls from the
-    # SQLiteAckQueue in tight iterations. See default_config.py for the knob.
     max_inflight = int(
         config.get("max_inflight_requests", config["generate_batch_size"])
     )
@@ -117,7 +101,6 @@ async def create_generate_worker(server_status):
         while True:
             clear_finished_tasks(tasks)
 
-            # Backpressure: don't pull more work than we have room to run.
             headroom = max_inflight - inflight.count
             if headroom <= 0:
                 logger.debug(
@@ -188,13 +171,11 @@ async def create_generate_worker(server_status):
             tasks.append(new_task)
 
     except Exception as e:
-        # print backtrace for debugging
         logger.error(f"Worker encountered an error: {e}", exc_info=True)
         logger.error("Shutting down worker due to error")
         kill_vllm_container()
 
     finally:
-        # Cleanup resources
         if session and not session.closed:
             await session.close()
 
@@ -202,17 +183,15 @@ async def create_generate_worker(server_status):
 
 
 def clear_finished_tasks(tasks):
-    # Handle exceptions
     for task in tasks:
         if task.done():
             try:
-                task.result()  # Get the result to raise any exceptions
+                task.result()
             except Exception as e:
                 logger.error(f"Task raised an exception: {e}", exc_info=True)
 
     tasks[:] = [task for task in tasks if not task.done()]
 
-    # Log the number of remaining tasks
     logger.debug(f"Remaining tasks: {len(tasks)}")
 
 
@@ -290,11 +269,6 @@ async def add_new_adaptor(app: FastAPI, new_adaptor: str):
 
     if isinstance(response, JSONResponse):
         if response.status_code != 200:
-            # Starlette stores the rendered bytes in `.body`; `.content`
-            # is only a constructor parameter (no attribute by that
-            # name on the instance). The previous reader hit
-            # AttributeError before it could log the actual upstream
-            # error, so every retry just surfaced the meta-bug.
             error_text = decode_error_body(response)
             logger.error(
                 "Failed to load new adaptor %s: %s",
@@ -320,22 +294,6 @@ async def load_lora_adapter(request: LoadLoRAAdapterRequest, raw_request: Reques
 
 
 async def process_requests(app, requests, inflight=None):
-    """
-    Process a batch of requests using the vLLM engine.
-
-    Each request in the batch runs independently through
-    `_run_and_finish_one`: as soon as one finishes, its result is posted
-    to `finish_work` and the matching SQLiteAckQueue row is acked. This
-    matters because the restart watchdog nacks any row that's been
-    unacked longer than `inference_work_queue_ack_timeout` — if we
-    waited for the whole batch to finish before acking any of them, a
-    single slow request would age every sibling past the timeout and
-    the watchdog would re-queue them, compounding vLLM load.
-
-    `inflight` is the counter the worker loop uses for admission
-    control; each sub-coroutine increments on entry and decrements in a
-    finally block, so the counter is balanced even on cancellation.
-    """
     return asyncio.create_task(process_requests_task(app, requests, inflight))
 
 
@@ -345,15 +303,10 @@ async def process_requests_task(app, requests, inflight=None):
         logger.debug("Got work: %s", truncate_fields({"requests": requests}))
 
     per_request = [_run_and_finish_one(req, app, inflight) for req in requests]
-    # return_exceptions=True so one sub-coroutine failing doesn't abort
-    # its siblings; each one posts its own finish_work independently.
     await asyncio.gather(*per_request, return_exceptions=True)
 
 
 async def _run_and_finish_one(request, app, inflight=None):
-    """Run one request through vLLM and immediately post its result back
-    as a one-element finish_work payload so the SQLite row acks promptly,
-    rather than waiting for slow siblings in the same batch to drain."""
     if inflight is not None:
         inflight.count += 1
     try:
@@ -366,15 +319,6 @@ async def _run_and_finish_one(request, app, inflight=None):
                 e,
                 exc_info=True,
             )
-            # `str(e)` blank-strings exceptions raised without args
-            # (bare `AssertionError`, some vLLM internal exceptions,
-            # KeyError("") and friends). The empty string ends up in
-            # the result file's `error` field, which the chat
-            # completions handler then surfaces as a 200 OK with empty
-            # content — looks like silent success for what was actually
-            # a hard failure. Capturing `type` + `repr` keeps the
-            # diagnostic intact even when the exception's __str__ is
-            # empty.
             result = {
                 "request_id": request["request_id"],
                 "error": format_exception(e),
@@ -421,18 +365,10 @@ _LOG_REDACTED_KEYS = frozenset(
 
 
 def truncate_fields(data):
-    """Return a bounded, recursively sanitized copy for debug logging.
-
-    Queue-backed chat adds nested message and tool lists. The historical
-    dict-only walker skipped every string inside those lists, so large data
-    URLs and complete conversations reached DEBUG logs. Bound collection
-    sizes, recurse through lists/tuples, and redact content-bearing fields.
-    """
     return _sanitize_log_value(data)
 
 
 def truncate_dict(d):
-    """Backward-compatible in-place wrapper for existing callers."""
     sanitized = _sanitize_log_value(d)
     d.clear()
     d.update(sanitized)
@@ -512,13 +448,8 @@ def is_chat_completion_task(request):
 async def async_chat_completion_task(request, app):
     chat_request = request.get("chat_request")
     if chat_request is not None:
-        # The public handler validated the payload before enqueueing it.
-        # Re-validate at the worker boundary so malformed or stale rows fail
-        # clearly rather than reaching serving internals as arbitrary dicts.
         completion_request = ChatCompletionRequest(**chat_request)
     else:
-        # Backward compatibility for /v1/generate's historical multimodal
-        # prompt-dict path.
         completion_request = ChatCompletionRequest(
             model=request["model"],
             messages=convert_prompt_to_openai_format(request["prompt"]),
@@ -591,7 +522,6 @@ async def async_chat_completion_task(request, app):
 def convert_prompt_to_openai_format(
     prompt: PromptType,
 ) -> list[ChatCompletionMessageParam]:
-    """Convert a prompt to OpenAI format."""
     if isinstance(prompt, str):
         return [{"role": "user", "content": [{"role": "user", "content": prompt}]}]
     elif isinstance(prompt, dict):
@@ -616,7 +546,6 @@ def convert_prompt_to_openai_format(
 
 
 def compute_flop_count(model_config):
-    # The intermediate size is the size of the feedforward layer
     vocab_size = model_config.get_vocab_size()
     hidden_size = model_config.get_hidden_size()
     head_size = model_config.get_head_size()
@@ -632,16 +561,12 @@ def compute_flop_count(model_config):
     )
 
     q_proj_flops = hidden_size * (num_attention_heads * head_size)
-    kv_proj_flops = hidden_size * (num_kv_heads * head_size * 2)  # K and V
+    kv_proj_flops = hidden_size * (num_kv_heads * head_size * 2)
 
-    # Attention computation: Q @ K^T and Attention @ V
-    # Q @ K^T: [batch, heads, seq_len, head_size] @ [batch, heads, head_size, kv_cache_len]
     qk_flops = num_attention_heads * head_size
 
-    # Attention @ V: [batch, heads, seq_len, kv_cache_len] @ [batch, heads, kv_cache_len, head_size]
     av_flops = num_attention_heads * head_size
 
-    # Output projection: [batch, seq_len, hidden] @ [hidden, hidden]
     o_proj_flops = hidden_size * hidden_size
 
     attention_flops_per_layer = (

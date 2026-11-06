@@ -1,0 +1,13 @@
+FROM farbodatdocker/scalarlm:h100-v2.4
+ARG REVISION
+COPY ml /app/cray/ml
+COPY infra/cray_infra /app/cray/infra/cray_infra
+COPY scripts /app/cray/scripts
+COPY test/unit /app/cray/test/unit
+RUN python -c 'from pathlib import Path; paths = ["/app/cray/ml/cray_megatron/megatron/compensated_adamw.py", "/app/cray/test/unit/test_compensated_adamw.py"]; [Path(p).unlink(missing_ok=True) for p in paths]'
+RUN PYTHONDONTWRITEBYTECODE=1 python -c 'import ast; from pathlib import Path; [ast.parse(p.read_text()) for root in ("/app/cray/ml", "/app/cray/infra/cray_infra") for p in Path(root).rglob("*.py")]'
+LABEL maintainer="Farbod Tavakkoli <farbodtavakoli@gmail.com>"
+LABEL org.opencontainers.image.authors="Farbod Tavakkoli <farbodtavakoli@gmail.com>"
+LABEL org.opencontainers.image.revision="${REVISION}"
+LABEL org.opencontainers.image.version="h100-v2.5"
+CMD ["/app/cray/scripts/start_one_server.sh"]

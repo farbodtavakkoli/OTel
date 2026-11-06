@@ -2,22 +2,13 @@ import { useEffect, useState } from "react";
 import clsx from "clsx";
 
 interface CopyButtonProps {
-  /** Value to copy to the clipboard on click. */
   value: string;
-  /** Label shown on the button; defaults to "Copy". */
   label?: string;
-  /** Tailwind size variant; "sm" is default. */
   size?: "sm" | "md";
   className?: string;
-  /** Optional callback after a successful copy. */
   onCopied?: () => void;
 }
 
-/**
- * Shared copy-to-clipboard button. Briefly swaps the label to "Copied ✓" for
- * 1.2s on success. Falls back to a 1-shot textarea-select when the async
- * Clipboard API is unavailable (http origins, old Safari).
- */
 export function CopyButton({
   value,
   label = "Copy",
@@ -43,7 +34,6 @@ export function CopyButton({
       setCopied(true);
       onCopied?.();
     } catch {
-      // Silently drop — better than throwing a modal at the user.
     }
   };
 

@@ -16,7 +16,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Fallback when a job omits the diffusion block; matches config.canvas_length.
 _DEFAULT_CANVAS_LENGTH = 256
 
 
@@ -86,7 +85,6 @@ def split_dataset_by_node(dataset):
 def _get_canvas_length():
     job_config = get_job_config()
     diffusion = job_config.get("diffusion") or {}
-    # The nested block may be a dict or a pydantic model depending on the caller.
     if hasattr(diffusion, "canvas_length"):
         return diffusion.canvas_length
     return diffusion.get("canvas_length", _DEFAULT_CANVAS_LENGTH)

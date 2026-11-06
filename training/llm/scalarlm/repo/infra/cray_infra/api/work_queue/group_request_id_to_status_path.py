@@ -9,4 +9,3 @@ def group_request_id_to_status_path(group_request_id: str):
     request_path = os.path.join(base_path, f"{group_request_id}_status.json")
 
     return request_path
-

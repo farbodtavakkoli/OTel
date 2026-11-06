@@ -115,14 +115,12 @@ def flatten_metrics(prefix, metrics):
     return flat_metrics
 
 def shorten_prefix(prefix):
-    # Remove anything before /
     prefix = re.sub(r".*/", "", prefix)
 
     return prefix
 
 
 def plot_kernels_on_roofline(kernel_type, machine_roofline, gemm_kernel_metrics):
-
     if gemm_kernel_metrics is None:
         return
 
@@ -144,10 +142,8 @@ def plot_kernels_on_roofline(kernel_type, machine_roofline, gemm_kernel_metrics)
     ax.set_ylabel(f"Performance ({units['flop/s']})")
     ax.set_title(f"{kernel_type} Roofline Model for {get_processor_name()}")
 
-    # Colorblind-friendly palette (blue, orange, teal, red, purple)
     colors = ["#0173B2", "#DE8F05", "#029E73", "#D55E00", "#CC78BC"]
 
-    # Different marker shapes for better distinction
     markers = ["o", "s", "^", "D", "v", "p", "*", "X", "h"]
 
     max_intensity = (
@@ -155,16 +151,13 @@ def plot_kernels_on_roofline(kernel_type, machine_roofline, gemm_kernel_metrics)
     )
     min_flops = machine_roofline["memory_bandwidth"] / units["factor"]
 
-    # Plot kernel data points with distinct markers and colors
     for i, (kernel_name, kernel_metrics) in enumerate(gemm_kernel_metrics.items()):
         intensity = kernel_metrics["operational_intensity"]
         flops = kernel_metrics["flop/s"] / units["factor"]
 
-        # Use modulo to cycle through colors and markers if more kernels than options
         color_idx = i % len(colors)
         marker_idx = i % len(markers)
 
-        # Plot with larger, more distinct markers
         ax.plot(
             intensity,
             flops,
@@ -173,34 +166,30 @@ def plot_kernels_on_roofline(kernel_type, machine_roofline, gemm_kernel_metrics)
             markerfacecolor=colors[color_idx],
             markeredgecolor="black",
             markeredgewidth=1,
-            linestyle="none",  # No line connecting points
+            linestyle="none",
             label="\n".join(wrap(kernel_name, 10)),
         )
 
         max_intensity = max(max_intensity, intensity)
         min_flops = min(min_flops, flops)
 
-    # Calculate key roofline points
     memory_bandwidth_gflops = machine_roofline["memory_bandwidth"] / units["factor"]
     peak_flops_gflops = machine_roofline["flops"] / units["factor"]
     ridge_point_x = peak_flops_gflops / memory_bandwidth_gflops
 
-    # Plot roofline with distinct pattern
     ax.plot(
         [0.01, ridge_point_x, max_intensity * 1.1],
         [
-            0.01 * memory_bandwidth_gflops,  # Memory-bound segment
-            peak_flops_gflops,  # Ridge point
-            peak_flops_gflops,  # Compute-bound segment
+            0.01 * memory_bandwidth_gflops,
+            peak_flops_gflops,
+            peak_flops_gflops,
         ],
         linestyle="-",
         linewidth=2.5,
-        color="#000000",  # Black for maximum contrast
+        color="#000000",
         label="Roofline",
     )
 
-    # Add labels for the roofline segments
-    # Memory-bound label (below the line)
     ax.text(
         ridge_point_x * 0.01,
         peak_flops_gflops * .1,
@@ -210,7 +199,6 @@ def plot_kernels_on_roofline(kernel_type, machine_roofline, gemm_kernel_metrics)
         ha="center",
     )
 
-    # Compute-bound label (above the line)
     ax.text(
         ridge_point_x * 3,
         peak_flops_gflops * 1.5,
@@ -220,50 +208,41 @@ def plot_kernels_on_roofline(kernel_type, machine_roofline, gemm_kernel_metrics)
         ha="center",
     )
 
-    # Add ridge point label
     ax.plot(
         [ridge_point_x],
         [peak_flops_gflops],
-        "kD",  # Black diamond marker
+        "kD",
         markersize=8,
         markerfacecolor="none",
         markeredgewidth=2,
     )
 
-    # Add gridlines for easier reading of values
     ax.grid(True, which="both", linestyle=":", alpha=0.5)
 
-    # Shrink current axis and position legend better
     box = ax.get_position()
     ax.set_position([box.x0, box.y0, box.width * 0.8, box.height])
 
-    # Set axis limits
     ax.set_xlim(0.1, math.exp(math.log(max_intensity) * 1.1))
     ax.set_ylim(
         math.exp(math.log(min_flops) * 0.9),
         peak_flops_gflops * 3.0
     )
 
-    # Create more accessible legend with larger font
     legend = ax.legend(
         loc="center left",
         bbox_to_anchor=(1, 0.5),
-        frameon=True,  # Add frame
-        framealpha=0.9,  # Make frame opaque
-        edgecolor="gray",  # Frame color
-        #        fontsize='medium'   # Increase font size
+        frameon=True,
+        framealpha=0.9,
+        edgecolor="gray",
     )
 
-    # Change the formatting of the axis tick labels
     formatter = ScalarFormatter()
-    formatter.set_scientific(False)  # Turn off scientific notation
-    formatter.set_useOffset(False)  # Don't use offset
+    formatter.set_scientific(False)
+    formatter.set_useOffset(False)
 
-    # Apply the formatter to both axes
     ax.xaxis.set_major_formatter(formatter)
     ax.yaxis.set_major_formatter(formatter)
 
-    # Save the figure
     save_to_file(fig, f"roofline_{kernel_type}.pdf")
 
 
@@ -286,7 +265,7 @@ def get_machine_roofline():
 
 
 def get_processor_name():
-    return "AMD Instinct MI300X"  # Default for AMD
+    return "AMD Instinct MI300X"
 
     if torch.cuda.is_available():
         return torch.cuda.get_device_name(0)
@@ -304,7 +283,7 @@ processor_table = {
     "Apple M2": {
         "memory_bandwidth": 102.4e9,
         "peer_bandwidth": 102.4e9,
-        "flops": 223.36e9,  # 4 cores * 3.49 GHz * 2 FLOPS/FMA * 8 ops/SIMD function unit
+        "flops": 223.36e9,
     },
     "AMD Instinct MI300X": {
         "memory_bandwidth": 5.3e12,

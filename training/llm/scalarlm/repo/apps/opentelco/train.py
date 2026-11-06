@@ -6,38 +6,24 @@ import datetime
 import yaml
 
 
-# Training config
-# Make sure to at least modify one setting in the config before submitting a new job otherwise the system would recognize your
-# job as already included. You can simply modify the max_steps to a different number and submit a job
 def get_args():
     parser = argparse.ArgumentParser()
 
-    # Sample data for training
-    # Make sure your input data for training follows the same pattern
-    # Otherwise you would need to modify "format_chat_template" function
     parser.add_argument('--data_path', default = 'apps/opentelco/data/test_data.json')
 
-    # In case you want to include reasoning in the output during training.
-    # Adding reasoning tokens will increase the memory usage during training
-    # which means you may need to decrease the number of batch size
     parser.add_argument('--reasoning_mode', default = True)
 
-    # Training hyperparameters
-    # Set max_token_block_size to be as big as the longest sequence of your training set.
-    # consider using max_token_block_size of 4000 or less. For any values larger than 4000, you may run out of memory
     parser.add_argument('--max_steps', default = 5)
     parser.add_argument('--learning_rate', default = 0.005)
     parser.add_argument('--max_token_block_size', default = 30)
     parser.add_argument('--steps_per_checkpoint', default = 100)
 
-    # LoRA Configuration
     parser.add_argument('--r', default = 8)
     parser.add_argument('--lora_alpha', default = 16)
     parser.add_argument('--lora_dropout', default = 0.05)
     parser.add_argument('--target_modules', default = ['q_proj', 'k_proj', 'v_proj', 'o_proj'],
                                             choices=['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj'])
 
-    # Do not need to be updated
     parser.add_argument('--batch_size', default = 2)
     parser.add_argument('--new_data', default=False)
     parser.add_argument('--use_lora', default=True)
@@ -46,8 +32,6 @@ def get_args():
 
     return parser.parse_args()
 
-# Data pre-processing and adding special tokens before training
-# The special tokens of Qwen models are added below for your convenience
 def format_chat_template(example, reasoning_mode = True, scalarlm_format = False):
     if reasoning_mode:
         formatted_text = f"""<im_start>user
@@ -72,7 +56,6 @@ Most Likely Root Cause:
 
     return out
 
-# Loading data
 def get_dataset(data_path, reasoning_mode):
     dataset = []
 
@@ -81,7 +64,7 @@ def get_dataset(data_path, reasoning_mode):
 
     for example in data:
         if config.new_data:
-            dataset.append(data['record']) # Pre formatted
+            dataset.append(data['record'])
         else:
             dataset.append(format_chat_template(example, reasoning_mode = reasoning_mode, scalarlm_format = True))
 
@@ -111,7 +94,6 @@ if __name__ == '__main__':
         } if config.use_lora else None
     }
 
-
     status = llm.train(
         dataset,
         train_args=train_args
@@ -119,7 +101,6 @@ if __name__ == '__main__':
 
     print(status)
 
-    # Saving training history locally
     save_dir = f'scalarlm_training/runs/{now}'
     os.makedirs(save_dir, exist_ok = False)
 

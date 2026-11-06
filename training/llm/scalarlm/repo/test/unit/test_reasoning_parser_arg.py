@@ -1,5 +1,3 @@
-"""Focused tests for vLLM reasoning-parser startup configuration."""
-
 from __future__ import annotations
 
 import pytest

@@ -1,20 +1,3 @@
-"""
-Unit tests for tee_streaming_to_disk.
-
-Contract (see docs/inference-request-browser.md and
-infra/cray_infra/api/fastapi/chat_completions/tee_streaming_to_disk.py):
-
-- Identical params hash to identical request_ids (dedup property
-  shared with the queue path).
-- The request file is a single-element list whose first dict carries
-  `prompt`, `model`, `request_type`, and the full `params` — exactly
-  what list_requests reads to populate a row.
-- The response artifact flips the status file to `completed` even
-  if the original status file is missing or corrupt.
-- All filesystem failures are swallowed and logged; nothing the tee
-  does is allowed to bubble up and break the user's stream.
-"""
-
 import json
 import os
 from unittest.mock import patch
@@ -83,8 +66,6 @@ def test_request_artifacts_write_chat_messages_preview(upload_dir):
         data = json.load(f)
     assert isinstance(data, list)
     entry = data[0]
-    # Most-recent user message wins — operators scanning rows want
-    # what was *just* asked, not the system preamble.
     assert entry["prompt"] == "what is 3+3?"
     assert entry["model"] == "m"
     assert entry["request_type"] == "chat_completions_streaming"
@@ -112,7 +93,6 @@ def test_request_artifacts_write_completions_prompt_preview(upload_dir):
 
 
 def test_request_artifacts_handle_content_parts(upload_dir):
-    """OpenAI multimodal content shape: [{type:'text', text:'...'}]."""
     params = {
         "model": "m",
         "messages": [
@@ -164,13 +144,7 @@ def test_response_artifact_writes_response_and_flips_status(upload_dir):
 
 
 def test_response_artifact_synthesises_status_when_request_artifact_missing(upload_dir):
-    """
-    The request-side write may have failed (full disk, races). The
-    response-side write must still produce a row that list_requests
-    can render — so it falls back to a synthesized status.
-    """
     rid = compute_request_hash({"model": "m"})
-    # No write_request_artifacts call: status file does not exist.
     write_response_artifact(request_hash=rid, sse_text="data: [DONE]\n\n")
 
     with open(upload_dir / f"{rid}_status.json") as f:
@@ -180,7 +154,6 @@ def test_response_artifact_synthesises_status_when_request_artifact_missing(uplo
 
 
 def test_disk_errors_are_swallowed(tmp_path, caplog):
-    """A read-only base path must not crash the streaming response."""
     bad_path = tmp_path / "does-not-exist" / "and-cant-be-made"
     fake_config = {"upload_base_path": str(bad_path)}
     with patch(
@@ -196,12 +169,10 @@ def test_disk_errors_are_swallowed(tmp_path, caplog):
         "cray_infra.api.work_queue.group_request_id_to_response_path.get_config",
         return_value=fake_config,
     ):
-        # Force os.makedirs to fail so we hit the OSError branch.
         with patch(
             "cray_infra.api.fastapi.chat_completions.tee_streaming_to_disk.os.makedirs",
             side_effect=OSError("read-only fs"),
         ):
-            # Must not raise.
             write_request_artifacts(
                 request_hash="abcd",
                 params={"model": "m"},

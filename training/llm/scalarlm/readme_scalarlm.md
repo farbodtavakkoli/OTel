@@ -1,50 +1,36 @@
-# `training/llm/scalarlm` — ScalarLM remote-training client
+# ScalarLM remote training client
 
-`train.py` and `inference.py` are thin **clients**: they format data locally and submit
-jobs to a remote **ScalarLM** deployment through the `scalarlm` SDK
-(`SupermassiveIntelligence`). Training runs server-side on the deployment's GPUs, so
-nothing in this folder needs a GPU.
+`train.py` and `inference.py` format data locally and submit jobs through the
+`scalarlm` SDK (`SupermassiveIntelligence`). Training runs on the remote server;
+the client needs no accelerator.
 
-Three training modes — `language_model`, `embedding`, `classification` — across many model
-families (qwen3, llama3, gemma3, rnj-1, olmo3, mistral, lfm, phi4, gpt-oss), with
-LoRA / tokenformer / full-parameter training on FSDP or DDP.
+Training modes include `language_model`, `embedding` and `classification`, with
+LoRA, tokenformer or full parameter training on FSDP or DDP.
 
 > **The client and the server image must come from the same revision.** ScalarLM ships the
-> training code — this folder's `ml/` tree — from the client with every job, and that code
+> training code,this folder's `ml/` tree,from the client with every job, and that code
 > calls into the server's `cray_infra`. A client checkout newer or older than the running
-> image fails server-side (e.g. `ModuleNotFoundError: No module named
+> image fails on the server (e.g. `ModuleNotFoundError: No module named
 > 'cray_infra.huggingface'`), after the job has already been accepted and given a
 > `model_name` hash. Check the image's `org.opencontainers.image.revision` label with
 > `docker inspect` against the checkout you are submitting from.
 
 **Hardware:** the client is pure Python and runs anywhere. The server image is built for
 AMD MI355X (gfx950 / ROCm 7.2.4, RCCL) or NVIDIA H100 (sm_90 / CUDA 12.9, NCCL).
-The same `ml/` also trains and serves on AWS Trainium2; see [Trainium2](#trainium2).
+A separate Trainium2 recipe awaits hardware validation; see [Trainium2](#trainium2).
 
 ## Files
 
-- `train.py` — format a dataset and submit a training job.
-- `inference.py` — submit a batch generate/embedding job against a (fine-tuned) model.
-- `ml/` — **the training recipe**, run server-side (`cray_megatron`, `adapters`,
-  `tokenformer`). This is the copy you edit: the SDK uploads whatever `ml/` sits next to
-  you, so a change takes effect on the next job with no image rebuild. Vendored in upstream
-  style. `ml/adapters/merge_lora_and_push.py` merges a trained LoRA into its base model and
-  pushes it to the Hub (`--job-dir`, `--checkpoint`; the rank is read from the saved
-  tensors, not the job config); `ml/nara_offline_eval.py` evaluates noise-aware LoRA on
-  DiffusionGemma offline.
-- `repo/` — the full ScalarLM **server** source with the AMD integration applied. Only
-  needed to rebuild the image or change something outside `ml/`. `repo/ml/` is a tracked copy
-  of `ml/` that the image bakes as the server default, used when a job sends no `ml/`.
-  `docs/build_image.sh` keeps it in sync; commit it whenever `ml/` changes.
-- `docs/build_image.sh` — stages `ml/` into `repo/` and builds the server image.
-- `docs/scalarlm_mi355.patch` — the AMD integration as one patch against public upstream
-  `supermassive-intelligence/scalarlm` at commit `4566a84`; applying it to a fresh clone at
-  that commit reproduces `repo/`.
-- `docs/DOCKER_IMAGE_MI355.md`, `docs/DOCKER_IMAGE_H100.md` — server-image runbooks.
-- `data/` — small sample datasets for each mode.
+* `train.py`: format data and submit training.
+* `inference.py`: submit generation or embedding requests.
+* `ml/`: canonical training recipe uploaded with each job. Keep the tracked `repo/ml/`
+  copy synchronized through `docs/build_image.sh` when building an image.
+* `repo/`: server source used for image builds and infrastructure changes.
+* `docs/`: image runbooks, build helper and the AMD integration patch.
+* `data/`: sample datasets.
 
-`ml/` is the canonical recipe; `repo/ml/` is its tracked, synchronized copy, so the image always bakes
-the recipe you see here.
+`ml/adapters/merge_lora_and_push.py` merges LoRA checkpoints for Hub export;
+`ml/nara_offline_eval.py` evaluates DiffusionGemma offline.
 
 ## Setup
 
@@ -60,33 +46,10 @@ export SCALARLM_API_URL=http://<your-scalarlm-deployment>
 
 `scalarlm` is intentionally unpinned; installing it brings the `masint` package and the
 `scalarlm` CLI (`logs plot ls squeue stats clear_queue cancel delete`). The endpoint
-resolves as `SCALARLM_API_URL` -> `MASINT_API_URL` -> `http://localhost:8000`.
+resolves as `SCALARLM_API_URL` → `MASINT_API_URL` → `http://localhost:8000`.
 
 `hf_upload_token` is submitted with the job and appears in that job's config on the server.
 Keep `dev.env` and tokens out of version control.
-
-## Data
-
-Set `--training_mode` and point `--data_path` at a JSON list (or JSONL) with the matching
-schema:
-
-| Mode | Required fields | Sample |
-|---|---|---|
-| `language_model` | `prompt`, `completion` (optional `reasoning`) | `data/llm_training_sample.json` |
-| `classification` | `text` + `label` (or `question` + `answer`) | `data/classification_data.json` |
-| `embedding` | `sentence1`, `sentence2`, `score` | `data/embedding_test_data.json` |
-
-For `classification` the client derives the class set from the data and submits
-`label2id` / `id2label` / `num_labels` nested under `classification` in `train_args`, so
-`--num_labels` only needs setting to override that.
-
-For `language_model`, `--gradient_calculation` controls masking: `output_tokens` (default)
-masks the prompt and computes loss on the completion only; `entire_sequence` computes loss
-on the whole prompt+completion. `--model_type` selects the chat-template tokens used to
-format each example.
-
-`inference.py` expects an `anchor` field per record in `embedding` mode and a `prompt`
-field in `language_model` mode.
 
 ## Run
 
@@ -134,71 +97,21 @@ batches are logged with a traceback and skipped; results contain only successful
 | `fsdp` | SimpleFSDP, wraps every module owning parameters | Legacy default; not with LoRA |
 | `pytorch_fsdp` | PyTorch FSDP2 `fully_shard`, per transformer block | A few billion parameters and up |
 
-- Do **not** pair `fsdp` with LoRA: SimpleFSDP issues one all-gather per wrapped module and
-  LoRA adds roughly a thousand tiny ones. Use `pytorch_fsdp`.
-- Diffusion models (auto-detected from `model_type: diffusion_gemma`) run on `ddp` and
+* Do **not** pair `fsdp` with LoRA: SimpleFSDP issues one collective per wrapped module.
+  Use `pytorch_fsdp`.
+* Diffusion models (detected from `model_type: diffusion_gemma`) run on `ddp` and
   `pytorch_fsdp` and fail on `fsdp`.
-- `pytorch_fsdp` is the only sharded strategy with HSDP. `hsdp_shard_size` and
+* `pytorch_fsdp` is the only sharded strategy with HSDP. `hsdp_shard_size` and
   `reshard_after_forward` are server settings. `reshard_after_forward` has the
   `--reshard_after_forward` flag; `hsdp_shard_size` has no CLI flag, so add it to
   `build_train_args()` in `train.py` to send it.
 
-## Arguments
-
-### `train.py`
-
-| Flag | Default | Meaning |
-|---|---|---|
-| `--data_path` | `data/classification_data.json` | Local training data (JSON list or JSONL) |
-| `--custom_data_path` | `None` | Path that already exists on the server (overrides `--data_path`) |
-| `--training_mode` | `language_model` | `language_model` / `embedding` / `classification` |
-| `--model_type` | `qwen3` | Chat-template family for special-token formatting |
-| `--gradient_calculation` | `output_tokens` | Prompt-masked vs full-sequence loss |
-| `--sample_fraction` | `1.0` | Fraction of the dataset to use |
-| `--max_steps` | `11` | Training steps |
-| `--learning_rate` | `0.0005` | Learning rate |
-| `--batch_size` | `2` | Batch size |
-| `--max_token_block_size` | `1762` | Max token block size |
-| `--r` | `8` | LoRA rank |
-| `--lora_alpha` | `16` | LoRA alpha |
-| `--lora_dropout` | `0.05` | LoRA dropout |
-| `--target_modules` | `q_proj k_proj v_proj o_proj` | LoRA target modules (space-separated) |
-| `--use_rslora` | `False` | Rank-stabilized LoRA (`alpha/sqrt(r)` scaling); the merge step reads the same flag |
-| `--sampling_seed` | `42` | Dataset packing / replay RNG seed |
-| `--steps_per_checkpoint` | `100` | Checkpoint frequency |
-| `--adapter_type` | `none` | `lora` / `tokenformer` / `none` (full-parameter) |
-| `--optimizer_type` | `adamw` | `adamw` / `sgd` / `rmsprop`; a new one also needs a server-side training-loop edit |
-| `--gradient_accumulation_steps` | `4` | Gradient accumulation |
-| `--gradient_checkpointing` | `True` | Gradient checkpointing |
-| `--distribution_strategy` | `fsdp` | `fsdp` / `ddp` / `pytorch_fsdp` |
-| `--attn_implementation` | `sdpa` | `sdpa` / `eager` / `flash_attention_2` |
-| `--freeze_layer_keywords` | `vision_model, vision_tower, multi_modal_projector, visual` | Comma-separated layer keywords to freeze |
-| `--num_labels` | `None` | [classification] Label count (derived from the data when unset) |
-| `--classification_dropout` | `0.1` | [classification] Head dropout |
-| `--label_smoothing` | `0.1` | [classification] Label smoothing |
-| `--upload_to_hf` | `False` | Push the trained model to the Hub |
-| `--hf_repo_id` | `farbodtavakkoli/scalarlm-test` | Hub repo for uploads; set it to your own repo when using `--upload_to_hf` |
-| `--hf_upload_token` | `$HF_TOKEN` | Hub token (from `dev.env`) |
-| `--gpus` | `1` | GPUs per node; on a bare-metal 8-GPU box pass `--gpus 8 --nodes 1` |
-| `--nodes` | `2` | Number of nodes for the job |
-
-### `inference.py`
-
-| Flag | Default | Meaning |
-|---|---|---|
-| `--test_data_path` | `data/classification_data.json` | Test data (JSON list) |
-| `--model_name` | *(a job hash from the author's deployment)* | Fine tuned model id; replace it with the `model_name` from your own `train_status.json` |
-| `--max_tokens` | `500` | Input + output token budget per request |
-| `--batch_size` | `2` | Prompts per batch |
-| `--inference_mode` | `language_model` | `language_model` or `embedding` |
-| `--model_type` | `rnj-1` | Chat-template family for prompt formatting |
-
 ## Output
 
-- Training: `scalarlm_training/runs/<timestamp>/train_status.json`, containing the
+* Training: `scalarlm_training/runs/<timestamp>/train_status.json`, containing the
   `model_name` job hash. Two submissions inside the same second get a `-2`, `-3`, ... suffix.
-- Inference: `scalarlm_inference/runs/<timestamp>/inference_results.json` with
-  ground-truth, prompt, and generated response per record.
+* Inference: `scalarlm_inference/runs/<timestamp>/inference_results.json` with
+  ground truth, prompt, and generated response per record.
 
 ## GRPO
 
@@ -231,15 +144,9 @@ $GRPO_ENV_DIR/env_scalarlm/bin/python train_llm_grpo_scalarlm.py \
   --image farbodatdocker/scalarlm:h100-v2.3 --verify
 ```
 
-| Flag | Default | Meaning |
-|---|---|---|
-| `--objective` | `grpo` | `rft` is rejection sampling SFT, not GRPO |
-| `--steps` / `--prompt-batch-size` / `--group-size` | 20 / 32 / 8 | cycles, prompts per cycle, completions per prompt |
-| `--render-nodes` | required with `--start-server` | first entry is the vLLM GPU, the rest train; device paths on ROCm, indices on CUDA |
-| `--trainer-gpus` / `--gpu-mem-util` | 1 / 0.85 | use about 0.35 with a single render node |
-| `--persistent-trainer` | off | one training job loads the model once and trains every cycle; needs `h100-2.0` or newer |
-| `--keep-zero-spread` | off | also train groups whose rewards are all equal |
-| `--verify` | off | checks adapter continuation, PEFT export and a generate through the hot loaded adapter |
+Use `--help` on each launcher for the complete argument reference. `--objective rft`
+selects rejection sampling SFT rather than GRPO. `--verify` checks adapter continuation,
+PEFT export and generation through the loaded adapter.
 
 Notes:
 
@@ -251,20 +158,27 @@ Notes:
 
 ## Server image
 
-One source tree, one `ml/` recipe, two images built by the same `repo/Dockerfile`.
-Runbooks: `docs/DOCKER_IMAGE_MI355.md` (AMD) and `docs/DOCKER_IMAGE_H100.md` (NVIDIA).
+One source tree and one `ml/` recipe. AMD and NVIDIA use `repo/Dockerfile`;
+H100 v2.4 uses `repo/Dockerfile.h100-v2.4`, and Trainium2 uses `repo/Dockerfile.trainium`.
+Runbooks: [AMD](docs/DOCKER_IMAGE_MI355.md), [NVIDIA](docs/DOCKER_IMAGE_H100.md)
+and [Trainium2](docs/DOCKER_IMAGE_TRAINIUM2.md).
 
-| Tag | Hardware |
-|---|---|
-| `farbodatdocker/scalarlm:mi355-v1.8` | AMD MI355X, gfx950 / ROCm 7.2.4, includes GRPO |
-| `farbodatdocker/scalarlm:h100-v2.3` | NVIDIA H100, sm_90 / CUDA 12.9, vLLM v0.32, includes GRPO, persistent GRPO trainer, Muse Glimmer and EFA |
+| Tag | Hardware | Evidence |
+|---|---|---|
+| `farbodatdocker/scalarlm:mi355-v1.8` | AMD MI355X, gfx950 / ROCm 7.2.4 | Documented in AMD runbook; not installed locally |
+| `farbodatdocker/scalarlm:h100-v2.2` | NVIDIA H100, sm_90 / CUDA 12.9 | Local image; older version |
+| `farbodatdocker/scalarlm:h100-v2.3` | NVIDIA H100, sm_90 / CUDA 12.9 | Local image and NVIDIA runbook |
+| `farbodatdocker/scalarlm:h100-v2.4` | NVIDIA H100, sm_90 / CUDA 12.9 | Local image and overlay recipe; existence is not runtime validation |
+| `farbodatdocker/scalarlm:trainium2-v1.0` | AWS Trainium2, Neuron | Build target only; no local image; awaiting Trainium agent validation |
+
+Registry availability was not checked. Inspect the source revision before submitting jobs.
 
 ```bash
 docker pull farbodatdocker/scalarlm:mi355-v1.8     # AMD MI355X
 docker pull farbodatdocker/scalarlm:h100-v2.3      # NVIDIA H100
 ```
 
-Build either from source (the script auto-detects the vendor; set `TARGET` to be explicit):
+Build the GPU images from source with an explicit vendor and tag:
 
 ```bash
 cd docs
@@ -276,8 +190,8 @@ TARGET=nvidia IMAGE_TAG=h100-v2.3  ./build_image.sh
 line when a new job starts, and a clean `Using device cuda:N` log line.
 
 Read an image's source revision from its `org.opencontainers.image.revision` label with
-`docker inspect`; do not infer it from the tag. Both images are self-starting — `docker run
-<image>` serves, and passing a script still overrides.
+`docker inspect`; do not infer it from the tag. GPU images start the server by default;
+passing a script overrides startup.
 
 **NVIDIA H100:**
 
@@ -307,106 +221,36 @@ docker run -d --name scalarlm --init \
 
 Run flags that matter on both vendors:
 
-- `--shm-size=64g` is required for multi-rank jobs; the 64 MB Docker default kills a rank
-  with SIGBUS, which Slurm then relaunches in a loop.
-- `SCALARLM_MAX_GPUS_PER_NODE` defaults to **1**. Without it every job is silently capped
+* `--shm-size=64g` is required for distributed jobs; the 64 MB Docker default can kill
+  a rank with SIGBUS, which Slurm then relaunches in a loop.
+* `SCALARLM_MAX_GPUS_PER_NODE` defaults to **1**. Without it every job is silently capped
   to a single GPU no matter what `--gpus` says.
-- On AMD, `--device=/dev/kfd --device=/dev/dri --group-add video` replaces `--gpus`.
-- Serve fine-tuned adapters at tensor-parallel size 1. Tensor parallelism works for the
-  base model, but vLLM's TP path rejects the hot-reloaded un-sharded adapter state dict.
+* On AMD, `--device=/dev/kfd --device=/dev/dri --group-add video` replaces `--gpus`.
+* Serve fine tuned adapters at tensor parallel size 1. Tensor parallelism works for the
+  base model, but vLLM's TP path rejects the dynamically loaded unsharded adapter state dict.
 
 
 ## Trainium2
 
-One Trainium2 image runs the API, Slurm, vLLM and training, like the AMD and NVIDIA
-images. `train.py` and `inference.py` work unchanged. vLLM uses the Neuron plugin;
-training uses Neuron PyTorch in its own Python environment (`/opt/venv`).
-
-Build it from a Neuron vLLM serving image and a Neuron PyTorch training image. Neither
-image is published.
-
-```bash
-cd docs
-TARGET=trainium NEURON_BASE=<neuron-vllm-image> NEURON_TRAIN_BASE=<neuron-pytorch-image> ./build_image.sh
-```
-
-Run it on 8 devices: vLLM takes the first 4, training uses the rest.
-
-```bash
-docker run -d --name scalarlm \
-  --device=/dev/neuron0 --device=/dev/neuron1 --device=/dev/neuron2 --device=/dev/neuron3 \
-  --device=/dev/neuron4 --device=/dev/neuron5 --device=/dev/neuron6 --device=/dev/neuron7 \
-  --shm-size=64g --ulimit memlock=-1 -p 8000:8000 -p 8001:8001 \
-  -e SCALARLM_MODEL=/root/models/<serving-model> \
-  -e SCALARLM_TENSOR_PARALLEL_SIZE=16 -e SCALARLM_MAX_GPUS_PER_NODE=16 \
-  -e SCALARLM_VLLM_ARGS="<vLLM Neuron flags matching the compiled graphs>" \
-  -v /path/to/models:/root/models:ro -v /path/to/hf-cache:/root/.cache/huggingface \
-  farbodatdocker/scalarlm:trainium2-v1.0
-```
-
-Train and run inference from this folder:
-
-```bash
-python train.py --training_mode language_model --model_type gemma4 \
-  --data_path data/llm_training_sample.json --adapter_type lora --r 32 --lora_alpha 32 \
-  --target_modules all-linear --distribution_strategy pytorch_fsdp --reshard_after_forward \
-  --llm_name google/gemma-4-31B-it --gpus 16 --nodes 1 --max_steps 50
-python inference.py --test_data_path data/llm_training_sample.json \
-  --model_name /root/models/<serving-model> --model_type gemma4 --inference_mode language_model
-```
-
-Notes:
-
-1. Each logical NeuronCore is one Slurm `gpu`, 4 per device. `SCALARLM_MAX_GPUS_PER_NODE`
-   sets how many cores training may use; training takes the last cores so vLLM keeps the
-   first devices. Run one training job at a time: every job takes the same last cores.
-2. Pass devices under their host names (`--device=/dev/neuron12`); renumbering them breaks
-   device discovery.
-3. `--llm_name` sets the training checkpoint (BF16) when vLLM serves a different one, such
-   as an FP8 copy. Without it the job trains the served model.
-4. `--target_modules all-linear` adapts only the language decoder of a multimodal model.
-   The Gemma4 vision tower uses a layer type LoRA cannot wrap. Pass `all-linear` alone,
-   not mixed with module names.
-5. `--reshard_after_forward` is required for Gemma4 31B on 4 devices; without it the FSDP
-   all gather runs out of device memory. On 16 training devices also set
-   `hsdp_shard_size: 16`.
-6. The first vLLM start and step 0 of training compile for minutes; mount the compile
-   caches to reuse them. Write `--optimization-level=2` with `=` in `SCALARLM_VLLM_ARGS`;
-   the spaced form is not passed to the Neuron plugin, which then compiles at a slower
-   level.
-7. The Neuron vLLM backend cannot load adapters at run time, so `--model_name <job hash>`
-   and GRPO do not work. Merge the adapter from `ml/` with
-   `python -m adapters.merge_lora_and_push --job-dir <job> --repo-id <id> --dry-run --output-dir <dir>`,
-   then restart the container with `SCALARLM_MODEL` set to the merged model. If vLLM serves
-   FP8 weights, convert the merged model to the same format first.
-8. Tested with Gemma4 31B LoRA r32, sequence 1024, batch 1 per rank. Other models are
-   untested.
+The [Trainium2 guide](docs/DOCKER_IMAGE_TRAINIUM2.md) preserves the build, launch,
+training and inference workflow from this README. It describes the current recipe,
+not a validated deployment. Base image digests, device allocation, model compilation,
+checkpoint export and serving remain gated on the Trainium agent's hardware results.
 
 ## Notes
 
-- `--attn_implementation flash_attention_2` is mapped to `sdpa` by the server on both
-  vendors. FA2 loads and then aborts mid-training with a device-side
-  `HSA_STATUS_ERROR_EXCEPTION` and no traceback, so leave the default.
-- `embedding` mode needs `--batch_size 2` or more. CoSENT is a pairwise ranking loss, so at
-  `batch_size 1` every step reports exactly 0.0 loss while the job still finishes
-  COMPLETED.
-- `--sample_fraction 0.1` on the 5-record `data/llm_training_sample.json` truncates to 0
-  rows and the SDK rejects the empty archive (`ValueError: The file ... is empty`) — keep
-  `1.0` with the shipped samples.
-- Every key you add to `train_args` must be declared on `JobConfig` in
-  `repo/infra/cray_infra/util/default_job_config.py`. Pydantic runs with `extra="ignore"`,
-  so an undeclared key is dropped silently between `config.yaml` and the training code;
-  `get_job_config()` logs what it dropped. Numeric CLI arguments need an explicit `type=`
-  or the server fails comparing a string.
-- `upload_to_hf` is rank-0 only and best-effort: a failed upload still reports COMPLETED,
-  with the reason only in the rank-0 log.
-- Resume is automatic — the loop picks the highest-numbered `checkpoint_*.pt` in the job
-  directory and continues at `step + 1`. Rotation keeps only the last 3 checkpoints, so a
-  crash more than three intervals back cannot be resumed. Relaunch through `sbatch`; the
-  entrypoint reads `SLURM_JOB_NODELIST` and dies as a bare shell script.
-- Multi-node: keep the HF cache **node-local**. `huggingface_hub` guards it with `filelock`
-  and `flock()` on NFS fails with `OSError: [Errno 116] Stale file handle`, killing every
-  rank during model load. `scontrol show hostnames` must return names that resolve for
-  mpirun, and container `--device` lists must be computed per node.
-- When editing `ml/`, keep the stop check, the finite-gradient check and the loss reduction
-  on every rank on every step — one behind a rank-local branch hangs the job with no error.
+* Keep `--attn_implementation sdpa` on GPU servers; the FA2 override is mapped to SDPA.
+* Embedding requires `--batch_size 2` or more for its pairwise ranking loss.
+* Keep `--sample_fraction 1.0` with the shipped samples to avoid an empty dataset.
+* Declare new `train_args` keys on `JobConfig` in
+  `repo/infra/cray_infra/util/default_job_config.py`; undeclared keys are ignored.
+  Numeric CLI arguments need an explicit `type=`.
+* `upload_to_hf` runs on rank zero. Upload failures do not change COMPLETED status;
+  inspect that rank's log.
+* Resume selects the highest numbered `checkpoint_*.pt` and continues at `step + 1`.
+  Rotation retains three checkpoints. Relaunch through `sbatch`, not a bare entrypoint.
+* For multiple nodes, use a separate local HF cache on each node. Shared NFS locks can
+  fail with stale handles. `scontrol show hostnames` must resolve for mpirun, and
+  container `--device` lists must match each node.
+* Keep stop checks, finite gradient checks and loss reduction on every rank on every
+  step; placing them inside a branch executed by one rank can hang the job.

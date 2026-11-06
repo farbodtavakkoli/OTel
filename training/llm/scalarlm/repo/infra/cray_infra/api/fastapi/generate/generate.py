@@ -32,7 +32,6 @@ logger = logging.getLogger(__name__)
 
 
 async def generate(request: GenerateRequest):
-
     prompts = request.prompts
     model = request.model
     max_tokens = request.max_tokens
@@ -62,14 +61,6 @@ async def generate(request: GenerateRequest):
         logger.error(f"Model {model} not found")
         raise HTTPException(status_code=404, detail=f"Model {model} not found")
 
-    # The pydantic schema defaults max_tokens to 16 when the field is
-    # omitted, but SDK callers that explicitly send `max_tokens: null`
-    # still arrive here with None. Passing None all the way through to
-    # vLLM's `request_output_to_completion_response` trips its bare
-    # `assert request.max_tokens is not None`
-    # (vllm/entrypoints/openai/completion/serving.py:481), generating
-    # output and then crashing while building the response — see the
-    # chat-completions handler fix in #185 for the same root cause.
     if max_tokens is None:
         max_tokens = int(config.get("default_max_output_tokens", 128))
         logger.info("max_tokens unset; defaulting to %d", max_tokens)
@@ -80,10 +71,6 @@ async def generate(request: GenerateRequest):
         request_count = 0
 
         for entry in prompts:
-            # Each entry is independently a bare string, a {"prompt":
-            # str} dict, or a {"messages": [...]} dict; the renderer
-            # produces a model-input string in all three cases. See
-            # docs/openai-chat-completions-queue.md §10.
             rendered_prompt = render_generate_entry(entry, model=model)
             request = {
                 "prompt": rendered_prompt,

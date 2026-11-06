@@ -2,7 +2,6 @@ name: scalarlm
 help: ScalarLM CLI
 version: 0.5.0
 
-
 commands:
 
 - name: build-image
@@ -111,14 +110,14 @@ commands:
       help: Seconds to wait for API and vLLM readiness in the live profile.
       default: "600"
   examples:
-    - ./scalarlm test                                      # default: --level cpu
-    - ./scalarlm test --level unit                          # only Layer 3
-    - ./scalarlm test --level fast                          # unit + ui + collectives
-    - ./scalarlm test --level component -k work_queue       # Layer 2 tests matching "work_queue"
-    - ./scalarlm test --level ui                            # npm-side tests only
-    - ./scalarlm test --level e2e --workers 1               # serialized E2E
+    - ./scalarlm test
+    - ./scalarlm test --level unit
+    - ./scalarlm test --level fast
+    - ./scalarlm test --level component -k work_queue
+    - ./scalarlm test --level ui
+    - ./scalarlm test --level e2e --workers 1
     - ./scalarlm test --level live --live-target spark --model Qwen/Qwen3-0.6B --tag cray:latest --no-build yes
-    - ./scalarlm test test/unit/test_config_override.py     # explicit path (runs in container)
+    - ./scalarlm test test/unit/test_config_override.py
 
 - name: llm
   help: Invoke the LLM tool
@@ -129,7 +128,6 @@ commands:
       args:
         - name: model
           help: Model name to plot
-
 
     - name: logs
       help: Get the logs for the LLM model
@@ -148,7 +146,6 @@ commands:
           arg: lines
           help: Number of lines to show
           default: "100"
-
 
     - name: ls
       help: List all the LLM models

@@ -24,12 +24,10 @@ def tokenize_canvas_batch(
     pad_loss_weight=1.0,
 ):
     pad_id = pad_token_id(tokenizer)
-    # Only append EOS when the tail is supervised; otherwise it is unsupervised noise.
     eos_id = tokenizer.eos_token_id if supervise_termination else None
     append_eos = supervise_termination and eos_id is not None
 
     prefix_len = 1 if anchor_id is not None else 0
-    # The anchor and the EOS each consume a canvas slot.
     output_budget = canvas_length - prefix_len - (1 if append_eos else 0)
 
     encoder = tokenizer(inputs)
@@ -55,14 +53,12 @@ def tokenize_canvas_batch(
             toks = toks[:output_budget]
 
         body = list(toks) + ([eos_id] if append_eos else [])
-        # The anchor slot must stay clean: pair this with corrupt_canvas(protect_prefix=1).
         prefix_input = [anchor_id] if anchor_id is not None else []
         prefix_label = [anchor_id] if anchor_id is not None else []
 
         pad = canvas_length - len(prefix_input) - len(body)
         canvas_input_ids.append(prefix_input + body + [pad_id] * pad)
         if supervise_termination:
-            # Give the pad tail a real target so it is corruptible and teaches termination.
             canvas_labels.append(prefix_label + body + [pad_id] * pad)
             if emit_weight:
                 canvas_loss_weight.append(

@@ -1,10 +1,5 @@
 import { useInferenceRequestDetail } from "@/api/inference";
 
-/**
- * Lazy detail panel for one inference request. Mounts only when the
- * row is expanded — `enabled` gates the network fetch — so collapsing
- * a row also stops paying for it.
- */
 export function InferenceRequestDetail({
   requestId,
   expanded,

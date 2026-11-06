@@ -3,18 +3,10 @@ import { useState } from "react";
 import { CopyButton } from "./CopyButton";
 
 interface ShowSDKCodeProps {
-  /** Python snippet to display. Expected to be complete and runnable. */
   code: string;
-  /** Label above the snippet; optional. */
   title?: string;
 }
 
-/**
- * Disclosure that reveals a runnable Python SDK snippet equivalent to the
- * current UI state. Every write-side action in the UI can be reproduced via
- * the SDK — surfacing the snippet gives users a one-click path from click-ops
- * to scripted-ops without leaving the page.
- */
 export function ShowSDKCode({
   code,
   title = "Equivalent SDK call",
@@ -43,12 +35,6 @@ export function ShowSDKCode({
   );
 }
 
-/**
- * Build a Python snippet for a submitted training job, exactly equivalent to
- * the train_args dict recorded in job_config. Omits server-filled fields
- * (job_directory, training_data_path, dataset_hash) since they aren't
- * user-authored.
- */
 export function trainJobSnippet(
   config: Record<string, unknown>,
   apiUrl: string,
@@ -94,12 +80,6 @@ export function generateSnippet(model: string, apiUrl: string): string {
   ].join("\n");
 }
 
-/**
- * Pretty-print a JSON-serializable value as indented Python. Handles the
- * JSON/Python common subset (strings, numbers, booleans, null, arrays,
- * objects). Python-ifies true/false/None since our train_args stays in
- * that common subset.
- */
 function formatPyDict(value: unknown, indent: number): string {
   const render = (v: unknown, depth: number): string => {
     const pad = "    ".repeat(depth);

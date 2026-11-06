@@ -1,14 +1,3 @@
-"""
-Unit tests for infra/cray_infra/training/download_dataset.py.
-
-Contract:
-- No `limit` → stream the file verbatim, byte-for-byte.
-- `limit=N` → stream the first N newline-terminated lines and stop.
-- Content-Disposition carries an attachment filename keyed on the job
-  hash prefix so multiple downloads in the same browser don't collide.
-- 404 when dataset.jsonlines is missing; 400 when `limit < 1`.
-"""
-
 import json
 import os
 from unittest.mock import patch
@@ -45,12 +34,6 @@ def resolve(job_dir):
 
 
 async def _collect(response) -> bytes:
-    """Iterate the StreamingResponse's body and concatenate.
-
-    Starlette wraps a sync generator passed to StreamingResponse into
-    an async iterator under the hood, so the test has to drive it from
-    an async context.
-    """
     parts = []
     async for chunk in response.body_iterator:
         parts.append(chunk if isinstance(chunk, bytes) else chunk.encode())
@@ -100,9 +83,6 @@ def test_content_disposition_uses_hash_prefix(job_dir, resolve):
     response = download_dataset("deadbeefcafe1234")
 
     disp = response.headers["content-disposition"]
-    # Job dir basename is the full hash; we trim to a 12-char prefix
-    # so the filename stays readable but unambiguous in a downloads
-    # folder.
     assert "deadbeefcafe" in disp
     assert disp.endswith('.jsonl"')
 
@@ -116,7 +96,6 @@ def test_content_disposition_marks_sampled_downloads(job_dir, resolve):
 
 
 def test_missing_dataset_returns_404(job_dir, resolve):
-    # No dataset.jsonlines written.
     with pytest.raises(HTTPException) as exc:
         download_dataset("deadbeefcafe1234")
     assert exc.value.status_code == 404
@@ -131,10 +110,7 @@ def test_invalid_limit_returns_400(job_dir, resolve):
 
 @pytest.mark.asyncio
 async def test_full_path_uses_chunked_reader_not_line_iteration(job_dir, resolve):
-    """When limit is None, the streamer reads in 64 KiB byte chunks
-    rather than iterating line-by-line — exercise with a row larger
-    than _CHUNK_BYTES so a multi-chunk read happens."""
-    rows = [{"x": "a" * 100_000}]  # > _CHUNK_BYTES → multi-chunk read
+    rows = [{"x": "a" * 100_000}]
     path = _write_dataset(job_dir, rows)
     expected = open(path, "rb").read()
 

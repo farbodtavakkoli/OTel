@@ -20,12 +20,6 @@ def benchmark_gemm():
 
 
 def run_gemm_benchmark():
-    #torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = True
-    #torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
-    #torch.backends.cuda.matmul.allow_fp16_accumulation = False
-    #torch.backends.cuda.matmul.allow_bf16_accumulation = False
-    #torch.backends.cuda.preferred_blas_library("cublas")
-
     warmup()
 
     results = {}
@@ -56,14 +50,10 @@ def make_random(x, y, leading_zero_bits, trailing_zero_bits, scale_factor):
 
 def run_gemm(size):
     m, n, k = size
-    #a = torch.randint(0, 1, (m, k), dtype=gemm_dtype, device=get_device())
-    #b = torch.randn(k, n, dtype=gemm_dtype, device=get_device()) * torch.randint(0, 1, (k, n), dtype=gemm_dtype, device=get_device())
-    #b = torch.randint(0, 1, (k, n), dtype=gemm_dtype, device=get_device())
-    a = make_random(m, k, 8, 8, 2**-119)  #torch.randn(m, k, dtype=gemm_dtype, device=get_device())
-    b = make_random(n, k, 8, 8, 2**-119)  #torch.randn(n, k, dtype=gemm_dtype, device=get_device())
+    a = make_random(m, k, 8, 8, 2**-119)
+    b = make_random(n, k, 8, 8, 2**-119)
     c = torch.zeros(m, n, dtype=gemm_dtype, device=get_device())
 
-    # run at least 3 seconds
     start_time = time.time()
     end_time = start_time + 3
 
@@ -129,14 +119,9 @@ def get_device():
 
 
 def select_appropriate_size_for_this_machine():
-    # Try a small GEMM, and time it
-    # If it runs too fast, select a bigger model
-    # If it runs too slow, select a smaller model
     tiny_gemm = (256, 256, 2048)
 
     metrics = run_gemm(tiny_gemm)
-
-    # Get the total number of flops in each model
 
     def get_flops(size):
         m, n, k = size
@@ -146,15 +131,12 @@ def select_appropriate_size_for_this_machine():
 
     logger.info(f"Tiny GEMM took {metrics['time']} seconds it ran at {metrics['GFLOP/s']} GFLOP/s")
 
-    # get the flops for each llama model
     llama_100m_flops = sum([get_flops(size) for size in llama_100m_sizes])
     llama_1b_flops = sum([get_flops(size) for size in llama_1b_sizes])
     llama_8b_flops = sum([get_flops(size) for size in llama_8b_sizes])
 
-    # Get the time it took to run the tiny gemm
     tiny_time = metrics["time"]
 
-    # Get the time it would take to run each llama model
     llama_100m_time = llama_100m_flops / tiny_flops * tiny_time
     llama_1b_time = llama_1b_flops / tiny_flops * tiny_time
     llama_8b_time = llama_8b_flops / tiny_flops * tiny_time
@@ -163,7 +145,6 @@ def select_appropriate_size_for_this_machine():
     logger.info(f"GEMM from llama_1b will take {llama_1b_time} seconds")
     logger.info(f"GEMM from llama_8b will take {llama_8b_time} seconds")
 
-    # Select the largest model that will take at most 10 seconds to run
     if llama_8b_time < 10:
         return llama_8b_sizes
     elif llama_1b_time < 10:
@@ -175,14 +156,11 @@ def select_appropriate_size_for_this_machine():
 
 
 def save_results(results):
-    # Save results to a json file
     path = "/app/cray/data/benchmark_gemm.json"
 
     with open(path, "w") as f:
         json.dump(results, f)
 
-
-# Common sizes used in LLMs
 
 llama_100m_sizes = [
     (256, 256, 2048),

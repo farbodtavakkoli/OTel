@@ -1,10 +1,3 @@
-"""
-Unit tests for SDK URL resolution (make_api_url, get_api_base).
-
-Contract under test: docs/configuration.md §4 — six-level precedence order
-for the API base URL.
-"""
-
 import masint
 import scalarlm
 from masint.util.get_api_base import get_api_base
@@ -19,8 +12,6 @@ def test_make_api_url_joins_with_single_slash():
 
 
 def test_make_api_url_falls_back_to_get_api_base():
-    # With a pristine env (autouse fixture clears everything), the fallback
-    # is the localhost default.
     assert make_api_url("v1/health") == "http://localhost:8000/v1/health"
 
 
@@ -50,7 +41,6 @@ def test_get_api_base_scalarlm_module_attr_is_highest_precedence(monkeypatch):
 def test_get_api_base_masint_attr_beats_env(monkeypatch):
     monkeypatch.setenv("SCALARLM_API_URL", "http://env")
     monkeypatch.setattr(masint, "api_url", "http://masint-attr", raising=False)
-    # scalarlm.api_url stays None via clean_scalarlm_env
 
     assert get_api_base() == "http://masint-attr"
 
@@ -69,7 +59,6 @@ def test_get_api_base_masint_env_when_scalarlm_env_absent(monkeypatch):
 
 
 def test_get_api_base_module_attr_of_none_is_ignored(monkeypatch):
-    # Setting the attribute to None must fall through, not return "None".
     monkeypatch.setenv("SCALARLM_API_URL", "http://env")
     monkeypatch.setattr(scalarlm, "api_url", None, raising=False)
     monkeypatch.setattr(masint, "api_url", None, raising=False)

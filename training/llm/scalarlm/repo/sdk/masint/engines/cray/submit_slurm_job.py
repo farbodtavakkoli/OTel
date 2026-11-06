@@ -18,7 +18,6 @@ async def submit_slurm_job(code, train_args, api_url):
 
 @contextlib.contextmanager
 def make_slurm_archive(code):
-
     data = [{"input": "example input", "output": "example output"}]
 
     with make_data_file(data) as data_file_path:
@@ -43,14 +42,10 @@ def make_slurm_archive(code):
 
 @contextlib.contextmanager
 def make_ml_dir(code):
-    """
-    Create a temporary directory for the machine learning code.
-    """
     with tempfile.TemporaryDirectory() as temp_dir:
         ml_dir = os.path.join(temp_dir, "ml", "cray_megatron")
         os.makedirs(ml_dir, exist_ok=True)
 
-        # Write the code to a file in the ml directory
         code_file_path = os.path.join(ml_dir, "main.py")
         with open(code_file_path, "w") as code_file:
             code_file.write(code)

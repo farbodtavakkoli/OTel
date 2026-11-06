@@ -1,11 +1,3 @@
-/**
- * Format a numeric value with SI suffixes for display in stat cards.
- * Keeps exactly 3 significant digits for readability at a glance.
- *   1234         → "1.23k"
- *   4.56e9       → "4.56G"
- *   0.0123       → "12.3m"
- *   NaN | null   → "—"
- */
 export function formatNumber(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "—";
   const abs = Math.abs(value);
@@ -31,7 +23,6 @@ export function formatNumber(value: number | null | undefined): string {
   return value.toExponential(2);
 }
 
-/** Format a duration in seconds to "HH:MM:SS" for SLURM-like columns. */
 export function formatDurationSeconds(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "—";
   const h = Math.floor(seconds / 3600);

@@ -9,11 +9,6 @@ interface SystemPromptModalProps {
   onClose: () => void;
 }
 
-/**
- * Modal system-prompt editor, opened from the conversation overflow menu.
- * Keeps the main chat surface free of editorial chrome; the prompt still
- * applies per-conversation (docs/ui-design.md §6.4).
- */
 export function SystemPromptModal({
   open,
   value,
@@ -22,7 +17,6 @@ export function SystemPromptModal({
 }: SystemPromptModalProps) {
   const [draft, setDraft] = useState(value);
 
-  // Sync when opened so an earlier cancel doesn't leak stale edits.
   useEffect(() => {
     if (open) setDraft(value);
   }, [open, value]);

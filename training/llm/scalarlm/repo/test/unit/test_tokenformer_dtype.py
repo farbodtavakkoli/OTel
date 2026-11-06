@@ -1,5 +1,3 @@
-"""Regression tests for the tokenformer adapter dtype fix."""
-
 import torch
 from torch import nn
 
@@ -12,13 +10,11 @@ def test_resolve_dtype_bf16_layer():
 
 
 def test_resolve_dtype_fp32_layer():
-    layer = nn.Linear(8, 8)  # default float32
+    layer = nn.Linear(8, 8)
     assert TokenformerAdapter._resolve_param_dtype(layer) == torch.float32
 
 
 def test_resolve_dtype_no_float_params_falls_back():
-    # Integer-only module (stands in for packed/quantized weights): fall back
-    # to the global default.
     class IntOnly(nn.Module):
         def __init__(self):
             super().__init__()

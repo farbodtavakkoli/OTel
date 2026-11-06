@@ -5,7 +5,6 @@ from huggingface_hub import snapshot_download
 
 @main_rank_only
 def download_model(model_name):
-    # Skip redundant original-format weights transformers never loads when safetensors are present.
     snapshot_download(
         repo_id=model_name,
         ignore_patterns=["*.pt", "*.pth", "*.bin", "consolidated*"],

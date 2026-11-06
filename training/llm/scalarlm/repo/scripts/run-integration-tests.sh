@@ -1,12 +1,9 @@
 #!/bin/bash
-# Comprehensive integration test runner for ScalarLM vLLM modes
-# Tests both HTTP and Direct mode functionality and parity
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Set PYTHONPATH to include infra and test directories
 export PYTHONPATH="$PROJECT_DIR/infra:$PROJECT_DIR:${PYTHONPATH:-}"
 
 echo "🚀 ScalarLM vLLM Mode Integration Tests"
@@ -17,14 +14,12 @@ echo ""
 
 cd "$PROJECT_DIR"
 
-# Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Test tracking
 total_suites=0
 passed_suites=0
 failed_suites=0
@@ -52,7 +47,6 @@ run_test_suite() {
     echo ""
 }
 
-# Check if integration test directory exists
 if [[ ! -d "test/integration" ]]; then
     echo -e "${RED}❌ Integration test directory not found: test/integration${NC}"
     exit 1
@@ -65,7 +59,6 @@ echo "2. Direct Mode Coverage Tests - Test all endpoints in Direct mode"
 echo "3. HTTP vs Direct Parity Tests - Compare HTTP and Direct mode results"
 echo ""
 
-# Ask user which tests to run
 echo "Choose tests to run:"
 echo "  a) All tests"
 echo "  1) Engine Method Coverage only"
@@ -78,14 +71,12 @@ case $choice in
     a|A)
         echo -e "${YELLOW}Running all integration test suites...${NC}"
         echo ""
-        
-        # 1. Engine Method Coverage Analysis (static analysis)
+
         run_test_suite \
             "Engine Method Coverage" \
             "test/integration/test_engine_method_coverage.py" \
             "Static analysis of HTTP endpoint to engine method mapping"
-        
-        # 2. Direct Mode Coverage (requires running server with vllm_use_http: false)
+
         echo -e "${YELLOW}⚠️  NOTE: The next test requires ScalarLM running with vllm_use_http: false${NC}"
         echo "   Start server with: ./scalarlm up cpu --direct"
         echo ""
@@ -100,8 +91,7 @@ case $choice in
             echo -e "${YELLOW}⏸️  Skipping Direct Mode Coverage tests${NC}"
             echo ""
         fi
-        
-        # 3. HTTP vs Direct Parity (requires both modes available)
+
         echo -e "${YELLOW}⚠️  NOTE: The next test requires both HTTP and Direct mode accessible${NC}"
         echo "   Ensure ScalarLM (HTTP) and vLLM (Direct) servers are running"
         echo ""
@@ -155,7 +145,6 @@ case $choice in
         ;;
 esac
 
-# Print final summary
 echo ""
 echo "="*80
 echo "📊 INTEGRATION TEST SUMMARY"

@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 
 class TestOpenAIClient(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-
         logger.info("Starting server")
 
         self.app = await start_cray_server(server_list=["api", "vllm"])

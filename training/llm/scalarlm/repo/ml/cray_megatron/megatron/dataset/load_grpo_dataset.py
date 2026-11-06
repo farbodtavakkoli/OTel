@@ -79,12 +79,10 @@ class GrpoDataset(torch.utils.data.IterableDataset):
         self.n_truncated = 0
         self.n_on_policy = 0
 
-    # one row -> tensors
     def encode(self, row):
         p_ids = row.get("prompt_token_ids")
         c_ids = row.get("completion_token_ids")
         if p_ids is None or c_ids is None:
-            # Same tokenisation as the SFT loader: prefix length of the prompt masks the prompt.
             full = self.tokenizer(row["prompt"] + row["completion"])["input_ids"]
             n_prompt = len(self.tokenizer(row["prompt"])["input_ids"])
             p_ids, c_ids = full[:n_prompt], full[n_prompt:]
@@ -101,12 +99,11 @@ class GrpoDataset(torch.utils.data.IterableDataset):
             old = [float("nan")] * len(c_ids)
 
         if len(p_ids) + len(c_ids) > self.max_len:
-            # Keep the prompt, drop the completion tail; old_logprobs are cut with it.
             keep = max(0, self.max_len - len(p_ids))
             c_ids, old = c_ids[:keep], old[:keep]
             self.n_truncated += 1
         if not c_ids:
-            return None  # nothing to learn from
+            return None
 
         ids = p_ids + c_ids
         n_p = len(p_ids)
@@ -130,7 +127,6 @@ class GrpoDataset(torch.utils.data.IterableDataset):
     def __len__(self):
         return math.ceil(len(self.rows) / self.world_size)
 
-    # right-pad a micro-batch
     def collate_fn(self, items):
         L = max(x["input_ids"].shape[0] for x in items)
         B = len(items)

@@ -1,21 +1,3 @@
-"""Session-based chunked upload for large training datasets.
-
-Clients split a gzipped tar archive into chunks, each small enough to
-pass through a proxy (e.g. Cloudflare's 100 MB body cap). The server
-reassembles the archive here and hands it off to the standard training
-pipeline once all chunks arrive.
-
-See docs/chunked-upload.md for the full protocol specification.
-
-State layout:
-    /app/cray/upload_sessions/{upload_id}/
-        manifest.json          — session metadata
-        chunks/
-            000000             — raw chunk bytes, written atomically
-            000001
-            ...
-"""
-
 import hashlib
 import json
 import os
@@ -40,10 +22,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Init
-# ---------------------------------------------------------------------------
-
 async def init_upload(req: UploadInitRequest) -> UploadInitResponse:
     config = get_config()
     staging_root = config["upload_staging_directory"]
@@ -67,10 +45,6 @@ async def init_upload(req: UploadInitRequest) -> UploadInitResponse:
 
     return UploadInitResponse(upload_id=upload_id, received_chunks=[])
 
-
-# ---------------------------------------------------------------------------
-# Write chunk
-# ---------------------------------------------------------------------------
 
 async def write_chunk(
     upload_id: str,
@@ -119,17 +93,7 @@ async def write_chunk(
     )
 
 
-# ---------------------------------------------------------------------------
-# Finalize
-# ---------------------------------------------------------------------------
-
 async def finalize_upload(req: UploadFinalizeRequest):
-    """Reconstruct archive, verify integrity, extract, and return job args.
-
-    Returns (final_dataset_filepath, train_args) — the same tuple that the
-    legacy upload_training_data returns so the router can call
-    launch_training_job identically.
-    """
     config = get_config()
     staging_root = config["upload_staging_directory"]
 
@@ -159,7 +123,6 @@ async def finalize_upload(req: UploadFinalizeRequest):
             detail=f"Missing chunks: {missing}",
         )
 
-    # Concatenate chunks into a temp archive
     with tempfile.NamedTemporaryFile(delete=False, suffix=".tar") as tmp_tar:
         tmp_tar_path = tmp_tar.name
         hasher = hashlib.sha256()
@@ -198,10 +161,6 @@ async def finalize_upload(req: UploadFinalizeRequest):
     return final_path, train_args
 
 
-# ---------------------------------------------------------------------------
-# Stale session reaper
-# ---------------------------------------------------------------------------
-
 def reap_stale_uploads():
     config = get_config()
     staging_root = config["upload_staging_directory"]
@@ -220,14 +179,9 @@ def reap_stale_uploads():
                 logger.info(f"Reaping stale upload session {entry} (age={age:.0f}s)")
                 shutil.rmtree(session_dir, ignore_errors=True)
         except Exception:
-            # Corrupt or incomplete session dir — remove it
             logger.warning(f"Removing corrupt upload session dir: {session_dir}")
             shutil.rmtree(session_dir, ignore_errors=True)
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _session_dir(staging_root: str, upload_id: str) -> str:
     return os.path.join(staging_root, upload_id)

@@ -30,15 +30,6 @@ async def clear_acked_requests_from_queue():
 
 
 async def restart_unacked_requests_from_queue(inference_work_queue):
-    """
-    Watchdog: requests that have been in unack state longer than the
-    ack timeout get nack'd back into pending so a healthy worker can
-    pick them up. Before we nack, check whether the response file is
-    already on disk — that means the worker finished the job but
-    hasn't (or couldn't) complete the finish_work round-trip yet.
-    Nacking those would re-submit work that's already done and flood
-    vLLM; ack them instead so they leave the queue cleanly.
-    """
     global ready_worker_idle_start_time
 
     config = get_config()
@@ -49,10 +40,6 @@ async def restart_unacked_requests_from_queue(inference_work_queue):
     acked_count = 0
 
     for request in unacked_requests:
-        # If the worker already produced a response, ack this row instead
-        # of restarting it. Prevents the watchdog from re-queueing work
-        # that's finished but stuck between "result written" and
-        # "finish_work returned 200."
         item_path = request["data"].get("path")
         if item_path:
             response_path = group_request_id_to_response_path(
@@ -92,8 +79,6 @@ async def restart_unacked_requests_from_queue(inference_work_queue):
 
 
 def _strip_request_id(item_path: str) -> str:
-    # Mirrors get_work_item.strip_request_id; duplicated here to avoid
-    # a circular import between the work queue and the generate package.
     base_name = os.path.basename(item_path)
     request_id, _ = os.path.splitext(base_name)
     return request_id

@@ -26,9 +26,7 @@ import { SystemPromptModal } from "./SystemPromptEditor";
 
 interface ConversationViewProps {
   conversation: Conversation;
-  /** Notifies the parent when the first user turn creates a conversation. */
   onFirstTurn?: (id: string) => void;
-  /** Mobile only: open the conversation-list drawer. */
   onOpenSidebar?: () => void;
 }
 
@@ -48,7 +46,6 @@ export function ConversationView({
   const controllerRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom on new messages, unless the user scrolled up.
   const [follow, setFollow] = useState(true);
   useEffect(() => {
     if (!follow) return;
@@ -95,11 +92,6 @@ export function ConversationView({
     navigate("/chat", { replace: true });
   }, [conversation.id, navigate]);
 
-  /**
-   * Shared streaming driver. Takes the prompt history to send to the model
-   * and the assistant-message row we want to populate. Keeps Send and
-   * Regenerate in lockstep around abort + error handling.
-   */
   const runAssistantTurn = useCallback(
     async (openAIMessages: OpenAIMessage[], assistantMsg: Message) => {
       setError(null);
@@ -287,9 +279,6 @@ export function ConversationView({
     return null;
   }, [messages]);
 
-  // Sparse "model:" ribbon under a bubble only when the model changes between
-  // turns. The composer footer already shows the current model, so we don't
-  // need to re-announce it on every assistant reply.
   const modelLabelAtIndex = useMemo(() => {
     if (!messages) return new Map<string, boolean>();
     const show = new Map<string, boolean>();
@@ -475,7 +464,6 @@ function MessageTurn({
     );
   }
 
-  // Assistant: no bubble — full-column flow so markdown / code blocks breathe.
   return (
     <div className="flex flex-col gap-1.5">
       {showModelLabel && message.modelAtSend && (
@@ -511,11 +499,6 @@ function MessageTurn({
   );
 }
 
-/**
- * Compact "max tokens" override for the composer. Empty input → undefined →
- * field omitted from the OpenAI request (server default applies). Any positive
- * integer is sent verbatim. Negatives / zero / NaN snap back to undefined.
- */
 function MaxTokensInput({
   value,
   onChange,
@@ -525,7 +508,6 @@ function MaxTokensInput({
 }) {
   const [draft, setDraft] = useState(value === undefined ? "" : String(value));
 
-  // Re-sync if the conversation prop swaps (e.g., navigation between chats).
   useEffect(() => {
     setDraft(value === undefined ? "" : String(value));
   }, [value]);

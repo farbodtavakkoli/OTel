@@ -14,9 +14,6 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
-# Pure helpers — kept free of transformers / peft / huggingface_hub imports.
-
-
 def find_latest_checkpoint(job_dir: Path) -> Path:
     candidates = []
     for p in job_dir.iterdir():
@@ -65,7 +62,6 @@ def classify_state_dict(state_dict: dict[str, torch.Tensor]) -> dict[str, dict]:
 
 def infer_lora_rank(lora_keys: dict[str, torch.Tensor]) -> int:
     for k, v in lora_keys.items():
-        # Either `...lora_A.weight` or `...lora_A.<adapter_name>.weight`.
         if ".lora_A." in k:
             return int(v.shape[0])
     raise ValueError(
@@ -105,7 +101,7 @@ def resolve_lora_config_args(
         "target_modules": target_modules,
         "bias": "none",
         "use_rslora": use_rslora,
-        "_alpha_source": alpha_source,  # popped out before LoraConfig sees it
+        "_alpha_source": alpha_source,
     }
 
 
@@ -122,9 +118,6 @@ def _prefix_for_peft_load(
         else:
             out[f"{PEFT_OUTER_PREFIX}{k}"] = v
     return out
-
-
-# CLI / main flow. transformers, peft and huggingface_hub are imported lazily.
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -325,7 +318,6 @@ def main(argv: list[str] | None = None) -> int:
             base_model_name=base_model_name,
         )
     else:
-        # mode == "merged" — fold LoRA into base, save full model.
         from peft import get_peft_model
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -346,7 +338,6 @@ def main(argv: list[str] | None = None) -> int:
         status_writer.update(phase="merging")
         peft_model = get_peft_model(base, lora_config)
 
-        # On-disk keys lack the outer prefix; without it `merge_and_unload` folds zero deltas.
         prefixed_lora = _prefix_for_peft_load(buckets["lora"])
         load_result = peft_model.load_state_dict(prefixed_lora, strict=False)
         loaded_count = len(prefixed_lora) - len(load_result.unexpected_keys)
@@ -356,7 +347,6 @@ def main(argv: list[str] | None = None) -> int:
             len(prefixed_lora),
         )
         if load_result.unexpected_keys:
-            # Usually vision/audio towers AutoModelForCausalLM never materialises. Not fatal.
             logger.warning(
                 "LoRA load: %d tensors unmatched after prefix fix (e.g. %s). "
                 "These were saved by the trainer but the merge target's "
@@ -371,7 +361,6 @@ def main(argv: list[str] | None = None) -> int:
                 "PEFT model. Aborting before producing a no-op merge that "
                 "looks successful but uploads the unchanged base model."
             )
-        # "Missing" keys are non-LoRA params absent from the adapter dict; expected.
         logger.info("Merging LoRA into base...")
         merged = peft_model.merge_and_unload()
 
@@ -458,10 +447,8 @@ def _resolve_output_dir(
     return requested, False
 
 
-# The trainer's raw PEFT state_dict keeps the `.default.` segment save_pretrained strips.
 def strip_default_adapter_segment(key: str) -> str:
     parts = key.split(".")
-    # Only drop the segment after lora_* when it isn't "weight"/"bias" itself.
     for i in range(len(parts) - 2):
         if parts[i] in ("lora_A", "lora_B", "lora_embedding_A", "lora_embedding_B"):
             tail = parts[i + 1]
@@ -492,7 +479,6 @@ def _export_adapter_repo(
         "Wrote %d adapter tensor(s) to %s", len(renamed), safetensors_path
     )
 
-    # base_model_name_or_path lets `PeftModel.from_pretrained(repo)` find the base itself.
     cfg_dict = lora_config.to_dict()
     cfg_dict["base_model_name_or_path"] = base_model_name
     cfg_dict.setdefault("peft_type", "LORA")
@@ -517,7 +503,6 @@ class _StatusWriter:
         if self.path is None:
             return
         self._state.update(fields)
-        # Atomic write: dump to a sibling tempfile, then rename.
         import json
         tmp = self.path.with_suffix(self.path.suffix + ".tmp")
         try:

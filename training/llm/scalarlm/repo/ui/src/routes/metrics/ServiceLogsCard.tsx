@@ -1,15 +1,3 @@
-/**
- * Live tail of the api / vllm / megatron service logs. One live stream
- * at a time (the active tab) to keep the number of concurrent SSE
- * connections bounded. An "Expand" button pops the current tab into a
- * full-screen modal so the operator can see more context without
- * leaving the metrics page.
- *
- * Backend contract: GET /v1/health/logs/{service_name} yields NDJSON
- * {"line": "...", "line_number": N}\n — see
- * infra/cray_infra/api/fastapi/routers/health_router.py:29.
- */
-
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 
@@ -27,14 +15,9 @@ const SERVICES: { name: ServiceName; label: string; hint: string }[] = [
   { name: "megatron", label: "Megatron", hint: "Training + slurmd" },
 ];
 
-// Max lines held in memory before we start dropping the oldest. 20k lines
-// ≈ a few MB for typical log widths; keeps the DOM responsive without
-// needing a virtualized list.
 const MAX_LINES = 20_000;
 const INITIAL_TAIL = 5_000;
-// How many lines to pull each time the user scrolls near the top.
 const BACKFILL_CHUNK = 2_000;
-// px from the top below which we trigger a backfill request.
 const TOP_TRIGGER_PX = 120;
 const ERROR_REGEX = /\berror\b|traceback|cuda error|oom|killed/i;
 
@@ -42,7 +25,6 @@ export function ServiceLogsCard() {
   const [active, setActive] = useState<ServiceName>("api");
   const [expanded, setExpanded] = useState(false);
 
-  // Close the modal on escape so the expanded view behaves like a dialog.
   useEffect(() => {
     if (!expanded) return;
     const onKey = (e: KeyboardEvent) => {
@@ -153,8 +135,6 @@ function ServiceLogTail({ service, expanded }: ServiceLogTailProps) {
   const [backfilling, setBackfilling] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // `backfillInFlight` prevents overlapping scrollback fetches; `noMoreAbove`
-  // short-circuits once we've reached line 0 so we stop hammering the server.
   const backfillInFlight = useRef(false);
   const noMoreAbove = useRef(false);
 
@@ -172,9 +152,6 @@ function ServiceLogTail({ service, expanded }: ServiceLogTailProps) {
       initialTail: INITIAL_TAIL,
       onLine: (line) =>
         setLines((prev) => {
-          // Cap the buffer from the *front* so that scrolling back doesn't
-          // immediately trim the rows the user is looking at. Live appends
-          // drop the oldest rows; backfilled prepends are guarded below.
           const next =
             prev.length >= MAX_LINES
               ? prev.slice(prev.length - MAX_LINES + 1)
@@ -194,20 +171,16 @@ function ServiceLogTail({ service, expanded }: ServiceLogTailProps) {
     el.scrollTop = el.scrollHeight;
   }, [lines, autoScroll]);
 
-  // Jump to end once the first tail batch arrives, regardless of autoScroll
-  // state — we want to land at the tail on initial load of each tab.
   useEffect(() => {
     if (lines.length === 0) return;
     const el = scrollRef.current;
     if (!el) return;
     if (el.scrollHeight <= el.clientHeight) return;
-    // Only snap on the *first* non-empty render per service.
     if (el.dataset.snapped === "yes") return;
     el.scrollTop = el.scrollHeight;
     el.dataset.snapped = "yes";
   }, [lines]);
 
-  // Reset the snap flag when we switch services.
   useEffect(() => {
     if (scrollRef.current) delete scrollRef.current.dataset.snapped;
   }, [service]);
@@ -218,11 +191,6 @@ function ServiceLogTail({ service, expanded }: ServiceLogTailProps) {
     if (el) el.scrollTop = el.scrollHeight;
   };
 
-  // Scrollback: when the user scrolls near the top, pull the previous
-  // BACKFILL_CHUNK lines and prepend them, compensating scrollTop so the
-  // viewport stays anchored on the row the user is looking at. We ask
-  // the server by byte offset (`before_byte_offset`) rather than line
-  // number so the backfill doesn't pay a full-file forward scan.
   const maybeBackfill = async () => {
     const el = scrollRef.current;
     if (!el) return;
@@ -233,8 +201,6 @@ function ServiceLogTail({ service, expanded }: ServiceLogTailProps) {
     const earliest = lines[0];
     const earliestOffset = earliest.byte_offset;
     if (earliestOffset === undefined) {
-      // No byte offset available — server is running an older protocol.
-      // Give up on scrollback rather than falling back to the slow path.
       noMoreAbove.current = true;
       return;
     }
@@ -258,28 +224,20 @@ function ServiceLogTail({ service, expanded }: ServiceLogTailProps) {
         return;
       }
       setLines((prev) => {
-        // Guard against races / duplicate fetches: drop any overlap with
-        // the current buffer's first row, using byte offset as the
-        // stable identity.
         const firstExisting = prev[0]?.byte_offset ?? Infinity;
         const fresh = older.filter(
           (l) => (l.byte_offset ?? -1) < firstExisting,
         );
         return fresh.concat(prev);
       });
-      // Preserve scroll anchor: the prepended rows added scrollHeight,
-      // so shift scrollTop by the delta.
       requestAnimationFrame(() => {
         const el2 = scrollRef.current;
         if (!el2) return;
         const delta = el2.scrollHeight - anchorHeight;
         if (delta > 0) el2.scrollTop = el2.scrollTop + delta;
       });
-      // If the first backfilled record starts at byte 0, we've reached
-      // the beginning of the file.
       if ((older[0].byte_offset ?? -1) === 0) noMoreAbove.current = true;
     } catch {
-      // Swallow — next scroll event will retry.
     } finally {
       backfillInFlight.current = false;
       setBackfilling(false);
@@ -404,7 +362,6 @@ function ServiceLogTail({ service, expanded }: ServiceLogTailProps) {
             el.scrollHeight - el.scrollTop - el.clientHeight < 20;
           if (autoScroll && !nearBottom) setAutoScroll(false);
           if (el.scrollTop <= TOP_TRIGGER_PX) {
-            // Fire-and-forget; maybeBackfill guards its own concurrency.
             void maybeBackfill();
           }
         }}
@@ -421,10 +378,6 @@ function ServiceLogTail({ service, expanded }: ServiceLogTailProps) {
           </div>
         ) : (
           filtered.map((l) => {
-            // byte_offset is globally unique per-file and survives
-            // prepend/append alike; line_number can collide across a
-            // tail + backfill boundary, so use it only as a display
-            // label, not as a React key.
             const rowKey = l.byte_offset ?? `ln-${l.line_number}`;
             return (
               <div

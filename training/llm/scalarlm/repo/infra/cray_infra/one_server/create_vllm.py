@@ -1,4 +1,3 @@
-# Set vLLM environment variables BEFORE any vLLM imports
 import inspect
 import os
 import shlex
@@ -28,13 +27,6 @@ except ImportError:
     from vllm.entrypoints.launchers.cli_args import make_arg_parser
 from vllm.utils.argparse_utils import FlexibleArgumentParser
 
-# NOTE: `log_non_default_args` used to be imported here from
-# `vllm.entrypoints.utils`. That module no longer exists — the v0.26.0
-# restructure moved the function to
-# `vllm.entrypoints.serve.utils.api_utils` — and the import was killing
-# server startup with ModuleNotFoundError. Nothing in this repo ever
-# called it, so it is dropped rather than re-pointed: that keeps this
-# file importable against both the old and the new fork layout.
 import vllm.envs as envs
 
 import uvicorn
@@ -42,13 +34,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Re-export so the arg-builder is reachable from its historical location
-# for any downstream importers, while the torch-free implementation lives
-# in vllm_cli_args for unit tests.
-from cray_infra.one_server.vllm_cli_args import build_vllm_cli_args  # noqa: E402
+from cray_infra.one_server.vllm_cli_args import build_vllm_cli_args
 
 async def create_vllm(server_status, port):
-
     print(f"DEBUG: BEFORE CONFIG - Environment variables:")
     print(f"  VLLM_TARGET_DEVICE: {os.environ.get('VLLM_TARGET_DEVICE', 'NOT SET')}")
     print(f"  CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES', 'NOT SET')}")
@@ -58,7 +46,6 @@ async def create_vllm(server_status, port):
 
     config = get_config()
 
-    # Set backend to FLASHMLA on cuda sm version less than 8.0
     if torch.cuda.is_available():
         sm_version = torch.cuda.get_device_capability()[0]
         if sm_version < 8:
@@ -70,7 +57,6 @@ async def create_vllm(server_status, port):
             print(f"DEBUG: Using default VLLM_BACKEND for sm_version {sm_version}")
 
     if config['dtype'] == 'auto':
-        # Set to float32 on the cpu
         if not torch.cuda.is_available():
             config['dtype'] = 'float32'
 
@@ -87,7 +73,6 @@ async def create_vllm(server_status, port):
                 "--dtype", "--limit-mm-per-prompt")
         args = [a for a in args if a.split("=")[0] not in drop]
 
-    # Extra SCALARLM_VLLM_ARGS are passed via environment variable, and should override config values
     extra_args = os.environ.get("SCALARLM_VLLM_ARGS", "")
 
     if extra_args:
@@ -95,7 +80,6 @@ async def create_vllm(server_status, port):
         if neuron:
             sys.argv += [a for a in extra_args_list if a.startswith("--optimization-level")]
 
-        # Remove them if they are already in the args list to avoid duplicates
         for extra_arg in extra_args_list:
             arg_name = extra_arg.split("=")[0]
             args = [arg for arg in args if not arg.startswith(arg_name + "=")]
@@ -120,21 +104,8 @@ async def create_vllm(server_status, port):
     await run_server(server_status, args)
 
 async def run_server(server_status, args, **uvicorn_kwargs) -> None:
-    """Run a single-worker API server."""
-
-    # Add process-specific prefix to stdout and stderr.
     decorate_logs("APIServer")
 
-    # vLLM v0.26.0 made `reuse_port` a required keyword-only argument on
-    # setup_server; older fork revisions don't accept it at all. Probe the
-    # signature instead of pinning to one layout, so this file works against
-    # both (scalarlm main still builds the older fork). setup_server is
-    # decorated with @functools.wraps in vllm/tracing/otel.py, so
-    # inspect.signature sees through to the real parameters.
-    #
-    # False is what vLLM's own single-server entrypoints pass
-    # (api_server.py, cli/launch.py); reuse_port only matters when several
-    # API server processes share a listening socket, and ScalarLM runs one.
     if "reuse_port" in inspect.signature(setup_server).parameters:
         listen_address, sock = setup_server(args, reuse_port=False)
     else:
@@ -146,23 +117,11 @@ async def run_server_worker(server_status, listen_address,
                             args,
                             client_config=None,
                             **uvicorn_kwargs) -> None:
-    """Run a single API server worker."""
-
     if args.tool_parser_plugin and len(args.tool_parser_plugin) > 3:
         ToolParserManager.import_tool_parser(args.tool_parser_plugin)
 
-    # NOTE: a `reasoning_parser_plugin` block used to sit here. It was dead
-    # and latently broken: `ReasoningParserManager` was never imported in this
-    # module, so the branch would have raised NameError had it ever been
-    # taken. On v0.26.0 it fails earlier still — the setting moved off the CLI
-    # Namespace into `structured_outputs_config`, so reading
-    # `args.reasoning_parser_plugin` raises AttributeError and kills startup.
-    # vLLM now performs this import itself in
-    # `vllm/v1/structured_output/__init__.py`, so dropping it loses nothing.
-
     server_index = client_config.get("client_index", 0) if client_config else 0
 
-    # Load logging config for uvicorn if specified
     log_config = get_uvicorn_log_config(args)
     if log_config is not None:
         uvicorn_kwargs['log_config'] = log_config
@@ -171,7 +130,6 @@ async def run_server_worker(server_status, listen_address,
             args,
             client_config=client_config,
     ) as engine_client:
-
         supported_tasks = await engine_client.get_supported_tasks()
         model_config = engine_client.model_config
 
@@ -191,8 +149,6 @@ async def run_server_worker(server_status, listen_address,
             host=args.host,
             port=args.port,
             log_level=args.uvicorn_log_level,
-            # NOTE: When the 'disable_uvicorn_access_log' value is True,
-            # no access log will be output.
             access_log=not args.disable_uvicorn_access_log,
             timeout_keep_alive=envs.VLLM_HTTP_TIMEOUT_KEEP_ALIVE,
             ssl_keyfile=args.ssl_keyfile,
@@ -204,7 +160,6 @@ async def run_server_worker(server_status, listen_address,
             **uvicorn_kwargs,
         )
 
-    # NB: Await server shutdown only after the backend context is exited
     try:
         await shutdown_task
     finally:

@@ -1,37 +1,20 @@
 #!/usr/bin/env python3
-"""
-Test harness for observability stack - generates traffic and verifies data flow.
-
-This script:
-1. Sends multiple generation requests to ScalarLM
-2. Waits for Prometheus to scrape the metrics
-3. Queries Prometheus to verify metrics are collected
-4. Queries Grafana to verify dashboard can display the data
-5. Prints a summary of what's working
-
-Usage:
-    python test/infra/test_observability_data.py
-"""
-
 import asyncio
 import time
 import requests
 import json
 from typing import Dict, List
 
-# Configuration
 SCALARLM_URL = "http://localhost:8000"
 PROMETHEUS_URL = "http://localhost:9090"
 GRAFANA_URL = "http://localhost:3001"
 GRAFANA_USER = "admin"
 GRAFANA_PASS = "admin"
 
-# Number of requests to generate
 NUM_REQUESTS = 10
 
 
 class Color:
-    """ANSI color codes for terminal output"""
     GREEN = '\033[92m'
     RED = '\033[91m'
     YELLOW = '\033[93m'
@@ -57,7 +40,6 @@ def print_warning(msg: str):
 
 
 async def generate_traffic():
-    """Send multiple generation requests to create metrics"""
     print_step(f"Generating {NUM_REQUESTS} test requests...")
 
     request_ids = []
@@ -95,7 +77,6 @@ async def generate_traffic():
         except Exception as e:
             print_error(f"  Request {i+1}/{NUM_REQUESTS} error: {e}")
 
-        # Small delay between requests
         await asyncio.sleep(0.2)
 
     print_success(f"Sent {len(request_ids)} requests (some may have failed, which is OK for testing)")
@@ -103,7 +84,6 @@ async def generate_traffic():
 
 
 def wait_for_prometheus_scrape():
-    """Wait for Prometheus to scrape the metrics"""
     print_step("Waiting 20 seconds for Prometheus to scrape metrics...")
 
     for i in range(20, 0, -1):
@@ -114,7 +94,6 @@ def wait_for_prometheus_scrape():
 
 
 def query_prometheus(query: str) -> Dict:
-    """Query Prometheus and return results"""
     try:
         response = requests.get(
             f"{PROMETHEUS_URL}/api/v1/query",
@@ -129,7 +108,6 @@ def query_prometheus(query: str) -> Dict:
 
 
 def verify_prometheus_metrics():
-    """Verify key metrics are available in Prometheus"""
     print_step("Verifying Prometheus metrics...")
 
     metrics_to_check = [
@@ -163,9 +141,7 @@ def verify_prometheus_metrics():
 
 
 def query_grafana_datasource(query: str) -> Dict:
-    """Query Grafana's Prometheus datasource"""
     try:
-        # Get Prometheus datasource UID
         response = requests.get(
             f"{GRAFANA_URL}/api/datasources/name/Prometheus",
             auth=(GRAFANA_USER, GRAFANA_PASS),
@@ -174,7 +150,6 @@ def query_grafana_datasource(query: str) -> Dict:
         response.raise_for_status()
         ds_uid = response.json()["uid"]
 
-        # Query through Grafana
         response = requests.post(
             f"{GRAFANA_URL}/api/ds/query",
             auth=(GRAFANA_USER, GRAFANA_PASS),
@@ -196,10 +171,8 @@ def query_grafana_datasource(query: str) -> Dict:
 
 
 def verify_grafana_dashboard():
-    """Verify Grafana can query the dashboard metrics"""
     print_step("Verifying Grafana dashboard queries...")
 
-    # Test the key queries from the dashboard
     dashboard_queries = [
         ("scalarlm_queue_depth", "Queue Depth panel"),
         ("histogram_quantile(0.95, rate(scalarlm_queue_wait_time_seconds_bucket[5m]))", "Queue Wait Time p95"),
@@ -218,7 +191,6 @@ def verify_grafana_dashboard():
 
 
 def check_grafana_dashboard_exists():
-    """Verify the ScalarLM dashboard exists"""
     print_step("Checking Grafana dashboard...")
 
     try:
@@ -246,14 +218,12 @@ def check_grafana_dashboard_exists():
 
 
 def print_summary(prom_results: Dict):
-    """Print a summary of the test results"""
     print_step("Summary")
 
     print("\n" + "="*60)
     print(f"{Color.BOLD}Observability Stack Status{Color.END}")
     print("="*60)
 
-    # Count metrics
     ok_metrics = sum(1 for r in prom_results.values() if r["status"] == "ok")
     no_data_metrics = sum(1 for r in prom_results.values() if r["status"] == "no_data")
     error_metrics = sum(1 for r in prom_results.values() if r["status"] == "error")
@@ -285,7 +255,6 @@ async def main():
     print(f"\n{Color.BOLD}ScalarLM Observability Test Harness{Color.END}")
     print(f"{'='*60}\n")
 
-    # Step 1: Check if services are running
     print_step("Checking services...")
     try:
         requests.get(f"{SCALARLM_URL}/v1/health", timeout=2)
@@ -311,23 +280,17 @@ async def main():
         print("  Run: ./scripts/start-observability.sh cpu")
         return
 
-    # Step 2: Check dashboard exists
     if not check_grafana_dashboard_exists():
         print_warning("Dashboard missing - may need to restart Grafana")
 
-    # Step 3: Generate traffic
     request_ids = await generate_traffic()
 
-    # Step 4: Wait for scrape
     wait_for_prometheus_scrape()
 
-    # Step 5: Verify Prometheus
     prom_results = verify_prometheus_metrics()
 
-    # Step 6: Verify Grafana
     verify_grafana_dashboard()
 
-    # Step 7: Summary
     print_summary(prom_results)
 
 

@@ -1,5 +1,3 @@
-"""Runtime chat tokenization must use vLLM's configured renderer safely."""
-
 import asyncio
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -86,7 +84,6 @@ def test_payload_uses_supported_subset_and_never_forwards_template_override():
 
 
 def test_payload_revalidates_under_vllm_tokenize_protocol():
-    """The exact v0.26 and v0.27 images both run this wire-contract test."""
     payload = tokenization._build_tokenize_payload(
         model="resolved-model",
         chat_request=_chat_request(),
@@ -118,7 +115,6 @@ def test_payload_revalidates_under_vllm_tokenize_protocol():
 
 
 def test_tokenize_template_params_match_chat_completion_request():
-    """Both exact images must render the same request-level template kwargs."""
     chat_wire = _chat_request(model="resolved-model")
     chat_request = ChatCompletionRequest.model_validate(chat_wire)
     tokenize_request = TokenizeChatRequest.model_validate(

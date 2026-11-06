@@ -50,7 +50,7 @@ def _create_nara_model(model, device, job_config, nara_cfg, train_lm_head):
         model.lm_head.weight.requires_grad = True
         logger.info("lm_head weight set to trainable")
 
-    add_methods(model)  # unwrap_model -> filter_checkpoint saves requires_grad params
+    add_methods(model)
     if getattr(device, "type", None) != "neuron":
         model = model.to(device)
     logger.info(
@@ -74,22 +74,18 @@ def create_lora_model(model, device, train_lm_head=False):
 
     job_config = get_job_config()
 
-    # NaRA (noise-aware LoRA) prototype path, gated by diffusion.nara.enabled.
     nara_cfg = _nara_config(job_config)
     if nara_cfg is not None:
         return _create_nara_model(model, device, job_config, nara_cfg, train_lm_head)
 
-    # Step 1: Insert LoRA adapter modules
     logger.info("Starting LoRA adapter module insertion...")
     step2_start = time.time()
     lora_config = dict(job_config["lora_config"])
 
-    # Resolve PEFT's "all-linear" shorthand ourselves: its expansion fails on some MoEs.
     lora_config["target_modules"] = resolve_target_modules(
         model, lora_config.get("target_modules", "all-linear")
     )
 
-    # Grouped-expert MoEs get no LoRA unless their batched params are in `target_parameters`.
     expert_parameters = resolve_target_parameters(model)
     if expert_parameters:
         existing = lora_config.get("target_parameters") or []
@@ -106,9 +102,7 @@ def create_lora_model(model, device, train_lm_head=False):
         f"LoRA adapter module insertion completed: {step2_time:.2f}s ({step2_time/60:.1f} minutes)"
     )
 
-    # Step 2: Count parameters for train_lm_head decision
     if train_lm_head is None:
-        # Models over 100M params don't need lm_head training.
         logger.info("Counting parameters...")
         step3_start = time.time()
         param_count = count_parameters(lora_model)
@@ -120,7 +114,6 @@ def create_lora_model(model, device, train_lm_head=False):
     else:
         step3_time = 0
 
-    # Step 3: Freeze all parameters (get_peft_model already froze the base model).
     logger.info("Freezing all parameters...")
     step4_start = time.time()
     frozen_count = 0
@@ -132,7 +125,6 @@ def create_lora_model(model, device, train_lm_head=False):
         f"Parameter freezing completed: {step4_time:.2f}s, frozen {frozen_count:,} parameters"
     )
 
-    # Step 4: Unfreeze LoRA parameters
     logger.info("Unfreezing LoRA parameters...")
     step5_start = time.time()
     unfrozen_count = 0
@@ -140,7 +132,7 @@ def create_lora_model(model, device, train_lm_head=False):
         if any(
             module_name in name
             for module_name in [
-                "lora_",  # LoRA A/B weight matrices
+                "lora_",
             ]
         ):
             param.requires_grad = True
@@ -150,7 +142,6 @@ def create_lora_model(model, device, train_lm_head=False):
         f"LoRA parameter unfreezing completed: {step5_time:.2f}s, unfrozen {unfrozen_count:,} parameters"
     )
 
-    # Step 5: Handle lm_head training. Accessed directly — it may be tied to the embeddings.
     step6_start = time.time()
     if train_lm_head:
         logger.info("Setting lm_head for training...")
@@ -165,7 +156,6 @@ def create_lora_model(model, device, train_lm_head=False):
     step6_time = time.time() - step6_start
     logger.info(f"lm_head handling completed: {step6_time:.2f}s")
 
-    # Step 6: Log parameter gradients
     logger.info("Logging parameter gradients...")
     step7_start = time.time()
     log_param_gradients(lora_model, logger)
@@ -195,7 +185,6 @@ def unwrap_model(self):
 
 
 def filter_checkpoint(model, state_dict):
-    # Remove the layers without gradients
     saved_params = {}
 
     for name, param in model.named_parameters(recurse=True):

@@ -1,8 +1,3 @@
-/**
- * Round-trippable JSON export/import for conversations. The on-disk shape is
- * versioned so future UI releases can migrate or reject old files cleanly.
- */
-
 import {
   appendMessage,
   listMessages,
@@ -17,7 +12,6 @@ export const EXPORT_VERSION = 1 as const;
 
 export interface ConversationExport {
   version: typeof EXPORT_VERSION;
-  /** ISO string for human inspection; not used on import. */
   exportedAt: string;
   conversation: Conversation;
   messages: Message[];
@@ -52,12 +46,6 @@ export function downloadConversationJson(
   URL.revokeObjectURL(url);
 }
 
-/**
- * Parse and validate an import file. The imported conversation receives a
- * fresh id (so it can't clash with one we already have), and every message
- * row is re-stamped with a new id + the new conversationId. createdAt is
- * preserved so the imported thread keeps its original chronology.
- */
 export async function importConversationJson(
   file: File,
 ): Promise<Conversation> {
@@ -79,7 +67,6 @@ export async function importConversationJson(
     id: newConvId,
     title: payload.conversation.title || "(imported)",
     updatedAt: now,
-    // createdAt preserved from the export so "recent" buckets still make sense.
   };
   await putConversation(imported);
 

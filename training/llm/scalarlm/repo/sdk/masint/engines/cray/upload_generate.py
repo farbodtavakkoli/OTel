@@ -13,9 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 async def upload_generate(prompts, model_name, max_tokens, api_url=None):
-
     with make_upload_json_file(prompts, model_name, max_tokens) as upload_path:
-
         api_url = make_api_url("v1/generate/upload", api_url=api_url)
 
         return await upload_async(upload_path, api_url)
@@ -46,11 +44,9 @@ def make_upload_json_file(prompts, model_name, max_tokens):
 
 async def upload_async(data_file_path, api_url):
     async with get_session() as session:
-
         content_length = await get_content_length(data_file_path)
 
         with make_multipart_writer(data_file_path) as mp:
-
             headers = mp.headers
 
             headers["Content-Length"] = str(content_length)
@@ -65,7 +61,6 @@ async def upload_async(data_file_path, api_url):
 
 async def get_content_length(data_file_path):
     with make_multipart_writer(data_file_path) as mp:
-
         class Writer:
             def __init__(self):
                 self.count = 0

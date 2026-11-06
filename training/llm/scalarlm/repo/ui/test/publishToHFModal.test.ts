@@ -1,9 +1,3 @@
-/**
- * Unit tests for the pure helpers exported from PublishToHFModal.
- * The full modal component is exercised by hand for now; these
- * pin the validation rules called out in ui/docs/publish-to-hf.md.
- */
-
 import { describe, expect, it } from "vitest";
 import { __test } from "../src/routes/train/PublishToHFModal";
 
@@ -49,7 +43,6 @@ describe("formatCheckpointLabel", () => {
       { name: "checkpoint_50.pt", step: 50, mtime: now - 90 },
       false,
     );
-    // 90 seconds ago → 1m ago
     expect(label).toMatch(/step 50 · 1m ago/);
     expect(label).not.toContain("(latest)");
   });

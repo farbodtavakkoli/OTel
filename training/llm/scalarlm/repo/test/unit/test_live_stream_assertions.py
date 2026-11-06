@@ -1,5 +1,3 @@
-"""Regression tests for completion-stream false-positive prevention."""
-
 import runpy
 from pathlib import Path
 

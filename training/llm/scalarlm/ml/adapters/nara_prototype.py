@@ -12,13 +12,13 @@ import torch.nn.functional as F
 
 @dataclass
 class NaRAConfig:
-    r: int = 16                    # LoRA rank (also the size of the r x r core matrix)
-    lora_alpha: int = 32           # scaling = lora_alpha / r, as in standard LoRA
+    r: int = 16
+    lora_alpha: int = 32
     lora_dropout: float = 0.0
-    fnn_hidden_1: int = 256        # shared hypernetwork hidden sizes
+    fnn_hidden_1: int = 256
     fnn_hidden_2: int = 512
-    noise_embed_dim: int = 128     # Gaussian-Fourier embedding width for lambda
-    c_scale: float = 0.1           # the paper's eta: Ceff = c_scale * C(lambda) + I
+    noise_embed_dim: int = 128
+    c_scale: float = 0.1
     fourier_scale: float = 16.0
 
 
@@ -30,9 +30,9 @@ class GaussianFourierProjection(nn.Module):
         self.register_buffer("W", torch.randn(embed_dim // 2) * scale, persistent=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x.reshape(-1, 1)  # (B, 1)
-        proj = 2.0 * math.pi * x * self.W.to(x.dtype)  # (B, embed_dim/2)
-        return torch.cat([proj.sin(), proj.cos()], dim=-1)  # (B, embed_dim)
+        x = x.reshape(-1, 1)
+        proj = 2.0 * math.pi * x * self.W.to(x.dtype)
+        return torch.cat([proj.sin(), proj.cos()], dim=-1)
 
 
 class NaRAMapper(nn.Module):
@@ -53,12 +53,12 @@ class NaRAMapper(nn.Module):
         for m in linears[:-1]:
             nn.init.kaiming_uniform_(m.weight, a=math.sqrt(5))
             nn.init.zeros_(m.bias)
-        nn.init.zeros_(linears[-1].weight)  # zero_last: C == 0 at init
+        nn.init.zeros_(linears[-1].weight)
         nn.init.zeros_(linears[-1].bias)
 
     def forward(self, noise_emb: torch.Tensor) -> torch.Tensor:
         b = noise_emb.shape[0]
-        return self.net(noise_emb).view(b, self.r, self.r)  # (B, r, r)
+        return self.net(noise_emb).view(b, self.r, self.r)
 
 
 class NaRAContext(nn.Module):
@@ -70,7 +70,7 @@ class NaRAContext(nn.Module):
             config.r, config.noise_embed_dim, config.fnn_hidden_1, config.fnn_hidden_2
         )
         self.register_buffer("_eye", torch.eye(config.r), persistent=False)
-        self.ceff: Optional[torch.Tensor] = None  # (B, r, r) or (r, r); set per step
+        self.ceff: Optional[torch.Tensor] = None
         self.training_stage: int = 2
 
     def set_training_stage(self, stage: int):
@@ -83,16 +83,15 @@ class NaRAContext(nn.Module):
 
     def set_noise_level(self, noise_level: Optional[Union[float, torch.Tensor]]):
         if self.training_stage == 1 or noise_level is None:
-            self.ceff = self._eye  # identity => behaves exactly like plain LoRA
+            self.ceff = self._eye
             return
         if not torch.is_tensor(noise_level):
             noise_level = torch.tensor([noise_level], dtype=torch.float32)
-        # Match the mapper's dtype: the model may have been cast to bf16/fp16 after injection.
         mapper_dtype = next(self.mapper.parameters()).dtype
         noise_level = noise_level.to(self._eye.device, mapper_dtype)
-        emb = self.embed(noise_level)                 # (B, embed_dim)
-        c = self.mapper(emb)                           # (B, r, r)
-        self.ceff = self.config.c_scale * c + self._eye  # residual: I at init
+        emb = self.embed(noise_level)
+        c = self.mapper(emb)
+        self.ceff = self.config.c_scale * c + self._eye
 
 
 class NaRALinear(nn.Module):
@@ -102,7 +101,6 @@ class NaRALinear(nn.Module):
         self.base.weight.requires_grad_(False)
         if self.base.bias is not None:
             self.base.bias.requires_grad_(False)
-        # Weakref, so the shared context is not duplicated as a submodule of every layer.
         self._ctx_ref = weakref.ref(context)
         self.scaling = config.lora_alpha / config.r
         self.dropout = nn.Dropout(config.lora_dropout) if config.lora_dropout > 0 else nn.Identity()
@@ -110,7 +108,7 @@ class NaRALinear(nn.Module):
         in_f, out_f, r = base.in_features, base.out_features, config.r
         self.lora_A = nn.Parameter(torch.empty(r, in_f))
         self.lora_B = nn.Parameter(torch.zeros(out_f, r))
-        nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))  # B stays zero
+        nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
 
     @property
     def context(self) -> "NaRAContext":
@@ -125,17 +123,15 @@ class NaRALinear(nn.Module):
         ceff = self.context.ceff
         if ceff is None:
             ceff = self.context._eye
-        h = F.linear(self.dropout(x), self.lora_A)  # (..., r)
+        h = F.linear(self.dropout(x), self.lora_A)
         if ceff.dim() == 3:
-            # per-example (B, r, r): x is (B, S, r) -> einsum over the rank dim
             h = torch.einsum("bsr,brk->bsk", h, ceff.to(h.dtype))
         else:
-            h = h @ ceff.to(h.dtype)                # shared (r, r)
+            h = h @ ceff.to(h.dtype)
         delta = F.linear(h, self.lora_B) * self.scaling
         return out + delta
 
 
-#: Attribute/submodule name the shared context is registered under on the model.
 NARA_CONTEXT_ATTR = "nara_context"
 
 
@@ -158,7 +154,6 @@ def inject_nara(model: nn.Module, target_modules, config: NaRAConfig) -> NaRACon
         for p in path:
             parent = getattr(parent, p)
         setattr(parent, leaf, NaRALinear(module, context, config))
-    # Register the context inside the checkpointed sub-tree, or the mapper never reaches disk.
     checkpoint_root = getattr(model, "model", model)
     if not isinstance(checkpoint_root, nn.Module):
         checkpoint_root = model

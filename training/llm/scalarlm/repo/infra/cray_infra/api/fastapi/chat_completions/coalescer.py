@@ -1,32 +1,3 @@
-"""
-Per-process request coalescer for /v1/chat/completions.
-
-Reduces SQLite write amplification by packing up to `packing_factor`
-admitted requests into a single queue row. Under light load (queue
-depth below `bypass_threshold`) every submit flushes immediately so
-small bursts pay no batching tax. Under sustained load, batches form
-naturally and one row holds N requests, giving the queue N× capacity.
-
-See docs/openai-chat-completions-queue.md §6 for the full spec
-including the sizing guidance for `packing_factor`.
-
-Three flush triggers — only one fires for any given batch:
-
-  1. SIZE   — `len(batch) >= packing_factor`
-  2. TIME   — `window_seconds` elapsed since the *first* submit in the
-              current batch. The timer is started on the transition
-              empty → non-empty and is *not* reset by subsequent
-              submits, so the first arrival's worst-case wait is
-              bounded by `window_seconds`.
-  3. BYPASS — queue depth was below `bypass_threshold` at submit time;
-              flush immediately, no timer.
-
-The flush callback is awaited inline. It is the callback's
-responsibility to be fast (e.g. spawn a task for slow I/O and return
-quickly) — submits during a flush queue up on the lock, so a slow
-callback creates head-of-line blocking on the producer side.
-"""
-
 import asyncio
 from typing import Any, Awaitable, Callable, List, Tuple
 
@@ -85,12 +56,6 @@ class Coalescer:
             await self._flush_locked()
 
     async def _flush_locked(self) -> None:
-        """
-        Drain the accumulator and run the callback. Must be called
-        with `self._lock` held. Cancels any pending flush timer so a
-        size-triggered or bypass-triggered flush doesn't leave a
-        timer about to fire on an empty batch.
-        """
         if not self._batch:
             self._cancel_flush_timer()
             return

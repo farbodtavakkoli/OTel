@@ -1,22 +1,3 @@
-"""Unit tests for the ScalarLM state_dict export patch (gemma4 + llama).
-
-The patch is injected into the vLLM fork by
-`scripts/vllm_patches/apply_patches.py`; its source lives there as a
-string constant, so these tests exec it against fakes and need no fork
-checkout.
-
-What it guards: Gemma4 alternates head_dim per layer (32 on some, 64 on
-others), so the split sizes for `qkv_proj` differ per layer. The shared
-`unpack_packed_modules_state_dict` helper derives a single split from the
-model config, which raised
-
-    split_with_sizes expects split_sizes to sum exactly to 1024,
-    but got split_sizes=[256, 128, 128]
-
-on a real tiny-random/gemma-4-dense run. The geometry below is taken from
-that model.
-"""
-
 from __future__ import annotations
 
 import ast
@@ -29,12 +10,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "vllm_patches"))
 
-from apply_patches import STATE_DICT_EXPORT_SRC  # noqa: E402
+from apply_patches import STATE_DICT_EXPORT_SRC
 
 
 class _Tensor:
-    """Stand-in that records how it was sliced. Only shape/slicing matter."""
-
     def __init__(self, rows, tag):
         self.shape = (rows,)
         self.tag = tag
@@ -49,15 +28,12 @@ def _layer(q_size, kv_size):
     )
 
 
-# tiny-random/gemma-4-dense: 8 query heads, 4 kv heads, head_dim
-# alternating 32 / 64 -> packed qkv rows alternating 512 / 1024.
 LAYERS = [_layer(256, 128), _layer(512, 256), _layer(256, 128), _layer(512, 256)]
 
 PREFIX = "language_model."
 
 
 def _build(state_dict, layers, export_enabled=True):
-    """exec the injected method inside a real class so super() resolves."""
     method = next(
         node
         for node in ast.walk(ast.parse(STATE_DICT_EXPORT_SRC.strip()))
@@ -103,8 +79,6 @@ def packed_state_dict():
 
 
 def test_per_layer_geometry_is_read_from_the_module(packed_state_dict):
-    """Each layer splits by its own q_size/kv_size, not a shared config
-    value -- layers 1 and 3 are twice the size of 0 and 2."""
     model, _ = _build(packed_state_dict, LAYERS)
 
     out = model.state_dict(None, PREFIX, False)
@@ -119,8 +93,6 @@ def test_per_layer_geometry_is_read_from_the_module(packed_state_dict):
 
 
 def test_qkv_is_withheld_from_the_shared_helper(packed_state_dict):
-    """Passing qkv_proj through would re-trigger the config-derived split
-    that crashed; gate_up_proj must still be delegated."""
     model, captured = _build(packed_state_dict, LAYERS)
 
     model.state_dict(None, PREFIX, False)
@@ -130,8 +102,6 @@ def test_qkv_is_withheld_from_the_shared_helper(packed_state_dict):
 
 
 def test_unrecognized_geometry_is_left_packed():
-    """Losing a tensor for adapter matching is recoverable and logged;
-    splitting it wrongly corrupts weights silently."""
     state_dict = {f"{PREFIX}model.layers.0.self_attn.qkv_proj.weight": _Tensor(999, 0)}
     model, _ = _build(state_dict, [_layer(256, 128)])
 
@@ -142,7 +112,6 @@ def test_unrecognized_geometry_is_left_packed():
 
 
 def test_export_disabled_returns_state_dict_untouched(packed_state_dict):
-    """Vanilla vLLM flows (sharded saves, dummy init) must be unaffected."""
     model, _ = _build(packed_state_dict, LAYERS, export_enabled=False)
 
     out = model.state_dict(None, PREFIX, False)
@@ -151,7 +120,6 @@ def test_export_disabled_returns_state_dict_untouched(packed_state_dict):
 
 
 def test_layers_without_attention_are_skipped(packed_state_dict):
-    """PPMissingLayer placeholders have no self_attn."""
     layers = list(LAYERS)
     layers[1] = types.SimpleNamespace()
     model, _ = _build(packed_state_dict, layers)

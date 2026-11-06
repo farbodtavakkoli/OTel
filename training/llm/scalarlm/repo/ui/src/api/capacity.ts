@@ -14,7 +14,6 @@ export function useGpuCount() {
     queryKey: ["gpu-count"],
     queryFn: async () =>
       (await apiFetch<GetGPUCountResponse>("/megatron/gpu_count")).gpu_count,
-    // Topology rarely changes — cache for 5 minutes, no poll.
     staleTime: 5 * 60_000,
   });
 }

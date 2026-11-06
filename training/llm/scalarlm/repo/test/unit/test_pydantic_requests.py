@@ -1,12 +1,3 @@
-"""
-Unit tests for FastAPI request / response Pydantic models.
-
-Contract under test: the schemas under
-infra/cray_infra/api/fastapi/routers/request_types/ define the wire shape
-that SDK, UI, and internal callers depend on. Changes to required fields
-and defaults here break clients silently without these assertions.
-"""
-
 import pytest
 from pydantic import ValidationError
 
@@ -32,8 +23,6 @@ from cray_infra.api.fastapi.routers.request_types.get_work_response import (
 from cray_infra.api.fastapi.routers.request_types.train_request import (
     TrainResponse,
 )
-
-# ---- GenerateRequest -------------------------------------------------------
 
 
 def test_generate_request_accepts_string_prompts():
@@ -76,9 +65,6 @@ def test_generate_request_accepts_explicit_overrides():
     assert req.tool_choice == "auto"
 
 
-# ---- GetWorkRequest --------------------------------------------------------
-
-
 def test_get_work_request_requires_both_fields():
     with pytest.raises(ValidationError):
         GetWorkRequest(batch_size=4)
@@ -111,9 +97,6 @@ def test_get_work_response_accepts_json_safe_chat_request():
     assert response.chat_request == chat_request
 
 
-# ---- GetResultsRequest -----------------------------------------------------
-
-
 def test_get_results_request_requires_list():
     with pytest.raises(ValidationError):
         GetResultsRequest()
@@ -129,9 +112,6 @@ def test_get_results_request_accepts_ids():
     req = GetResultsRequest(request_ids=["abc_000000001", "abc_000000002"])
 
     assert len(req.request_ids) == 2
-
-
-# ---- FinishWorkRequest(s) --------------------------------------------------
 
 
 def test_finish_work_request_minimal():
@@ -150,9 +130,6 @@ def test_finish_work_request_requires_id():
 
 
 def test_finish_work_request_accepts_token_split():
-    """The worker propagates prompt/completion separately so the SDK
-    can surface them in `usage`. Fields are optional for backwards
-    compatibility with workers that only know `token_count`."""
     req = FinishWorkRequest(
         request_id="abc",
         response="hi",
@@ -185,7 +162,6 @@ def test_finish_work_request_accepts_structured_chat_fields():
 
 
 def test_finish_work_request_accepts_embedding_list():
-    # response Union[str, list[float]] — embeddings take the list branch.
     req = FinishWorkRequest(request_id="abc", response=[0.1, 0.2, 0.3])
 
     assert req.response == [0.1, 0.2, 0.3]
@@ -215,13 +191,7 @@ def test_finish_work_requests_nested_list():
     assert req.requests[1].error == "oops"
 
 
-# ---- GetAdaptorsRequest ----------------------------------------------------
-
-
 def test_get_adaptors_request_requires_loaded_adaptor_count():
-    # The worker's get_work response piggybacks adapter delta discovery on
-    # `loaded_adaptor_count`. Making it accidentally optional would break
-    # the delta contract — so keep this strict.
     with pytest.raises(ValidationError):
         GetAdaptorsRequest()
 
@@ -230,9 +200,6 @@ def test_get_adaptors_request_ok_shape():
     req = GetAdaptorsRequest(loaded_adaptor_count=3)
 
     assert req.loaded_adaptor_count == 3
-
-
-# ---- TrainResponse ---------------------------------------------------------
 
 
 def test_train_response_shape():

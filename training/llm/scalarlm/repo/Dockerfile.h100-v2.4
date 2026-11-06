@@ -5,7 +5,6 @@ COPY infra/cray_infra/util/default_job_config.py /app/cray/infra/cray_infra/util
 COPY infra/cray_infra/training/distributed.py /app/cray/infra/cray_infra/training/distributed.py
 COPY test/unit/test_process_group_timeout.py /app/cray/test/unit/test_process_group_timeout.py
 COPY test/unit/test_training_patch.py /app/cray/test/unit/test_training_patch.py
-COPY test/unit/test_compensated_adamw.py /app/cray/test/unit/test_compensated_adamw.py
 COPY test/unit/test_pretokenized_dataset.py /app/cray/test/unit/test_pretokenized_dataset.py
 COPY test/unit/test_bf16_training_wiring.py /app/cray/test/unit/test_bf16_training_wiring.py
 RUN python -m compileall -q /app/cray/ml /app/cray/infra/cray_infra/util/default_job_config.py

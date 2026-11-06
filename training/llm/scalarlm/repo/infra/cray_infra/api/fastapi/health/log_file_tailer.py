@@ -1,17 +1,3 @@
-"""
-Path-based NDJSON log tailer shared by every "tail this file" endpoint.
-
-The protocol — query params + record shape — is documented in
-`service_logs_generator.py`. That module wraps this helper with
-service-name resolution; `publish_logs.py` does the same for publish
-job logs. Anything new that wants the same byte-offset-resume
-semantics should call `tail_log_file` directly with a resolved path.
-
-The body of this file used to live inside `service_logs_generator.py`
-verbatim — it moved here unchanged so both consumers stay byte-for-byte
-identical in their tailing behaviour.
-"""
-
 import json
 import logging
 import os
@@ -20,7 +6,7 @@ import aiofiles
 
 logger = logging.getLogger(__name__)
 
-_NEWLINE = 0x0A  # ord(b"\n")
+_NEWLINE = 0x0A
 _BLOCK_SIZE = 64 * 1024
 
 
@@ -33,10 +19,6 @@ def tail_log_file(
     before_byte_offset: int | None = None,
     before_count: int | None = None,
 ):
-    """
-    Async generator yielding NDJSON records from `path`. See the
-    `service_logs_generator` docstring for the wire shape.
-    """
     start_offset, end_offset = _resolve_range(
         path,
         starting_line_number=starting_line_number,
@@ -101,8 +83,6 @@ def _resolve_range(
     before_byte_offset: int | None,
     before_count: int | None,
 ) -> tuple[int, int | None]:
-    """Pick start_offset (and optional end_offset for before-window
-    requests). Precedence: before-window > tail > byte_offset > line_number."""
     if (
         before_byte_offset is not None
         and before_count is not None

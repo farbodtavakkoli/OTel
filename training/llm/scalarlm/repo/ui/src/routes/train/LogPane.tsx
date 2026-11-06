@@ -15,7 +15,7 @@ interface LogPaneProps {
 
 type StreamStatus = "connecting" | "streaming" | "reconnecting" | "closed";
 
-const MAX_LINES = 10_000; // cap memory: ~several MB for typical log widths
+const MAX_LINES = 10_000;
 
 const ERROR_REGEX = /\berror\b|traceback|cuda error|oom|killed/i;
 
@@ -100,10 +100,6 @@ export function LogPane({ jobHash, status }: LogPaneProps) {
     el?.scrollIntoView({ block: "center", behavior: "smooth" });
   };
 
-  // Download the COMPLETE stitched log from the server, not the in-memory
-  // `lines` buffer — that buffer is a rolling MAX_LINES tail, so for long or
-  // resumed (multi-slice) jobs it omits everything older than the last
-  // MAX_LINES lines. Re-reading from the endpoint yields the full log.
   const downloadLog = async () => {
     if (downloading) return;
     setDownloading(true);

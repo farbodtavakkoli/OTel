@@ -42,9 +42,6 @@ def print_stats(stats):
     print(row)
 
 def humanize_flops(flops):
-    """
-    Convert FLOPS to a human-readable format.
-    """
     if flops < 1e9:
         return f"{flops:.2f} FLOPS"
     elif flops < 1e12:

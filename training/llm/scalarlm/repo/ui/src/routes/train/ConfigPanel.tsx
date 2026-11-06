@@ -4,11 +4,6 @@ interface ConfigPanelProps {
   config: Record<string, unknown>;
 }
 
-/**
- * Collapsible rendering of the per-job config.yaml. YAML-ish serialization
- * (indented key: value pairs), not a round-trippable YAML writer — purely
- * for display. Nested objects are rendered as JSON for compactness.
- */
 export function ConfigPanel({ config }: ConfigPanelProps) {
   const [open, setOpen] = useState(false);
 

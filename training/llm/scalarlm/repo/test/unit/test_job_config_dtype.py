@@ -1,14 +1,3 @@
-"""
-Unit tests for the per-job `dtype` override.
-
-Contract under test: train_args["dtype"] passed via the SDK round-trips
-into JobConfig.dtype and wins over the global cray-config.yaml `dtype`
-inside load_model. The FAQ documents this knob; before this fix the
-field was missing from JobConfig (Pydantic silently dropped it) and
-load_model read only the global config, so the train_args entry had
-no effect.
-"""
-
 import pytest
 
 from cray_infra.util.default_job_config import JobConfig
@@ -38,8 +27,6 @@ def test_job_config_accepts_documented_dtypes(dtype):
 
 
 def _resolve(job_dtype, global_dtype):
-    """Mirror load_model.py's dtype resolution so the precedence is testable
-    without spinning up a 4-layer Gemma forward pass."""
     return job_dtype if job_dtype != "auto" else global_dtype
 
 

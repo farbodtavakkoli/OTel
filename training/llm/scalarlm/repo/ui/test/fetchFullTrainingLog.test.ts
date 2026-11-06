@@ -1,25 +1,13 @@
-/**
- * Unit tests for fetchFullTrainingLog — the Download-button path.
- *
- * Regression: the live LogPane keeps only a rolling MAX_LINES tail in memory,
- * so Download must re-read the COMPLETE stitched log (all slurm-*.out slices,
- * concatenated server-side) from the endpoint rather than serialize the capped
- * buffer. This pins that fetchFullTrainingLog reads the whole NDJSON stream
- * from line 0 to EOF and joins it back into the original log text.
- */
-
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { fetchFullTrainingLog } from "../src/api/training";
 
 function ndjsonResponse(lines: string[]): Response {
-  // The endpoint emits `{"line": "...", "line_number": N}\n` per line.
   const body = lines
     .map((line, i) => JSON.stringify({ line, line_number: i }) + "\n")
     .join("");
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      // Split across two chunks, mid-line, to exercise the buffer reassembly.
       const bytes = new TextEncoder().encode(body);
       const mid = Math.floor(bytes.length / 2);
       controller.enqueue(bytes.slice(0, mid));
@@ -39,7 +27,7 @@ describe("fetchFullTrainingLog", () => {
     const logLines = [
       "slice-1 line A",
       "slice-1 line B",
-      "slice-2 line C", // a later slice, stitched after the first
+      "slice-2 line C",
       "slice-2 line D",
     ];
     vi.stubGlobal(
@@ -61,7 +49,6 @@ describe("fetchFullTrainingLog", () => {
     const calledUrl = fetchMock.mock.calls[0][0] as string;
     expect(calledUrl).toContain("/megatron/train/logs/");
     expect(calledUrl).toContain("starting_line_number=0");
-    // model name is URL-encoded
     expect(calledUrl).toContain(encodeURIComponent("my model/hash"));
   });
 

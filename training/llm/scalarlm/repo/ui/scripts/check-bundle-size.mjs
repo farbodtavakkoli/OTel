@@ -1,20 +1,4 @@
 #!/usr/bin/env node
-/**
- * Fail-fast guard on bundle growth. Runs against ui/dist/ produced by
- * `npm run build`. Two JS budgets:
- *
- *   firstPaintJs — the main entry chunk the browser must download before any
- *                  route can render. Tight budget; this is what first-paint
- *                  latency is bottlenecked on.
- *   totalJs      — every chunk summed, including route-lazy splits. Loose
- *                  budget; this is our overall footprint.
- *
- * CSS currently ships as a single file, so no split-vs-total distinction.
- *
- * Usage:   node scripts/check-bundle-size.mjs
- * Or:      npm run size      (after npm run build)
- */
-
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import { extname, join } from "node:path";
@@ -29,9 +13,6 @@ const LIMITS = {
   css: 20 * 1024,
 };
 
-// Vite names the main entry `index-{hash}.js` (see rollup's defaults) — any
-// other .js file in dist/assets/ is a split chunk loaded by React.lazy /
-// dynamic import.
 const ENTRY_PATTERN = /^assets[\\/]index-[^/\\]+\.js$/;
 
 function gzipLenOfFile(path) {

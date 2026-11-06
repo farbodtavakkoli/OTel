@@ -1,12 +1,3 @@
-/**
- * Unit tests for ui/src/lib/trainArgsSchema.ts.
- *
- * Contract under test: docs/test-plan.md §5.14 — the Zod schema mirrors
- * infra/cray_infra/util/default_job_config.py::JobConfig field-for-field.
- * When a Python default changes, the TS default must change with it or the
- * SubmitModal silently sends the wrong body.
- */
-
 import { describe, expect, it } from "vitest";
 import {
   ADAPTER_TYPES,
@@ -21,7 +12,6 @@ describe("defaultTrainArgs", () => {
   it("matches Python JobConfig defaults byte-for-byte", () => {
     const d = defaultTrainArgs();
 
-    // Mirror of default_job_config.py:
     expect(d.llm_name).toBe("meta-llama/Llama-3.2-1B-Instruct");
     expect(d.max_steps).toBe(100);
     expect(d.learning_rate).toBe(3e-3);
@@ -90,7 +80,6 @@ describe("validateTrainArgs", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.lora_config?.r).toBe(64);
-      // Unspecified nested fields fall back to Zod defaults.
       expect(result.value.lora_config?.lora_alpha).toBe(32);
       expect(result.value.lora_config?.lora_dropout).toBe(0.1);
       expect(result.value.lora_config?.target_modules).toBe("all-linear");
@@ -120,8 +109,6 @@ describe("validateTrainArgs", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      // Each invalid field surfaces its error message, keyed by field name
-      // so SubmitModal can highlight cells directly.
       expect(Object.keys(result.errors)).toEqual(
         expect.arrayContaining(["max_steps", "learning_rate", "adapter_type"]),
       );
@@ -132,7 +119,6 @@ describe("validateTrainArgs", () => {
 describe("trainArgsSchema round-trip", () => {
   it("defaultTrainArgs parses cleanly through the schema", () => {
     const d = defaultTrainArgs();
-    // Stripping away the parsing should still leave a valid shape.
     const reparsed = trainArgsSchema.parse(d);
     expect(reparsed).toEqual(d);
   });

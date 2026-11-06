@@ -32,15 +32,14 @@ class FSDPLayer(nn.Module):
                 "time": 0.0,
             },
             "gather": {
-                "time": 0.0,  # Placeholder for elapsed time in seconds
-                "bytes": 0,  # Placeholder for bytes processed
+                "time": 0.0,
+                "bytes": 0,
             },
-            "forward_pass": {"time": 0.0},  # Placeholder for elapsed time in seconds
-            "free_params": {"time": 0.0},  # Placeholder for elapsed time in seconds
-            "reduce_scatter": {"time": 0.0},  # Placeholder for elapsed time in seconds
+            "forward_pass": {"time": 0.0},
+            "free_params": {"time": 0.0},
+            "reduce_scatter": {"time": 0.0},
         }
 
-        # Whether this layer's parameters are currently all-gathered.
         self._params_gathered = False
 
         start = time.time()
@@ -92,19 +91,16 @@ class FSDPLayer(nn.Module):
             return self.forward_op(*args, **kwargs)
 
     def forward_op(self, *args, **kwargs):
-        # gather all params
         start = time.time()
         self.gather_all_parameters()
         end = time.time()
         self.perf_metrics["gather"]["time"] += end - start
 
-        # run forward pass
         start = time.time()
         result = self.module(*args, **kwargs)
         end = time.time()
         self.perf_metrics["forward_pass"]["time"] += end - start
 
-        # free params
         start = time.time()
         self.free_params()
         end = time.time()
@@ -117,7 +113,6 @@ class FSDPLayer(nn.Module):
         logger.debug(f"Rank {rank}: Gathering parameters for {self.module}")
 
         for name, param in self.module.named_parameters(recurse=self.should_recurse):
-
             local_name = name.split(".")[-1]
 
             prefix = name[: -len(local_name)]
@@ -126,24 +121,20 @@ class FSDPLayer(nn.Module):
                 logger.debug(f" Rank {rank}: Skipping parameter {name}")
                 continue
 
-            # Remove _shard_ prefix
             local_name = local_name[6:]
 
             full_unsharded_name = prefix + local_name
 
             parent_module = self.get_parent_module(self.module, param)
 
-            # Get metadata for this parameter
             metadata_dict = self.sharded_parameter_metadata[full_unsharded_name]
 
-            # Gather all shards and reconstruct the full tensor
             full_tensor = all_gather_op(param, metadata_dict, self.perf_metrics)
 
             logger.debug(
                 f" Rank {rank}: Gathered parameter {full_unsharded_name} with shape {full_tensor.shape}"
             )
 
-            # Copy the full tensor back to the original parameter
             setattr(parent_module, local_name, full_tensor)
 
         self._params_gathered = True
@@ -155,7 +146,6 @@ class FSDPLayer(nn.Module):
             if not local_name.startswith("shard_"):
                 continue
 
-            # Remove _shard_ prefix
             local_name = local_name[6:]
 
             parent_module = self.get_parent_module(self.module, param)
@@ -177,12 +167,10 @@ class FSDPLayer(nn.Module):
         except AttributeError:
             pass
 
-        # Read through to the wrapped module via __dict__ so a miss cannot recurse into __getattr__.
         module = (self.__dict__.get("_modules") or {}).get("module")
         if module is None:
             raise AttributeError(name)
 
-        # Parameters unshard only inside forward, so an outside read must gather on demand.
         metadata = self.__dict__.get("sharded_parameter_metadata") or {}
         if name in metadata and not self.__dict__.get("_params_gathered", False):
             shard = getattr(module, "shard_" + name, None)
@@ -227,7 +215,6 @@ class SimpleFSDP(nn.Module):
             all_params = list(child.parameters(recurse=is_conditional_layer))
             any_requires_grad = any(param.requires_grad for param in all_params)
 
-            # checkpoint if model memory footprint is > 32GB and has grand children and has any requires_grad
             should_checkpoint = (
                 self.model_memory_footprint > (32 * 1024**3)
                 and has_grand_children
@@ -246,7 +233,6 @@ class SimpleFSDP(nn.Module):
                 self._wrap_layers(child)
 
     def _get_is_conditional_layer(self, module):
-        # Assume a module named experts is a conditional layer and do not wrap its children.
         for name, child in module.named_children():
             if "expert" in name.lower():
                 return True
@@ -257,7 +243,6 @@ class SimpleFSDP(nn.Module):
         rank = get_rank()
         if rank == 0:
             metrics_str = "\n"
-            # Aggregate and print metrics
             aggregated = aggregate_perf_metrics(self.model)
             for op, metrics in aggregated.items():
                 total_time = "{:.2f}".format(metrics["time"])
@@ -296,16 +281,13 @@ class SimpleFSDP(nn.Module):
                         name_prefix = param_name[: -len(local_name)]
 
                         if local_name.startswith("shard_"):
-                            # Remove _shard_ prefix
                             local_name = param_name[len("shard_") :]
                             full_unsharded_name = name_prefix + local_name
 
-                            # Get metadata for this parameter
                             metadata_dict = child.sharded_parameter_metadata[
                                 full_unsharded_name
                             ]
 
-                            # Gather all shards and reconstruct the full tensor
                             full_tensor = all_gather_op(param, metadata_dict)
 
                             unwrapped_state_dict[
@@ -441,12 +423,10 @@ class SimpleFSDP(nn.Module):
                 if not torch.is_tensor(value):
                     new_entry[key] = value
                 elif metadata is not None and value.dim() > 0:
-                    # A per-shard moment: gather it back to the whole tensor.
                     new_entry[key] = (
                         collectives_all_gather(value, metadata).detach().cpu()
                     )
                 else:
-                    # Replicated, or a 0-d scalar like `step`.
                     new_entry[key] = value.detach().cpu()
             gathered_state[index] = new_entry
 
@@ -506,7 +486,6 @@ def get_fsdp_layers(module):
 def aggregate_perf_metrics(module):
     fsdp_layers = get_fsdp_layers(module)
 
-    """Sum metrics across all FSDP layers"""
     aggregated = defaultdict(lambda: {"time": 0, "bytes": 0})
     for layer in fsdp_layers:
         for op, metrics in layer.perf_metrics.items():
@@ -523,11 +502,9 @@ def shard_tensor(tensor):
     original_shape = tensor.shape
     original_numel = tensor.numel()
 
-    # Calculate padding for equal division
     padded_numel = ((original_numel + world_size - 1) // world_size) * world_size
     padding = padded_numel - original_numel
 
-    # Pad tensor if needed
     if padding > 0:
         tensor_padded = torch.cat(
             [
@@ -538,12 +515,10 @@ def shard_tensor(tensor):
     else:
         tensor_padded = tensor.view(-1)
 
-    # Split into equal shards
     shard_size = padded_numel // world_size
     start = rank * shard_size
     shard = tensor_padded[start : start + shard_size].clone()
 
-    # NCCL/RCCL collectives need CUDA tensors, so metadata buffers are allocated on-device.
     device = cuda_device()
     local_metadata = torch.tensor(
         [original_numel, *original_shape, shard_size, padding],
@@ -555,13 +530,10 @@ def shard_tensor(tensor):
     )
     allgather(local_metadata, all_metadata.view(-1))
 
-    # Reshape all_metadata back to 2D after allgather
     all_metadata = all_metadata.view(world_size, -1)
 
-    # Create a dictionary of metadata keyed by rank
     metadata_dict = {rank: all_metadata[rank].tolist() for rank in range(world_size)}
 
-    # Convert metadata back to original format
     metadata_dict = {
         rank: (meta[0], tuple(meta[1:-2]), meta[-2], meta[-1])
         for rank, meta in metadata_dict.items()
@@ -586,23 +558,17 @@ def trim_padding(all_tensors, rank, world_size, metadata_dict):
     if padding == 0:
         return all_tensors
 
-    # all_tensors is a list of tensors that have been collected
     if padding > shard_size:
-        # Calculate the number of fully padded tensors
         fully_padded_tensors = padding // shard_size
 
-        # Remove fully padded tensors
         all_tensors = all_tensors[:-fully_padded_tensors]
 
-        # Calculate the remaining padding in the last tensor
         remaining_padding = padding % shard_size
 
-        # Trim the remaining padding from the last tensor
         if remaining_padding > 0 and len(all_tensors) > 0:
             last_tensor = all_tensors[-1]
             all_tensors[-1] = last_tensor[:-remaining_padding]
     else:
-        # trim padding for last tensor
         valid_elements = original_numel - (world_size - 1) * shard_size
         all_tensors[-1] = all_tensors[-1][:valid_elements]
 
@@ -613,7 +579,6 @@ def collectives_all_gather(shard, metadata_dict):
     world_size = get_size()
     rank = get_rank()
 
-    # fp32 on-device buffers keep the reduction safe regardless of the parameter dtype.
     device = cuda_device()
     orig_dtype = shard.dtype
     shard = shard.to(torch.float32).to(device)
@@ -621,13 +586,10 @@ def collectives_all_gather(shard, metadata_dict):
         shard.numel() * world_size, device=device, dtype=torch.float32
     )
 
-    # Collective operation in float32
     allgather(shard, gathered)
 
-    # Convert gathered result back to original dtype
     gathered = gathered.to(orig_dtype)
 
-    # Reconstruct the full tensor using metadata
     all_tensors = []
     offset = 0
     for r in range(world_size):
@@ -647,12 +609,10 @@ def collectives_reduce_scatter(tensor, metadata_dict):
     world_size = get_size()
     rank = get_rank()
 
-    # Save original dtype
     orig_dtype = tensor.dtype
 
     original_numel, _, shard_size, padding = metadata_dict[rank]
 
-    # Pad tensor if needed. Buffers live on-device for NCCL/RCCL.
     device = cuda_device()
     tensor_padded = tensor.reshape(-1).to(device)
     if padding > 0:
@@ -663,21 +623,16 @@ def collectives_reduce_scatter(tensor, metadata_dict):
             ]
         )
 
-    # Convert to float32 for the collective
     tensor_padded = tensor_padded.to(torch.float32)
     local_shard = torch.zeros(shard_size, device=device, dtype=torch.float32)
 
-    # Collective operation in float32
     reduce_scatter(tensor_padded, local_shard)
 
-    # reduce_scatter() sums, but gradients must be the MEAN across ranks.
     if world_size > 1:
         local_shard /= world_size
 
-    # Convert result back to original dtype
     local_shard = local_shard.to(orig_dtype)
 
-    # Trim padding on last rank using its original size from metadata_dict
     if rank == world_size - 1:
         valid_elements = original_numel - padding
         local_shard = local_shard[:valid_elements]

@@ -31,7 +31,6 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(lifespan=add_megatron_tasks)
 
-# Initialize observability (OpenTelemetry tracing)
 try:
     from cray_infra.observability.init_tracing import init_tracing
     tracer = init_tracing(app, service_name="scalarlm-api")
@@ -46,10 +45,8 @@ app.include_router(health_router, prefix="/v1")
 app.include_router(generate_router, prefix="/v1")
 app.include_router(slurm_router)
 
-# Add Prometheus metrics endpoint
 @app.get("/v1/metrics")
 async def get_prometheus_metrics():
-    """Expose Prometheus metrics endpoint."""
     try:
         from cray_infra.observability.prometheus_metrics import metrics_endpoint
         return metrics_endpoint()
@@ -72,13 +69,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Add structured logging middleware
 @app.middleware("http")
 async def log_requests_middleware(request: Request, call_next):
-    """Log all HTTP requests with structured JSON logging."""
     start_time = time.time()
 
-    # Extract trace_id if available from traceparent header
     trace_id = None
     traceparent = request.headers.get("traceparent", "")
     if traceparent:
@@ -86,7 +80,6 @@ async def log_requests_middleware(request: Request, call_next):
         if len(parts) >= 2:
             trace_id = parts[1]
 
-    # Log request start
     logger.info(json.dumps({
         "event": "request_start",
         "trace_id": trace_id,
@@ -96,10 +89,8 @@ async def log_requests_middleware(request: Request, call_next):
         "timestamp": start_time
     }))
 
-    # Process request
     response = await call_next(request)
 
-    # Log request end
     duration = time.time() - start_time
     logger.info(json.dumps({
         "event": "request_end",

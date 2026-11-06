@@ -9,4 +9,3 @@ class MetricsResponse(BaseModel):
     tokens_per_second: float
     requests_per_second: float
     flops_per_second: float
-

@@ -42,6 +42,5 @@ class MegatronTrainer:
 
         TrainingLoop(self.training_harness).train()
 
-        # TrainingLoop._finalize_slice already wrote the right status; COMPLETED would clobber it.
         if not stop_flag.was_stop_requested():
             self.training_harness.update_status(status=TrainingJobStatus.COMPLETED)

@@ -1,15 +1,3 @@
-"""
-Submit a publish-to-HF SLURM job for a completed training run.
-
-The publish job runs `adapters.merge_lora_and_push` on a megatron pod
-because that's where the base model is already cached and where there's
-GPU + RAM headroom for `merge_and_unload`. The API pod's job is just
-to construct the sbatch invocation, hand it the HF token via an
-env-var export, and return the submission's job id.
-
-See ui/docs/publish-to-hf.md for the protocol this drives.
-"""
-
 from __future__ import annotations
 
 import json
@@ -30,8 +18,6 @@ from cray_infra.util.get_config import get_config
 logger = logging.getLogger(__name__)
 
 
-# Phases reported in status.json that mean the publish is still in flight
-# — used by the "one publish at a time per training job" guard.
 _NON_TERMINAL_PHASES = frozenset(
     {"queued", "validating", "loading_base", "merging", "saving", "uploading"}
 )
@@ -48,13 +34,6 @@ def launch_publish_job(
     lora_alpha: Optional[int] = None,
     commit_message: Optional[str] = None,
 ) -> dict:
-    """
-    Submit the SLURM publish job. Returns the publish_job_id, the
-    publish-dir path the UI can poll, and the initial QUEUED status.
-
-    Raises HTTPException on validation failure or 409 if a publish for
-    this job_hash is already mid-flight.
-    """
     if mode not in ("merged", "adapter"):
         raise HTTPException(
             status_code=400, detail=f"unknown mode '{mode}'"
@@ -72,7 +51,6 @@ def launch_publish_job(
     if not os.path.isdir(job_directory):
         raise HTTPException(status_code=404, detail="job directory not found")
 
-    # Resolve checkpoint relative to the job dir; fall back to latest.
     checkpoint_path = _resolve_checkpoint(Path(job_directory), checkpoint)
 
     _reject_if_publish_in_flight(Path(job_directory))
@@ -82,8 +60,6 @@ def launch_publish_job(
     status_path = publish_dir / "status.json"
     log_path = publish_dir / "publish.log"
 
-    # Write the initial status before sbatch lands so the UI's poller
-    # can find the file even before SLURM has scheduled the job.
     _write_initial_status(status_path, mode=mode, repo_id=repo_id)
 
     cli_args = _build_cli_args(
@@ -104,9 +80,6 @@ def launch_publish_job(
         cli_args=cli_args,
     )
 
-    # Token enters the SLURM job via env export only — never on argv.
-    # `--export=ALL,HF_TOKEN=...` extends the calling env rather than
-    # replacing it, so PATH and friends survive.
     env = os.environ.copy()
     env["HF_TOKEN"] = hf_token
     env["HUGGING_FACE_HUB_TOKEN"] = hf_token
@@ -120,7 +93,6 @@ def launch_publish_job(
         cwd=job_directory,
     )
     if result.returncode != 0:
-        # Surface the failure into status.json so the UI sees it.
         msg = (result.stdout + result.stderr).strip() or "sbatch failed"
         _update_status(status_path, phase="error", error=msg, completed_at=time.time())
         raise HTTPException(
@@ -145,8 +117,6 @@ def launch_publish_job(
 
 def _resolve_checkpoint(job_dir: Path, requested: Optional[str]) -> Path:
     if requested:
-        # Refuse path traversal — only a basename is accepted, resolved
-        # under the job directory.
         if "/" in requested or requested in (".", ".."):
             raise HTTPException(
                 status_code=400,
@@ -254,9 +224,6 @@ def _build_sbatch_argv(
             detail=f"could not read publish entrypoint {entrypoint}: {e}",
         )
 
-    # The entrypoint uses `dirname "${BASH_SOURCE[0]}"` to locate the repo
-    # root, which breaks when job.sh lives inside publish_dir instead of
-    # scripts/. Resolve the correct path at generation time and substitute it.
     local_directory = shlex.quote(str(Path(entrypoint).resolve().parent.parent))
     entrypoint_content = re.sub(
         r"LOCAL_DIRECTORY=.*\n",
@@ -264,11 +231,6 @@ def _build_sbatch_argv(
         entrypoint_content,
     )
 
-    # Inject #SBATCH directives after the shebang and bake cli_args in via
-    # `set --` so the entrypoint body's "$@" still works. This produces a
-    # single self-contained job.sh — no separate entrypoint copy needed.
-    # sbatch is then called with no positional args beyond the script path,
-    # avoiding a Slurm bug where args after the script name are silently dropped.
     lines = entrypoint_content.splitlines(keepends=True)
     shebang = lines[0]
     rest = "".join(lines[1:])
@@ -320,7 +282,6 @@ def _write_initial_status(path: Path, *, mode: str, repo_id: str) -> None:
 
 
 def _update_status(path: Path, **fields) -> None:
-    """Merge `fields` into status.json and rewrite atomically."""
     state: dict = {}
     if path.is_file():
         try:
@@ -337,8 +298,6 @@ def _update_status(path: Path, **fields) -> None:
 
 
 def _scrub_argv_for_log(argv: list[str]) -> list[str]:
-    """Defensive — token shouldn't be on argv at all, but redact any
-    arg that looks like it just in case."""
     out = []
     for a in argv:
         if "HF_TOKEN=" in a:
@@ -349,7 +308,6 @@ def _scrub_argv_for_log(argv: list[str]) -> list[str]:
 
 
 def get_publish_status(job_hash: str) -> dict:
-    """Return the freshest publish status.json for this job, or 404."""
     job_directory = Path(get_job_directory_for_hash(job_hash))
     candidates = sorted(
         job_directory.glob("publish_*"), key=lambda p: p.name, reverse=True
@@ -371,12 +329,6 @@ def get_publish_status(job_hash: str) -> dict:
 
 
 def cancel_publish_job(job_hash: str) -> dict:
-    """
-    `scancel` the latest publish job for this training run and update
-    its status.json to phase=error / error="cancelled by user" so the
-    UI's poller sees the transition. No-ops cleanly when the publish
-    has already finished — returns the current state, not a 404.
-    """
     state = get_publish_status(job_hash)
     publish_dir = Path(state["publish_dir"])
     status_path = publish_dir / "status.json"

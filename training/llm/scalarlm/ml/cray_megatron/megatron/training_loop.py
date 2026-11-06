@@ -58,7 +58,6 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Sequence-length cap for the SDPA path's materialized [B, 1, S, S] document mask.
 _MAX_4D_MASK_SEQ_LEN = 16384
 _doc_mask_skip_warned = False
 _doc_mask_multimodal_warned = False
@@ -119,7 +118,6 @@ def _build_document_block_mask(doc_ids, device):
     num_blocks = (S + BLOCK - 1) // BLOCK
     padded_S   = num_blocks * BLOCK
 
-    # Pad to block boundary with a sentinel doc_id that never matches any real doc.
     if padded_S > S:
         sentinel   = int(doc_ids.max().item()) + 1
         pad        = torch.full((B, padded_S - S), sentinel, dtype=doc_ids.dtype, device=device)
@@ -127,44 +125,37 @@ def _build_document_block_mask(doc_ids, device):
     else:
         doc_ids_p = doc_ids
 
-    # Per-block doc-ID range: min and max of the BLOCK tokens in each block.
     d     = doc_ids_p.view(B, num_blocks, BLOCK)
-    d_min = d.min(dim=-1).values   # [B, num_blocks]
-    d_max = d.max(dim=-1).values   # [B, num_blocks]
+    d_min = d.min(dim=-1).values
+    d_max = d.max(dim=-1).values
 
     blk = torch.arange(num_blocks, device=device)
 
-    # Causal at block level: kv_b <= q_b admits at least one valid token pair.
-    causal_any      = blk.view(1, -1) <= blk.view(-1, 1)   # [num_q, num_kv]
-    strictly_causal = blk.view(1, -1) <  blk.view(-1, 1)   # [num_q, num_kv]
+    causal_any      = blk.view(1, -1) <= blk.view(-1, 1)
+    strictly_causal = blk.view(1, -1) <  blk.view(-1, 1)
 
-    # Doc overlap: ranges [d_min_kv, d_max_kv] and [d_min_q, d_max_q] intersect.
-    d_min_q  = d_min.unsqueeze(2)   # [B, num_q, 1]
-    d_max_q  = d_max.unsqueeze(2)   # [B, num_q, 1]
-    d_min_kv = d_min.unsqueeze(1)   # [B, 1, num_kv]
-    d_max_kv = d_max.unsqueeze(1)   # [B, 1, num_kv]
-    doc_overlap = (d_min_kv <= d_max_q) & (d_min_q <= d_max_kv)   # [B, num_q, num_kv]
+    d_min_q  = d_min.unsqueeze(2)
+    d_max_q  = d_max.unsqueeze(2)
+    d_min_kv = d_min.unsqueeze(1)
+    d_max_kv = d_max.unsqueeze(1)
+    doc_overlap = (d_min_kv <= d_max_q) & (d_min_q <= d_max_kv)
 
-    # non_empty: block (q_b, kv_b) has at least one valid attention connection.
-    non_empty = causal_any.unsqueeze(0) & doc_overlap   # [B, num_q, num_kv]
+    non_empty = causal_any.unsqueeze(0) & doc_overlap
 
-    # is_full: no per-token masking needed — kv strictly before q, one doc.
-    q_single  = (d_min_q  == d_max_q)    # [B, num_q, 1]
-    kv_single = (d_min_kv == d_max_kv)   # [B, 1, num_kv]
-    same_doc  = (d_min_q  == d_min_kv)   # [B, num_q, num_kv]
+    q_single  = (d_min_q  == d_max_q)
+    kv_single = (d_min_kv == d_max_kv)
+    same_doc  = (d_min_q  == d_min_kv)
     is_full   = strictly_causal.unsqueeze(0) & q_single & kv_single & same_doc
 
     def _pack(mask_bqkv):
         Bm, nq, nkv = mask_bqkv.shape
-        counts = mask_bqkv.sum(dim=2).to(torch.int32)   # [B, nq]
+        counts = mask_bqkv.sum(dim=2).to(torch.int32)
         max_k  = int(counts.max().item()) if counts.numel() > 0 else 0
         if max_k == 0:
             return counts.unsqueeze(1), torch.zeros(Bm, 1, nq, 0, dtype=torch.int32, device=device)
         all_idx = torch.arange(nkv, device=device).view(1, 1, nkv).expand(Bm, nq, nkv)
-        # Replace invalid entries with sentinel nkv so they sort after valid ones.
         filled  = torch.where(mask_bqkv, all_idx, torch.full_like(all_idx, nkv))
         sorted_idx, _ = filled.sort(dim=2)
-        # Take the first max_k entries; clamp out-of-range padding to a safe index.
         idx = sorted_idx[:, :, :max_k].clamp(0, nkv - 1).to(torch.int32)
         return counts.unsqueeze(1), idx.unsqueeze(1)
 
@@ -191,7 +182,6 @@ def _build_document_block_mask(doc_ids, device):
             seq_lengths=(S, S),
         )
     except TypeError:
-        # seq_lengths not present in older PyTorch builds.
         return BlockMask(
             kv_num_blocks=kv_num_blocks,
             kv_indices=kv_indices,
@@ -214,11 +204,9 @@ class TrainingLoop:
 
         self.training_state = TrainingState()
 
-        # Per-micro-batch GRPO stats of the current step; summarised by _log_grpo_step().
         self._grpo_step_stats = []
 
     def train(self):
-        # Must run before load_model() so every global-RNG draw is deterministic.
         apply_seed(get_job_config().get("seed"))
 
         self.model_manager = get_model_manager()
@@ -246,7 +234,6 @@ class TrainingLoop:
 
     @main_rank_only
     def _persist_accumulated_seconds(self, accumulated_seconds):
-        # Read-modify-write through the harness; never change status here.
         current = self.training_harness.get_status()
         self.training_harness.update_status(
             status=current.get("status", TrainingJobStatus.TRAINING),
@@ -283,7 +270,6 @@ class TrainingLoop:
 
         data_iterator = iter(data_loader)
 
-        # IterableDataset has no seek, so pull and discard `data_cursor` batches.
         if self.training_state.data_cursor > 0:
             logger.info(
                 "Resuming dataloader: skipping %d batches into epoch %d",
@@ -305,7 +291,6 @@ class TrainingLoop:
 
             self.on_step_begin(step)
 
-            # accumulated_loss stays a device tensor; reduced once after the loop.
             accumulated_loss = None
             self.training_state.optimizer.zero_grad()
 
@@ -313,10 +298,8 @@ class TrainingLoop:
                 prev_epoch = data_loader.epoch
                 batch = next(data_iterator)
 
-                # Update epoch if it changed during accumulation
                 self.training_state.epoch = data_loader.epoch
 
-                # Track cursor for checkpoint resume; reset to 1 on epoch rollover.
                 if data_loader.epoch != prev_epoch:
                     self.training_state.data_cursor = 1
                 else:
@@ -328,18 +311,14 @@ class TrainingLoop:
                     gradient_accumulation_steps
                 )
 
-                # Device-side accumulation: no host sync, no collective.
                 accumulated_loss = (
                     loss if accumulated_loss is None else accumulated_loss + loss
                 )
 
-            # Ensure gradients are synchronized across ranks during backward pass
             self.training_state.model_info["model"].backward_sync()
 
-            # Clips, checks finiteness on every rank, and steps only if finite.
             stepped = self.optimizer_step()
 
-            # Reporting-only reduction; must stay after the step or FSDP2 deadlocks.
             avg_accumulated_loss = float("nan")
             if accumulated_loss is not None:
                 _, avg_accumulated_loss = self.sync_loss(
@@ -354,10 +333,8 @@ class TrainingLoop:
                 self.training_state.nan_steps += 1
                 avg_accumulated_loss = float('nan')
             else:
-                # Log the averaged loss
                 self.update_history(avg_accumulated_loss)
 
-            # Print training step info with averaged loss
             step_time = time.time() - step_start_time
             self.print_training_step_info(avg_accumulated_loss, step_time)
             self._log_grpo_step()
@@ -422,7 +399,6 @@ class TrainingLoop:
         return flag.item() > 0.0
 
     def _load_accumulated_seconds(self):
-        # Sum of wall-time across prior slices, persisted by _finalize_slice.
         status = self.training_harness.get_status()
         self.training_state.accumulated_seconds_at_slice_start = float(
             status.get("accumulated_train_seconds", 0.0)
@@ -439,19 +415,15 @@ class TrainingLoop:
 
         checkpoint = torch.load(latest_checkpoint_path, weights_only=True)
 
-        # `step` is the step that COMPLETED when the save fired, so resume at the next.
         self.training_state.current_step = checkpoint["step"] + 1
         self.training_state.epoch = checkpoint["epoch"]
         self.training_state.nan_steps = checkpoint.get("nan_steps", 0)
-        # .get() with default=0 keeps older checkpoints (pre-Fix 2) loadable.
         self.training_state.data_cursor = checkpoint.get("data_cursor", 0)
         model = self.training_state.model_info["model"]
         if hasattr(model, "load_unwrapped_model"):
-            # FSDP: re-shard the gathered checkpoint tensors into this rank.
             model.load_unwrapped_model(checkpoint["model_state_dict"])
         else:
             _load_trained_parameters(model, checkpoint["model_state_dict"])
-        # Same for the optimizer state: re-shard rather than load wholesale.
         if hasattr(model, "load_unwrapped_optimizer"):
             model.load_unwrapped_optimizer(
                 self.training_state.optimizer, checkpoint["optimizer_state_dict"]
@@ -464,11 +436,9 @@ class TrainingLoop:
             checkpoint["scheduler_state_dict"]
         )
 
-        # Restore RNG so the next forward is bit-identical; set_rng_state needs CPU.
         rng_state = checkpoint.get("rng_state")
         if rng_state is not None:
             torch.set_rng_state(rng_state.cpu())
-        # cuda_rng_state holds one entry PER RANK; restore only this rank's device.
         import torch.distributed as dist
 
         cuda_rng_state = checkpoint.get("cuda_rng_state")
@@ -479,7 +449,6 @@ class TrainingLoop:
                     cuda_rng_state[rank].cpu(), torch.cuda.current_device()
                 )
             else:
-                # Checkpoint from an older/narrower run — leave the seeded RNG alone.
                 logger.warning(
                     "cuda_rng_state has %d entries but this is rank %d; "
                     "leaving this rank's CUDA RNG at its seeded value.",
@@ -492,25 +461,21 @@ class TrainingLoop:
     def training_step_accumulate(self, batch, accum_step, gradient_accumulation_steps):
         model_config = self.training_state.model_info.get("model_config")
 
-        # DiffusionGemma has a wholly different forward contract; own path below.
         if is_diffusion(model_config):
             return self._diffusion_training_step_accumulate(
                 batch, accum_step, gradient_accumulation_steps
             )
 
-        # Sequence classification: labels are class indices, no packed-doc masking.
         if get_job_config()["training_mode"] == "classification":
             return self._classification_training_step_accumulate(
                 batch, accum_step, gradient_accumulation_steps
             )
 
-        # GRPO: clipped policy-gradient surrogate over sampled completions, no labels.
         if get_job_config()["training_mode"] == "grpo":
             return self._grpo_training_step_accumulate(
                 batch, accum_step, gradient_accumulation_steps
             )
 
-        # Embedding training: sentence pairs with a CoSENT objective, no logits.
         if get_job_config()["training_mode"] == "embedding":
             return self._embedding_training_step_accumulate(
                 batch, accum_step, gradient_accumulation_steps
@@ -526,25 +491,19 @@ class TrainingLoop:
             "labels": batch["labels"].to(device),
         }
 
-        # Packed batches swap the 2D padding mask for a 4D block-diagonal+causal one.
         seq_len = forward_kwargs["input_ids"].shape[-1]
         model_config = self.training_state.model_info.get("model_config")
         decision = doc_mask_decision(batch, seq_len, model_config, _MAX_4D_MASK_SEQ_LEN)
         use_flex = _use_flex_attention() and _FLEX_ATTENTION_AVAILABLE
         if decision == SKIP_MULTIMODAL:
-            # Wrapper indexes logits by a 2D mask; a 4D mask would IndexError.
             _warn_doc_mask_skipped_multimodal()
         elif decision == SKIP_SSM:
-            # Hybrid Mamba/SSM mixer assumes a 2D mask; a 4D one broadcasts to 5D.
             _warn_doc_mask_skipped_ssm()
         elif decision == BUILD or (decision == SKIP_SEQLEN and use_flex):
-            # The flex BlockMask is O(S/128), so _MAX_4D_MASK_SEQ_LEN doesn't apply.
             doc_ids = batch["document_ids"].to(device)
             if use_flex:
-                # flex_attention path: O(S/128) BlockMask, no sequence-length cap.
                 forward_kwargs["attention_mask"] = _build_document_block_mask(doc_ids, device)
             else:
-                # SDPA path: materialize the [B, 1, S, S] causal block-diagonal mask.
                 same_doc = doc_ids.unsqueeze(2) == doc_ids.unsqueeze(1)
                 causal = torch.ones(
                     seq_len, seq_len, device=device, dtype=torch.bool
@@ -554,33 +513,24 @@ class TrainingLoop:
             forward_kwargs["position_ids"] = batch["position_ids"].to(device)
         elif decision == SKIP_SEQLEN:
             _warn_doc_mask_skipped(seq_len)
-        # decision == NONE: batch isn't packed; leave the 2D mask as-is.
 
-        # Multimodal wrappers require mm_token_type_ids even on text-only batches.
         if is_multimodal(model_config):
             forward_kwargs["mm_token_type_ids"] = torch.zeros_like(
                 forward_kwargs["input_ids"]
             )
 
-        # forward pass
         model = self.training_state.model_info["model"]
         compute_dtype = getattr(model, "_training_compute_dtype", None)
         device_type = forward_kwargs["input_ids"].device.type
         with torch.autocast(device_type=device_type, dtype=compute_dtype or torch.bfloat16, enabled=compute_dtype is not None):
             loss = model(**forward_kwargs).loss
 
-        # Scale loss to account for accumulation
         scaled_loss = loss / gradient_accumulation_steps
 
-        # No cross-rank reduction here: the caller issues it after the accum loop.
-
-        # Always call backward, even on NaN/Inf: it frees the saved activations.
         scaled_loss.backward()
 
-        # Log info for each micro-batch
         self.print_microbatch_info(accum_step, loss, start_time)
 
-        # Local, unreduced, detached. The caller sums these and reduces once.
         return loss.detach()
 
     def _embedding_training_step_accumulate(
@@ -609,7 +559,6 @@ class TrainingLoop:
         scaled_loss.backward()
 
         self.print_microbatch_info(accum_step, loss, start_time)
-        # Local, unreduced, detached. The caller sums these and reduces once.
         return loss.detach()
 
     def _classification_training_step_accumulate(
@@ -645,12 +594,10 @@ class TrainingLoop:
 
         scaled_loss = loss / gradient_accumulation_steps
 
-        # Unconditional backward: it frees the saved activations even on NaN.
         scaled_loss.backward()
 
         self.print_microbatch_info(accum_step, loss, start_time)
 
-        # Local, unreduced, detached. The caller sums these and reduces once.
         return loss.detach()
 
     def _grpo_training_step_accumulate(
@@ -683,10 +630,9 @@ class TrainingLoop:
         with torch.autocast(device_type=input_ids.device.type, dtype=compute_dtype or torch.bfloat16, enabled=compute_dtype is not None):
             logits = model(**forward_kwargs).logits
 
-        # Position t predicts token t+1: shift, then gather the sampled token's log-prob.
         targets = input_ids[:, 1:]
         mask = completion_mask[:, 1:]
-        logp_new = _selected_logprobs(logits[:, :-1], targets)  # [B, L-1] fp32
+        logp_new = _selected_logprobs(logits[:, :-1], targets)
         del logits
 
         old = old_logprobs[:, 1:]
@@ -704,7 +650,6 @@ class TrainingLoop:
         )
 
         scaled_loss = loss / gradient_accumulation_steps
-        # Always call backward, even on NaN/Inf: it frees the saved activations.
         scaled_loss.backward()
 
         stats["time_s"] = time.time() - start_time
@@ -747,16 +692,14 @@ class TrainingLoop:
 
         encoder_input_ids = batch["encoder_input_ids"].to(device)
         encoder_attention_mask = batch["encoder_attention_mask"].to(device)
-        canvas_input_ids = batch["canvas_input_ids"].to(device)  # clean, pad-filled
-        canvas_labels = batch["canvas_labels"].to(device)        # clean, -100 on pad
+        canvas_input_ids = batch["canvas_input_ids"].to(device)
+        canvas_labels = batch["canvas_labels"].to(device)
 
         vocab_size = model_config.text_config.vocab_size
         eps = self._diffusion_eps()
 
-        # Corruption is resampled every step; protect_prefix keeps the anchor clean.
         protect_prefix = 1 if self._diffusion_anchor_id() is not None else 0
 
-        # NaRA: the noise level must reach the hypernetwork before any forward pass.
         nara_context = self._diffusion_nara_context()
         if nara_context is not None:
             decoder_input_ids, noise_level = corrupt_canvas(
@@ -775,11 +718,9 @@ class TrainingLoop:
             "attention_mask": encoder_attention_mask,
             "decoder_input_ids": decoder_input_ids,
         }
-        # Pass mm_token_type_ids defensively: the encoder can crash without it.
         if is_multimodal(model_config):
             base_kwargs["mm_token_type_ids"] = torch.zeros_like(encoder_input_ids)
 
-        # Self-conditioning: a no-grad prediction fed back on the gradient pass.
         sc_prob = self._diffusion_self_conditioning_prob()
         if sc_prob > 0.0:
             with torch.no_grad():
@@ -802,9 +743,8 @@ class TrainingLoop:
             }
 
         outputs = model(**forward_kwargs)
-        logits = outputs.logits  # (B, canvas_length, vocab)
+        logits = outputs.logits
 
-        # fp32 CE for numerical stability; ignore padded canvas slots.
         canvas_loss_weight = batch.get("canvas_loss_weight")
         if canvas_loss_weight is not None:
             per_position = torch.nn.functional.cross_entropy(
@@ -826,7 +766,6 @@ class TrainingLoop:
         scaled_loss.backward()
 
         self.print_microbatch_info(accum_step, loss, start_time)
-        # Local, unreduced, detached. The caller sums these and reduces once.
         return loss.detach()
 
     def _diffusion_nara_context(self):
@@ -916,7 +855,6 @@ class TrainingLoop:
         if group is not None:
             import torch.distributed as dist
 
-            # Reduce a COPY: all_reduce is in-place and `loss` is the caller's.
             reduced = loss.detach().clone()
             dist.all_reduce(reduced, group=group)
             avg_loss = reduced.item() / get_size()
@@ -942,7 +880,6 @@ class TrainingLoop:
                 callback.on_step_end(step)
 
     def on_train_end(self):
-
         logger.info(
             f"Training finished successfully after {time.time() - self.training_state.start_time} seconds"
         )
@@ -963,14 +900,12 @@ class TrainingLoop:
         else:
             model_state_dict = filter_checkpoint(model.model, model.model.state_dict())
 
-        # Gather the sharded optimizer state here, on every rank, and hand it down.
         optimizer = self.training_state.optimizer
         if hasattr(model, "unwrap_optimizer"):
             optimizer_state_dict = model.unwrap_optimizer(optimizer)
         else:
             optimizer_state_dict = optimizer.state_dict()
 
-        # Same again for the CUDA RNG: one state per RANK, not per visible device.
         cuda_rng_state = self._gather_cuda_rng_state()
 
         self.save_checkpoint(model_state_dict, optimizer_state_dict, cuda_rng_state)
@@ -993,10 +928,8 @@ class TrainingLoop:
 
     @main_rank_only
     def save_checkpoint(self, model_state_dict, optimizer_state_dict, cuda_rng_state):
-
         checkpoint = {
             "model_state_dict": model_state_dict,
-            # Gathered by the caller on every rank; this method is @main_rank_only.
             "optimizer_state_dict": optimizer_state_dict,
             "scheduler_state_dict": self.training_state.scheduler.state_dict(),
             "step": self.training_state.current_step,
@@ -1004,7 +937,6 @@ class TrainingLoop:
             "nan_steps": self.training_state.nan_steps,
             "data_cursor": self.training_state.data_cursor,
             "rng_state": torch.get_rng_state(),
-            # One entry PER RANK, not get_rng_state_all(), which is per-device.
             "cuda_rng_state": cuda_rng_state,
             "metadata": build_adapter_metadata(),
         }
@@ -1027,7 +959,6 @@ class TrainingLoop:
         entry = {
             "step": self.training_state.current_step,
             "loss": loss,
-            # Wall-clock across ALL slices: start_time resets on every slice.
             "epoch": self.training_state.epoch,
             "time": (
                 self.training_state.accumulated_seconds_at_slice_start
@@ -1048,7 +979,6 @@ class TrainingLoop:
         )
 
     def print_training_step_info(self, loss, step_time):
-        # Deliberately NOT @main_rank_only: its barriers cost collectives per step.
         if not is_main_rank():
             return
         logger.info(
@@ -1060,15 +990,12 @@ class TrainingLoop:
         )
 
     def print_microbatch_info(self, accum_step, loss, start_time):
-        # Deliberately NOT @main_rank_only — see print_training_step_info.
         if not is_main_rank():
             return
 
-        # only log if there is more than one microbatch
         if get_gradient_accumulation_steps() <= 1:
             return
 
-        # float() is a host sync, but local to rank 0 — no collective.
         logger.debug(
             f"  Microbatch {accum_step + 1} "
             f"- step {self.training_state.current_step} "
@@ -1091,7 +1018,6 @@ def get_callbacks(trainer):
 
 
 class TimeoutCallback:
-
     def __init__(self, trainer):
         self.trainer = trainer
         job_config = get_job_config()
@@ -1135,14 +1061,12 @@ class CheckpointCallback:
 
 
 class CudaMemoryCallback:
-
     def __init__(self, trainer):
         self.trainer = trainer
         job_config = get_job_config()
         self.interval = job_config.get("cuda_memory_log_interval", 100)
 
     def on_step_end(self, step):
-        # NOT @main_rank_only: that decorator barriers on every step.
         if not is_main_rank():
             return
         if self.interval <= 0 or step % self.interval != 0:
@@ -1172,9 +1096,7 @@ class TrainingState:
         self.history = []
         self.start_time = None
         self.nan_steps = 0
-        # Batches consumed in the current epoch; checkpointed for resume.
         self.data_cursor = 0
-        # Loaded from status.json at the start of every slice (0 on the first).
         self.accumulated_seconds_at_slice_start = 0.0
 
 
@@ -1191,16 +1113,12 @@ def get_gradient_accumulation_steps():
 def get_optimizer(model):
     job_config = get_job_config()
     learning_rate = job_config["learning_rate"]
-    # Only optimize trainable parameters (with LoRA, just the adapter weights).
     trainable = [p for p in model.parameters() if p.requires_grad]
     optimizer_type = job_config.get("optimizer_type", "adamw")
     logger.info(
         f"Initializing {optimizer_type} optimizer for {len(trainable)} trainable parameters"
     )
 
-    if optimizer_type == "compensated_adamw":
-        from cray_megatron.megatron.compensated_adamw import CompensatedAdamW
-        return CompensatedAdamW(trainable, lr=learning_rate)
     if optimizer_type == "adamw":
         return AdamW(trainable, lr=learning_rate)
     elif optimizer_type == "sgd":
@@ -1252,7 +1170,6 @@ def get_scheduler(optimizer, max_steps):
 
 
 def remove_closest_entry(history, max_length):
-    # Drop the most closely spaced entries until the history fits max_length.
     while len(history) > max_length:
         min_diff = float("inf")
         min_index = None
@@ -1267,7 +1184,6 @@ def remove_closest_entry(history, max_length):
 
 
 def filter_checkpoint(model, state_dict):
-    # Remove the layers without gradients
     saved_params = {}
 
     for name, param in model.named_parameters(recurse=True):
@@ -1302,7 +1218,6 @@ def _selected_logprobs(logits, targets):
 
 
 def _load_trained_parameters(wrapped_model, state_dict):
-    # Candidate load targets: the wrapper and its `.model` descendants.
     candidates = []
     module = wrapped_model
     seen = set()
@@ -1315,7 +1230,6 @@ def _load_trained_parameters(wrapped_model, state_dict):
 
     checkpoint_keys = set(state_dict)
 
-    # Pick the target whose parameter namespace overlaps the checkpoint the most.
     best_target = None
     best_matched = -1
     for candidate in candidates:
@@ -1336,7 +1250,6 @@ def _load_trained_parameters(wrapped_model, state_dict):
 
     incompatible = best_target.load_state_dict(state_dict, strict=False)
 
-    # missing_keys is expected (frozen weights); unexpected_keys means data loss.
     if incompatible.unexpected_keys:
         raise RuntimeError(
             f"Checkpoint resume left {len(incompatible.unexpected_keys)} trained "
@@ -1370,19 +1283,15 @@ class _AllReduce(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input):
         ctx.save_for_backward(input)
-        # Perform allreduce operation out of place
         input_tmp = input.clone()
         allreduce(input_tmp)
-        # Return the all-reduced tensor
         return input_tmp
 
     @staticmethod
     def backward(ctx, grad_output):
         input, = ctx.saved_tensors
         grad_output_tmp = grad_output.clone()
-        # Perform allreduce operation in place
         allreduce(grad_output_tmp)
-        # Return the all-reduced gradient
         return grad_output_tmp
 
 allreduce_op = _AllReduce.apply

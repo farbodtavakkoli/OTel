@@ -1,13 +1,3 @@
-"""
-Unit tests for build_chat_completion_response.
-
-Contract: convert the worker's flat result dict into the OpenAI
-ChatCompletion shape that AsyncOpenAI parses. The non-streaming chat
-completions queue path was previously unparseable end-to-end because
-the heartbeat streamer dumped the raw worker dict verbatim — the SDK
-expects `id`/`object`/`choices`/`usage` at the top level.
-"""
-
 from cray_infra.api.fastapi.chat_completions.build_chat_completion_response import (
     CHAT_COMPLETION_OBJECT,
     build_chat_completion_response,
@@ -44,34 +34,24 @@ def test_happy_path_shape():
 
 
 def test_error_path_preserves_diagnostic_and_keeps_choices_parseable():
-    """An error result must still produce a ChatCompletion-shaped body
-    so the SDK doesn't fail to parse — but operators need the
-    diagnostic too, so the worker error is exposed as `error`."""
     result = {"request_id": "abc_0", "error": "Invalid request type: foo"}
 
     out = build_chat_completion_response(result=result, model="m-1")
 
-    # SDK must be able to parse this without exception.
     assert out["object"] == CHAT_COMPLETION_OBJECT
     assert out["choices"][0]["message"]["content"] == ""
     assert out["choices"][0]["finish_reason"] == "error"
 
-    # Operator-facing error preserved.
     assert out["error"]["message"] == "Invalid request type: foo"
     assert out["error"]["type"] == "worker_error"
 
 
 def test_missing_response_field_yields_empty_content_not_none():
-    """If the worker resolved but didn't write a `response` field
-    (rare race; could happen if finish_work received only
-    token_count), we still emit valid JSON the SDK can parse."""
     result = {"request_id": "abc_0", "token_count": 5}
 
     out = build_chat_completion_response(result=result, model="m-1")
 
     assert out["choices"][0]["message"]["content"] == ""
-    # Not an error — finish_reason stays "stop" because there was no
-    # explicit error from the worker.
     assert out["choices"][0]["finish_reason"] == "stop"
     assert out["usage"]["total_tokens"] == 5
 
@@ -121,17 +101,11 @@ def test_preserves_structured_tool_calls_from_vllm_chat_worker():
 
 
 def test_prompt_completion_split_preferred_over_token_count():
-    """When the worker propagates the prompt/completion split (the
-    normal post-fix path), surface it on `usage` and recompute
-    `total_tokens` from the sum so the OpenAI shape is internally
-    consistent."""
     result = {
         "request_id": "abc_0",
         "response": "hi",
         "prompt_tokens": 190000,
         "completion_tokens": 8,
-        # token_count present but contradictory — split should win and
-        # total should be recomputed from the sum, not echoed.
         "token_count": 0,
     }
     out = build_chat_completion_response(result=result, model="m")
@@ -153,21 +127,12 @@ def test_missing_token_count_zero_usage():
 
 
 def test_id_falls_back_when_request_id_missing():
-    """A result with no request_id (degenerate, but possible if some
-    layer dropped it) still produces a `chatcmpl-…` id — the SDK
-    rejects bodies without one."""
     out = build_chat_completion_response(result={"response": "hi"}, model="m")
     assert out["id"].startswith("chatcmpl-")
     assert len(out["id"]) > len("chatcmpl-")
 
 
 def test_unwraps_group_level_shape():
-    """
-    Field-tested in the pod: _response.json-shaped dicts can arrive at
-    the wrapper instead of the per-request shape, leaving the actual
-    response buried under `results.<id>.response`. Symptom was empty
-    `content` in the SDK reply.
-    """
     group = {
         "results": {
             "abc_000000000": {
@@ -187,9 +152,6 @@ def test_unwraps_group_level_shape():
 
 
 def test_unwrap_picks_first_entry_deterministically():
-    """If multiple entries somehow appear (shouldn't today; defensive
-    coverage), sort keys so two concurrent callers agree which entry
-    is "first"."""
     group = {
         "results": {
             "abc_000000001": {"response": "B"},
@@ -203,8 +165,6 @@ def test_unwrap_picks_first_entry_deterministically():
 
 
 def test_unwrap_no_op_on_per_request_shape():
-    """Per-request shape (the documented contract) must pass through
-    unchanged."""
     out = build_chat_completion_response(
         result={"response": "direct", "is_acked": True}, model="m"
     )

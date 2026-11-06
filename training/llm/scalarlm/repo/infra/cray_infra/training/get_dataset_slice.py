@@ -1,12 +1,3 @@
-"""
-Serve a windowed view of a training job's dataset.jsonlines.
-
-Called from GET /v1/megatron/train/{job_hash}/dataset. See
-ui/docs/dataset-viewer.md for the full contract; this module implements
-pagination + a case-insensitive substring filter with a bounded scan so
-the endpoint can't be turned into an I/O hammer.
-"""
-
 import json
 import logging
 import os
@@ -19,8 +10,8 @@ from cray_infra.training.get_training_job_info import get_job_directory_for_hash
 logger = logging.getLogger(__name__)
 
 MAX_LIMIT = 200
-MAX_MATCH_SCAN_BYTES = 256 * 1024 * 1024  # 256 MiB — cap on `q`-scan work.
-MAX_FIELD_BYTES = 4 * 1024  # 4 KiB per string field in the response payload.
+MAX_MATCH_SCAN_BYTES = 256 * 1024 * 1024
+MAX_FIELD_BYTES = 4 * 1024
 
 
 def get_dataset_slice(

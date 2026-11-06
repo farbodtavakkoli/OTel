@@ -19,19 +19,6 @@ import { formatDurationSeconds, formatNumber } from "@/lib/format";
 import { setAlias } from "@/stores/aliases";
 import { useAlias } from "@/stores/useAliases";
 
-/**
- * Two data sources, joined:
- *   /v1/models                — authoritative "loaded in vLLM right now"
- *   /v1/megatron/list_models  — training-job-aware enrichment (step/loss/
- *                               status/deployed); may contain entries not yet
- *                               registered with vLLM (the 30 s refresh window).
- *
- * The page renders the deployment's base model as a standalone card, then
- * every other /v1/models entry as an "Adapter" enriched with job metadata
- * where available. Finally, training-job entries that are finished but not
- * yet in /v1/models appear in a "Pending registration" section so users
- * aren't left wondering where a just-completed job went.
- */
 type HealthyAdapter = {
   id: string;
   created: number | undefined;
@@ -73,7 +60,6 @@ export function ModelsPage() {
 
     const rows: AdapterRow[] = [];
 
-    // Live in vLLM, minus the base model.
     for (const m of vllmModels) {
       if (m.id === default_model) continue;
       rows.push({
@@ -85,8 +71,6 @@ export function ModelsPage() {
       });
     }
 
-    // Training jobs present in list_models but not (yet) loaded in vLLM.
-    // These are "in the 30 s refresh gap" or still running / failed.
     const loadedIds = new Set(vllmModels.map((m) => m.id));
     for (const j of listQ.data ?? []) {
       if (loadedIds.has(j.name)) continue;
@@ -100,7 +84,6 @@ export function ModelsPage() {
       });
     }
 
-    // Newest first; loaded above pending within the same bucket.
     rows.sort((a, b) => {
       if (a.loaded !== b.loaded) return a.loaded ? -1 : 1;
       return (b.created ?? 0) - (a.created ?? 0);
@@ -221,8 +204,6 @@ export function ModelsPage() {
   );
 }
 
-// ---------------------------------------------------------------------------
-
 function BaseModelCard({
   id,
   base,
@@ -278,8 +259,6 @@ function BaseModelCard({
     </Card>
   );
 }
-
-// ---------------------------------------------------------------------------
 
 function AdapterRowCard({
   adapter,
@@ -465,14 +444,6 @@ function EmptyAdapters() {
   );
 }
 
-// ---------------------------------------------------------------------------
-
-/**
- * Best-effort HuggingFace URL for a model id. HF ids are `{org}/{repo}` where
- * both halves are non-empty alphanumerics (plus `-`, `_`, `.`). Training-job
- * hashes are a single SHA-256 blob with no slash, so they're excluded. The
- * "tiny-random/…" fixtures are still real HF repos.
- */
 function guessHuggingFaceUrl(id: string): string | null {
   if (!id || !id.includes("/")) return null;
   const parts = id.split("/");

@@ -8,7 +8,6 @@ import {
   type Message,
 } from "./conversations";
 
-/** Hook: live list of all conversations, most recent first. */
 export function useConversations() {
   const [data, setData] = useState<Conversation[] | null>(null);
 
@@ -30,7 +29,6 @@ export function useConversations() {
   return data;
 }
 
-/** Hook: live message list for a conversation, oldest first. */
 export function useMessages(conversationId: string | undefined) {
   const [data, setData] = useState<Message[] | null>(null);
 

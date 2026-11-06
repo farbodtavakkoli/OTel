@@ -21,25 +21,19 @@ logger = logging.getLogger(__name__)
 async def restart_megatron_jobs():
     logger.info("Restarting Megatron jobs")
 
-    # Get all the jobs that are running
     all_jobs = get_running_jobs()
 
-    # Get slurm jobs that are running
     slurm_job_names = await get_slurm_jobs()
 
     logger.info(f"Slurm jobs running: {slurm_job_names}")
 
-    # Filter out the jobs that are already running
     jobs = filter_running_jobs(all_jobs, slurm_job_names)
 
-    # Restart all the jobs
     async for job in jobs:
         await restart_job(job)
 
-    # Get slurm jobs that are running again
     slurm_job_names = await get_slurm_jobs()
 
-    # If any are still running, keep the server alive
     if slurm_job_names:
         logger.info("Jobs are still running, keeping the server alive")
         await keep_alive()
@@ -48,11 +42,6 @@ async def restart_megatron_jobs():
 async def get_running_jobs():
     config = get_config()
 
-    # training jobs are in the training job directory
-    # they are subdirectories which should have a file called status.json
-
-    # get all the directories in the training job directory
-    # that have a status.json file
     if not os.path.exists(config["training_job_directory"]):
         return
 
@@ -64,7 +53,6 @@ async def get_running_jobs():
                     status = json.load(f)
             except Exception as e:
                 logger.error(f"Error reading status.json for job {root}: {e}")
-                # print exception info
                 traceback.print_exc()
                 continue
 
@@ -95,15 +83,6 @@ async def get_slurm_jobs():
         ["squeue", '--format="%.18i %.9P %.128j %.8u %.8T %.10M %.9l %.6D %R"']
     )
 
-    # Here is an example of the output of squeue
-    # JOBID PARTITION     NAME     USER ST       TIME  NODES NODELIST(REASON)
-    # 1234      gpu  jobname  username  R       0:10      1 node1
-    # 5678      gpu  jobname  username  R       0:10      1 node2
-    # 91011      gpu  jobname  username  R       0:10      1 node3
-    # 121314      gpu  jobname  username  R       0:10      1 node4
-
-    # We want to get the job name from the third column
-    # We also want to remove the header
     jobs = squeue_output.decode().split("\n")[1:]
 
     job_names = []
@@ -144,19 +123,6 @@ def _write_status(job, status):
 
 
 def should_restart_job(job, now=None):
-    """Bounded restart policy (PR #5).
-
-    Relaunching a job whose slurm allocation vanished is right for preemption,
-    but when a job dies during startup for a deterministic reason (a bad
-    entrypoint, an unavailable device) the same job is resubmitted forever —
-    observed here as a job reaching attempt 24 in a few minutes, each attempt
-    failing identically. Three guards:
-
-      * a recent heartbeat means the job IS alive; slurm just has not registered
-        it yet (or squeue was queried mid-transition) — do not double-submit;
-      * a cooldown spaces out attempts so a failing job cannot spin;
-      * a hard cap gives up and marks the job FAILED instead of looping.
-    """
     cfg = get_config()
     now = now if now is not None else time.time()
     status = _read_status(job)
@@ -204,7 +170,6 @@ async def restart_job(job):
 
     logger.info(f"Restarting job: {job}")
 
-    # Get the job config
     with open(os.path.join(job, "config.yaml")) as f:
         config = yaml.safe_load(f)
 

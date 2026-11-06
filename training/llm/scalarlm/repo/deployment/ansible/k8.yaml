@@ -5,8 +5,6 @@
     kubernetes_version: "v1.32"
   tasks:
 
-    # ── System Prerequisites ────────────────────────────────────────────────
-
     - name: Update package index
       apt:
         update_cache: yes
@@ -47,8 +45,6 @@
         - { name: net.bridge.bridge-nf-call-iptables,  value: "1" }
         - { name: net.bridge.bridge-nf-call-ip6tables, value: "1" }
         - { name: net.ipv4.ip_forward,                 value: "1" }
-
-    # ── Docker & containerd ─────────────────────────────────────────────────
 
     - name: Install required base packages
       apt:
@@ -101,9 +97,7 @@
         name: containerd
         state: restarted
         enabled: yes
-        daemon_reload: yes          # fixed: was daemon-reload (invalid key)
-
-    # ── Helm ────────────────────────────────────────────────────────────────
+        daemon_reload: yes
 
     - name: Install Helm if not present
       unarchive:
@@ -116,8 +110,6 @@
         remote_src: true
       args:
         creates: /usr/local/bin/helm
-
-    # ── Kubernetes packages ─────────────────────────────────────────────────
 
     - name: Add Kubernetes apt key
       get_url:
@@ -137,7 +129,7 @@
         name:
           - kubelet
           - kubeadm
-          - kubectl            # added: was missing from original
+          - kubectl
         state: present
         update_cache: yes
 
@@ -145,7 +137,7 @@
       dpkg_selections:
         name: "{{ item }}"
         selection: hold
-      loop:                    # added: prevents accidental upgrades
+      loop:
         - kubelet
         - kubeadm
         - kubectl
@@ -156,13 +148,10 @@
         state: started
         enabled: yes
 
-    # ── Cluster Initialization ──────────────────────────────────────────────
-
     - name: Initialize Kubernetes cluster
       shell: kubeadm init --pod-network-cidr=192.168.0.0/16
       args:
         creates: /etc/kubernetes/admin.conf
-      # fixed: original had erroneous extra quotes around the command
 
     - name: Create .kube directory for current user
       file:
@@ -191,9 +180,6 @@
         dest: /root/.kube/config
         remote_src: yes
         mode: '0600'
-      # fixed: original used shell + creates with a list (invalid); split into proper file/copy tasks
-
-    # ── Single-node: Untaint Control Plane ─────────────────────────────────
 
     - name: Untaint control plane to allow workload scheduling
       shell: >
@@ -204,17 +190,12 @@
         - untaint_result.rc != 0
         - '"not found" not in untaint_result.stderr'
       changed_when: '"untainted" in untaint_result.stdout'
-      # added: required for single-node — without this, pods won't schedule
-
-    # ── Python prerequisites for Ansible k8s modules ────────────────────────
 
     - name: Install Python prerequisites
       pip:
         name:
           - pyyaml
           - kubernetes
-
-    # ── Calico CNI ──────────────────────────────────────────────────────────
 
     - name: Download Tigera Operator manifest
       ansible.builtin.get_url:
@@ -226,7 +207,7 @@
       kubernetes.core.k8s:
         state: present
         src: /tmp/tigera-operator.yaml
-        kubeconfig: /etc/kubernetes/admin.conf   # added: explicit kubeconfig
+        kubeconfig: /etc/kubernetes/admin.conf
 
     - name: Download Calico CNI custom resources manifest
       ansible.builtin.get_url:
@@ -238,9 +219,7 @@
       kubernetes.core.k8s:
         state: present
         src: /tmp/calico.yaml
-        kubeconfig: /etc/kubernetes/admin.conf   # added: explicit kubeconfig
-
-    # ── NVIDIA GPU Operator ─────────────────────────────────────────────────
+        kubeconfig: /etc/kubernetes/admin.conf
 
     - name: Add NVIDIA Helm repository
       kubernetes.core.helm_repository:
@@ -254,4 +233,4 @@
         create_namespace: true
         chart_ref: nvidia/gpu-operator
         chart_version: v24.9.1
-        kubeconfig: /etc/kubernetes/admin.conf   # added: explicit kubeconfig
+        kubeconfig: /etc/kubernetes/admin.conf

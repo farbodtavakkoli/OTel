@@ -1,11 +1,3 @@
-"""
-List the `checkpoint_<step>.pt` files in a training-job directory.
-
-Powers the checkpoint dropdown on the Publish-to-HF modal. Newest
-checkpoint first; mtimes are float seconds since epoch, matching what
-the rest of the API uses for time fields.
-"""
-
 import logging
 import os
 
@@ -28,9 +20,6 @@ def list_checkpoints(job_hash: str) -> dict:
         try:
             step = int(name[len("checkpoint_") : -len(".pt")])
         except ValueError:
-            # Skip files that match the prefix/suffix but don't have an
-            # integer step — keeps stray editor swap files from breaking
-            # the dropdown.
             continue
         path = os.path.join(job_directory, name)
         try:

@@ -15,7 +15,6 @@ slurm_router = APIRouter(prefix="/slurm")
 
 @slurm_router.get("/status")
 async def slurm_status():
-    """Get SLURM cluster status including queue information and resource counts."""
     try:
         squeue_info = await squeue()
         gpu_count = get_gpu_count()
@@ -42,13 +41,11 @@ async def slurm_status():
 
 @slurm_router.get("/squeue")
 async def get_squeue():
-    """Get SLURM queue information."""
     return await squeue()
 
 
 @slurm_router.post("/cancel/{job_id}")
 async def cancel_job(job_id: str):
-    """Cancel a SLURM job by ID."""
     try:
         result = subprocess.run(
             ["scancel", job_id],

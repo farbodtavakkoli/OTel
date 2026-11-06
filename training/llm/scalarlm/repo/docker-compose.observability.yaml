@@ -52,9 +52,9 @@ services:
     image: grafana/tempo:latest
     container_name: scalarlm-tempo
     ports:
-      - "3200:3200"   # Tempo HTTP
-      - "4317:4317"   # OTLP gRPC
-      - "4318:4318"   # OTLP HTTP
+      - "3200:3200"
+      - "4317:4317"
+      - "4318:4318"
     volumes:
       - ./deployment/observability/tempo-config.yml:/etc/tempo/tempo.yaml
       - tempo-data:/tmp/tempo
@@ -65,8 +65,8 @@ services:
     image: otel/opentelemetry-collector:latest
     container_name: scalarlm-otel-collector
     ports:
-      - "4317:4317"   # OTLP gRPC (for ScalarLM to send traces)
-      - "4318:4318"   # OTLP HTTP
+      - "4317:4317"
+      - "4318:4318"
     volumes:
       - ./deployment/observability/otel-collector.yml:/etc/otel-collector.yaml
     command: --config=/etc/otel-collector.yaml
@@ -76,9 +76,6 @@ services:
       - tempo
     restart: unless-stopped
 
-  # DCGM exporter - ONLY for NVIDIA GPU systems
-  # If you're running on CPU, comment out this entire service
-  # or use: docker-compose -f docker-compose.observability.yaml up -d --scale dcgm-exporter=0
   dcgm-exporter:
     image: nvcr.io/nvidia/k8s/dcgm-exporter:3.1.8-3.1.5-ubuntu20.04
     container_name: scalarlm-dcgm-exporter
@@ -92,7 +89,7 @@ services:
       - SYS_ADMIN
     restart: unless-stopped
     profiles:
-      - gpu  # Only start with --profile gpu
+      - gpu
 
 volumes:
   prometheus-data:

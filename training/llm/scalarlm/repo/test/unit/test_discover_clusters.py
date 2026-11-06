@@ -1,8 +1,3 @@
-"""
-Unit tests for the node-memory-reporting bits of discover_clusters.py:
-``get_memory_mb`` and ``write_node_config``.
-"""
-
 from unittest.mock import patch
 
 import pytest
@@ -99,9 +94,6 @@ def test_get_memory_mb_returns_none_when_meminfo_is_missing(monkeypatch, tmp_pat
 
 
 def test_get_memory_mb_returns_none_on_permission_error():
-    """A restricted container/sandbox can deny reading /proc/meminfo
-    with PermissionError rather than FileNotFoundError -- both must be
-    treated as "can't determine memory", not propagate as a crash."""
     with patch("builtins.open", side_effect=PermissionError):
         assert dc.get_memory_mb() is None
 
@@ -228,9 +220,6 @@ def test_write_node_config_omits_invalid_real_memory(memory_mb):
 
 
 def test_write_node_config_no_double_spaces_when_fields_missing():
-    """Both RealMemory (no memory_mb) and Gres (no GPUs) can be absent
-    at once; the rendered line must not have doubled-up whitespace from
-    joining empty fields."""
     with patch.object(dc, "get_config", return_value=_fake_get_config()):
         line = dc.write_node_config(_node(memory_mb=None, gpu_count=0))
     assert "  " not in line

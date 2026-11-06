@@ -24,18 +24,12 @@ import torch
 
 from cray_infra.training.training_job_context import training_job_context
 
-# Per-rank chunk sizes. The total element count must be divisible by world size,
-# which the previous `size // 4` byte-derived counts were not (size=4 gave 1
-# element on 8 ranks -> ValueError), so this test could not have been passing.
 chunk_sizes = [2 ** i for i in range(10)]
 
 def alltoall_test(chunk):
     world_size = get_size()
     rank = get_rank()
 
-    # Rank r sends value (r*world_size + j) to rank j, so after the exchange
-    # rank r must hold (j*world_size + r) in chunk j. This validates ROUTING,
-    # not just liveness: a transpose bug or a dropped write-back both fail.
     input_tensor = torch.cat(
         [torch.full((chunk,), float(rank * world_size + j), dtype=torch.float32)
          for j in range(world_size)]
@@ -69,5 +63,3 @@ with training_job_context():
 
 
 main()
-
-

@@ -67,12 +67,6 @@ async def fill_work_queue(work_queue):
 
         group_request_id = strip_request_id(item_path)
 
-        # Skip if already processed. Acking the duplicate is important:
-        # `work_queue.get()` popped it in `unack` state, and without an
-        # ack it stays checked out in SQLiteAckQueue forever. Duplicates
-        # accumulate → the queue's internal counters drift → `len()`
-        # eventually returns a negative number ("__len__() should return
-        # >= 0") and the emit-metrics path starts failing.
         response_path = group_request_id_to_response_path(group_request_id)
 
         if os.path.exists(response_path):
@@ -97,11 +91,6 @@ async def fill_work_queue(work_queue):
                 for index, request in enumerate(requests)
             ]
 
-            # Stash chat-completions correlation_ids from this batch
-            # so update_and_ack can later resolve the per-prompt
-            # ResultRouter future. Generate-path entries (no cid) are
-            # skipped — pop_correlation_id will return None for them
-            # and the resolve hook becomes a no-op.
             for index, batch_request in enumerate(requests):
                 if not isinstance(batch_request, dict):
                     continue

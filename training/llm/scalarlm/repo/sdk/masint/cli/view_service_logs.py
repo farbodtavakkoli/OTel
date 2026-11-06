@@ -58,7 +58,6 @@ async def sample_log_stream(service_name: str, starting_line_number: int):
             params={"starting_line_number": starting_line_number},
         ) as resp:
             if resp.content_type != "text/event-stream":
-                # The response is json
                 response = await resp.json()
 
                 raise Exception(f"Error {resp.status} getting log stream: {response}")
@@ -88,4 +87,3 @@ async def read_log_stream(log_stream):
 
 def format_log(log):
     return f"{log['line_number']} {log['line'].rstrip()}"
-

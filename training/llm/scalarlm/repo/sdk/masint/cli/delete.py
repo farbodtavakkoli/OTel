@@ -8,7 +8,6 @@ logger = logging.getLogger(__name__)
 
 
 def delete(model_name):
-
     logger.info(f"Deleting model: {model_name}")
 
     try:
@@ -19,4 +18,3 @@ def delete(model_name):
         logger.error(f"Failed to delete model: {model_name}")
         logger.error(e)
         logger.error(traceback.format_exc())
-

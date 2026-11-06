@@ -1,11 +1,3 @@
-"""Unit tests for the pure-logic helpers behind the openai proxy router.
-
-These tests exercise the private helper functions (_extract_token_count,
-_filter_params, _ensure_usage_reported) to pin robust metrics extraction
-and request sanitization. They live in `openai_v1_helpers` so the test
-suite can run without standing up vllm / fastapi / aiohttp.
-"""
-
 from __future__ import annotations
 
 import json
@@ -19,8 +11,6 @@ from cray_infra.api.fastapi.routers.openai_v1_helpers import (
     _ensure_usage_reported,
 )
 
-# ---- _extract_token_count --------------------------------------------------
-
 
 def test_extract_token_count_from_json_body():
     payload = json.dumps({"usage": {"total_tokens": 42}}).encode("utf-8")
@@ -28,7 +18,6 @@ def test_extract_token_count_from_json_body():
 
 
 def test_extract_token_count_from_sse_stream():
-    # Multi-event stream, usage in the last event
     sse_data = (
         'data: {"choices": [{"text": "hello"}]}\n\n'
         'data: {"choices": [], "usage": {"total_tokens": 10}}\n\n'
@@ -38,7 +27,6 @@ def test_extract_token_count_from_sse_stream():
 
 
 def test_extract_token_count_handles_varying_whitespace_and_newlines():
-    # OpenAI spec allows single \n or \r\n and varying space after data:
     sse_data = (
         'data:{"usage":{"total_tokens":1}}\n\n'
         'data:   {"usage":{"total_tokens":2}}\r\n\r\n'
@@ -48,18 +36,11 @@ def test_extract_token_count_handles_varying_whitespace_and_newlines():
 
 
 def test_extract_token_count_handles_multiline_data_events():
-    # Per the SSE spec, a single event can have multiple `data:` lines;
-    # their contents are concatenated with "\n" to form one decoded
-    # value. In practice vLLM's OpenAI SSE emitter keeps each JSON on
-    # one line, but we want the parser to handle spec-compliant input
-    # correctly so a future emitter change doesn't silently break
-    # token counting.
     sse_data = ('data: {"usage":\ndata: {"total_tokens": 7}}\n\n').encode("utf-8")
     assert _extract_token_count(sse_data) == 7
 
 
 def test_extract_token_count_handles_partial_trailing_data():
-    # If the buffer has extra garbage at the end but valid SSE events before it
     sse_data = (
         'data: {"usage": {"total_tokens": 5}}\n\ndata: [DONE]\n\nextra garbage'
     ).encode("utf-8")
@@ -76,13 +57,8 @@ def test_extract_token_count_returns_none_on_empty():
 
 
 def test_extract_token_count_handles_unicode_errors():
-    # Payload with invalid utf-8 sequences
     payload = b'{"usage": {"total_tokens": 5}, "extra": "' + b"\xff" + b'"}'
-    # Decoder should use "replace" and still find the usage field if possible
     assert _extract_token_count(payload) == 5
-
-
-# ---- _filter_params --------------------------------------------------------
 
 
 def test_filter_params_strips_unknown_keys():
@@ -156,9 +132,6 @@ def test_chat_request_serializer_requests_aliases_and_preserves_explicit_null():
     )
     assert params["response_format"]["json_schema"]["schema"] == {"type": "object"}
     assert "tool_choice" in params and params["tool_choice"] is None
-
-
-# ---- _ensure_usage_reported ------------------------------------------------
 
 
 def test_ensure_usage_reported_injects_field_on_stream():

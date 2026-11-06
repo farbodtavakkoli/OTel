@@ -20,14 +20,6 @@ async def finish_work(requests: FinishWorkRequests):
 
         result = await get_unfinished_result(request_id=request.request_id)
 
-        # The group may have been wiped out from in-memory state:
-        # uvicorn auto-reload between submit and finish_work, or the
-        # group was already finalized/cleared by a sibling request's
-        # finish_work call. Drop this completion cleanly — if the
-        # client was still waiting, their poll will either succeed
-        # against the already-written response file or time out. We
-        # must return 200 here so the worker doesn't retry and
-        # amplify load.
         if result is None:
             logger.warning(
                 "finish_work: no in-memory group state for %s "
@@ -43,9 +35,6 @@ async def finish_work(requests: FinishWorkRequests):
         if request.error is not None:
             result["error"] = request.error
 
-        # Propagate usage onto the stored result so the chat-completions
-        # response builder can surface it. Without this the worker's
-        # token counts only reach Metrics — never the SDK's `usage`.
         if request.token_count is not None:
             result["token_count"] = request.token_count
         if request.prompt_tokens is not None:

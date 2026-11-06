@@ -1,17 +1,12 @@
-"""Prometheus metrics for ScalarLM inference and training."""
-
 import logging
 
 logger = logging.getLogger(__name__)
 
-# Try to import prometheus_client, but gracefully handle if not available
 try:
     from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
     from fastapi import Response
 
     PROMETHEUS_AVAILABLE = True
-
-    # ==================== Inference Metrics ====================
 
     inference_requests_total = Counter(
         "scalarlm_inference_requests_total",
@@ -46,8 +41,6 @@ try:
         buckets=[0.1, 0.5, 1, 2, 5, 10, 30]
     )
 
-    # ==================== Training Metrics ====================
-
     training_loss = Gauge(
         "scalarlm_training_loss",
         "Training loss per step",
@@ -74,14 +67,12 @@ try:
     )
 
     def metrics_endpoint():
-        """Return Prometheus metrics in text format."""
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 except ImportError as e:
     logger.warning(f"prometheus_client not available: {e}. Metrics will not be exported.")
     PROMETHEUS_AVAILABLE = False
 
-    # Create no-op placeholders
     class NoOpMetric:
         def labels(self, **kwargs):
             return self
@@ -109,6 +100,5 @@ except ImportError as e:
     training_step_time_seconds = NoOpMetric()
 
     def metrics_endpoint():
-        """Return empty response when Prometheus not available."""
         from fastapi import Response
         return Response("Prometheus metrics not available", media_type="text/plain")

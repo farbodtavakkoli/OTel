@@ -6,7 +6,6 @@ sm_arch=${args[sm_arch]}
 declare -a vllm_target_device
 declare -a docker_platform
 
-# If target is cpu, build the image with the cpu base image
 if [ "$target" == "cpu" ]; then
     vllm_target_device=("cpu")
     if [ "$(uname -m)" == "x86_64" ]; then
@@ -19,7 +18,6 @@ elif [ "$target" == "amd" ]; then
     docker_platform=("linux/amd64")
     sm_arch="gfx942"
 elif [ "$target" == "spark" ]; then
-    # NVIDIA DGX Spark: aarch64 Grace CPU + Blackwell GPU (SM 12.0).
     vllm_target_device=("cuda")
     docker_platform=("linux/arm64")
     if [ "$sm_arch" == "auto" ]; then
@@ -29,7 +27,6 @@ else
     vllm_target_device=("cuda")
     docker_platform=("linux/amd64")
     if [ "$sm_arch" == "auto" ]; then
-        # Auto-detect the architecture of the GPU using nvidia-smi
         sm_arch=($(nvidia-smi --query-gpu=compute_cap --format=csv,noheader))
     fi
 fi
@@ -39,7 +36,6 @@ docker_build_command="docker build --platform ${docker_platform} --build-arg BAS
 mkdir -p vllm
 mkdir -p chat-ui
 
-# Run docker build command
 echo $(green_bold Building image with command: ${docker_build_command})
 eval $docker_build_command
 

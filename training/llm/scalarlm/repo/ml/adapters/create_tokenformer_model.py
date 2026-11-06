@@ -8,7 +8,6 @@ logger = logging.getLogger(__name__)
 def create_tokenformer_model(model, device, train_lm_head=None):
     overall_start = time.time()
 
-    # Step 1: Insert adapter modules
     logger.info("Starting adapter module insertion...")
     step2_start = time.time()
     tokenformer_model = TokenformerSurgeon(model, device).insert_adapter_modules()
@@ -18,9 +17,7 @@ def create_tokenformer_model(model, device, train_lm_head=None):
         f"Adapter module insertion completed: {step2_time:.2f}s ({step2_time/60:.1f} minutes)"
     )
 
-    # Step 2: Count parameters for train_lm_head decision
     if train_lm_head is None:
-        # Models over 100M params don't need lm_head training.
         logger.info("Counting parameters...")
         step3_start = time.time()
         param_count = count_parameters(tokenformer_model)
@@ -30,7 +27,6 @@ def create_tokenformer_model(model, device, train_lm_head=None):
             f"Parameter counting completed: {step3_time:.2f}s, count={param_count:,}, train_lm_head={train_lm_head}"
         )
 
-    # Step 3: Freeze all parameters
     logger.info("Freezing all parameters...")
     step4_start = time.time()
     frozen_count = 0
@@ -42,13 +38,11 @@ def create_tokenformer_model(model, device, train_lm_head=None):
         f"Parameter freezing completed: {step4_time:.2f}s, frozen {frozen_count:,} parameters"
     )
 
-    # Step 4: Unfreeze tokenformer parameters
     logger.info("Unfreezing tokenformer parameters...")
     step5_start = time.time()
     unfrozen_count = 0
     skipped_non_language = 0
     for name, param in tokenformer_model.named_parameters():
-        # Without this guard the substring matches below fire inside vision/audio towers.
         if is_non_language_path(name):
             skipped_non_language += 1
             continue
@@ -79,7 +73,6 @@ def create_tokenformer_model(model, device, train_lm_head=None):
         f"Tokenformer parameter unfreezing completed: {step5_time:.2f}s, unfrozen {unfrozen_count:,} parameters"
     )
 
-    # Step 5: Handle lm_head training. Accessed directly — it may be tied to the embeddings.
     step6_start = time.time()
     if train_lm_head:
         logger.info("Setting lm_head for training...")
@@ -93,7 +86,6 @@ def create_tokenformer_model(model, device, train_lm_head=None):
     step6_time = time.time() - step6_start
     logger.info(f"lm_head handling completed: {step6_time:.2f}s")
 
-    # Step 6: Log parameter gradients
     logger.info("Logging parameter gradients...")
     step7_start = time.time()
     log_param_gradients(tokenformer_model, logger)

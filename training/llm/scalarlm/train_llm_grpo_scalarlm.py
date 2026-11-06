@@ -110,7 +110,7 @@ def run_loop(args, rows: list, turn_end: str, train_args_base: dict, want_lp: bo
              persistent=None) -> dict:
     validate_loop_adapter(args)
     from importlib import import_module
-    reward_module = import_module(os.environ.get("GRPO_JUDGE_MODULE", "judge_reward"))
+    reward_module = import_module(os.environ.get("GRPO_JUDGE_MODULE", "grpo_judge_local"))
     RUBRIC_VERSION, score_batch = reward_module.RUBRIC_VERSION, reward_module.score_batch
 
     G, n_cycles = args.group_size, args.warmup_steps + args.steps

@@ -67,28 +67,22 @@ def plot_sweep(kernel_type, machine_roofline, kernel_metrics):
     ax.set_ylabel("Bandwidth (GB/s)")
     ax.set_title(f"{get_processor_name()} {kernel_type} Bandwidth ")
 
-    # Colorblind-friendly palette (blue, orange, teal, red, purple)
     colors = ["#0173B2", "#DE8F05", "#029E73", "#D55E00", "#CC78BC"]
 
-    # Different marker shapes for better distinction
     markers = ["o", "s", "^", "D", "v", "p", "*", "X", "h"]
 
-    max_data_size = 2**20  # 1 GB
+    max_data_size = 2**20
     min_bandwidth = machine_roofline["memory_bandwidth"]
 
-    # Track data points for later annotation
     points_data = []
 
-    # Plot kernel data points with distinct markers and colors
     for i, (kernel_name, kernel_metrics) in enumerate(kernel_metrics.items()):
         bandwidth = kernel_metrics["bandwidth"]
         size = kernel_metrics["bytes"]
 
-        # Use modulo to cycle through colors and markers if more kernels than options
         color_idx = i % len(colors)
         marker_idx = i % len(markers)
 
-        # Plot with larger, more distinct markers
         x_val = size / (2**20)
         y_val = bandwidth / 1e9
 
@@ -100,17 +94,15 @@ def plot_sweep(kernel_type, machine_roofline, kernel_metrics):
             markerfacecolor=colors[color_idx],
             markeredgecolor="black",
             markeredgewidth=1,
-            linestyle="none",  # No line connecting points
+            linestyle="none",
             label="\n".join(wrap(humanize.naturalsize(int(kernel_name)), 10)),
         )
 
-        # Store point data for annotation
         points_data.append((x_val, y_val, kernel_name))
 
         max_data_size = max(max_data_size, size)
         min_bandwidth = min(min_bandwidth, bandwidth)
 
-    # Plot roofline with distinct pattern
     ax.plot(
         [0.01, max_data_size * 1.1 / (2**20)],
         [
@@ -119,11 +111,10 @@ def plot_sweep(kernel_type, machine_roofline, kernel_metrics):
         ],
         linestyle="--",
         linewidth=2.5,
-        color="#000000",  # Black for maximum contrast
+        color="#000000",
         label="Roofline",
     )
 
-    # Add a text label directly on the roofline
     roofline_y = machine_roofline["memory_bandwidth"] / 1e9
     ax.text(
         math.exp(math.log(max_data_size / (2**20)) * 0.3),
@@ -133,40 +124,32 @@ def plot_sweep(kernel_type, machine_roofline, kernel_metrics):
         bbox=dict(facecolor="white", alpha=0.7, edgecolor="gray"),
     )
 
-    # Set axis limits
     ax.set_xlim(0.1, max_data_size * 1.1 / (2**20))
     ax.set_ylim(
         math.exp(math.log(min_bandwidth / (1e9)) * 0.9),
         machine_roofline["memory_bandwidth"] / 1e9 * 3,
     )
 
-    # Add gridlines for easier reading of values
     ax.grid(True, which="both", linestyle=":", alpha=0.5)
 
-    # Shrink current axis and position legend better
     box = ax.get_position()
     ax.set_position([box.x0, box.y0, box.width * 0.8, box.height])
 
-    # Create more accessible legend with larger font
     legend = ax.legend(
         loc="center left",
         bbox_to_anchor=(1, 0.5),
-        frameon=True,  # Add frame
-        framealpha=0.9,  # Make frame opaque
-        edgecolor="gray",  # Frame color
-        #        fontsize='medium'   # Increase font size
+        frameon=True,
+        framealpha=0.9,
+        edgecolor="gray",
     )
 
-    # Change the formatting of the axis tick labels
     formatter = ScalarFormatter()
-    formatter.set_scientific(False)  # Turn off scientific notation
-    formatter.set_useOffset(False)  # Don't use offset
+    formatter.set_scientific(False)
+    formatter.set_useOffset(False)
 
-    # Apply the formatter to both axes
     ax.xaxis.set_major_formatter(formatter)
     ax.yaxis.set_major_formatter(formatter)
 
-    # Save the figure
     save_to_file(fig, f"bandwidth_sweep_{kernel_type}.pdf")
 
 

@@ -1,15 +1,3 @@
-"""
-Unit tests for enqueue_coalesced_batch.
-
-Contract (see docs/openai-chat-completions-queue.md §6.3):
-- A coalesced batch is written to disk as one JSON file under
-  `upload_base_path`, named after the SHA-256 of its contents.
-- A single SQLite row referencing that file is enqueued via
-  `push_into_queue`.
-- Identical batches produce the same path (dedup property carries
-  over for free).
-"""
-
 import hashlib
 import json
 import os
@@ -24,7 +12,6 @@ from cray_infra.api.fastapi.chat_completions.enqueue_coalesced_batch import (
 
 @pytest.fixture
 def upload_dir(tmp_path, monkeypatch):
-    """Patch the config-fetcher so the helper writes into a tmp dir."""
     target = tmp_path / "inference_requests"
     target.mkdir()
 
@@ -84,7 +71,6 @@ async def test_filename_is_sha256_of_contents(upload_dir):
 
 @pytest.mark.asyncio
 async def test_identical_batches_produce_same_path(upload_dir):
-    """Dedup property: same content hashes to same path."""
     batch = [({"prompt": "same", "correlation_id": "c-a"}, "c-a")]
 
     with patch(
@@ -100,20 +86,12 @@ async def test_identical_batches_produce_same_path(upload_dir):
 
 @pytest.mark.asyncio
 async def test_empty_batch_raises(upload_dir):
-    """An empty batch is a programmer error from the coalescer."""
     with pytest.raises(ValueError):
         await enqueue_coalesced_batch([])
 
 
 @pytest.mark.asyncio
 async def test_lazy_creates_upload_dir_when_missing(tmp_path):
-    """
-    Regression: on a pod that has never received a /v1/generate upload,
-    upload_base_path doesn't exist yet (the /v1/generate path lazy-
-    creates it via get_request_path). Chat completions would crash with
-    FileNotFoundError on every request. Mirror the /v1/generate pattern
-    and lazy-create here too.
-    """
     target = tmp_path / "does-not-exist-yet"
     assert not target.exists()
 

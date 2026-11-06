@@ -1,11 +1,3 @@
-"""
-Tests for /v1/generate/metrics route handler. The mapping between
-SQLiteAckQueue state → reported queue_depth is the part most likely
-to silently regress (we shipped two bugs here already: len() didn't
-include unacked items, then len()+unack_count didn't account for the
-per-prompt fanout that push_into_queue records on each entry).
-"""
-
 import asyncio
 from unittest.mock import AsyncMock, patch
 
@@ -16,7 +8,6 @@ from cray_infra.generate import metrics as metrics_state
 
 
 def _fake_queue(pending_prompts: int = 0):
-    """Stand-in for InferenceWorkQueue exposing pending_request_count."""
     q = AsyncMock()
     q.pending_request_count = AsyncMock(return_value=pending_prompts)
     return q
@@ -34,11 +25,7 @@ def setup_function(_fn):
     _reset_metrics()
 
 
-# ---- queue depth surfaces per-prompt SDK work --------------------------
-
-
 def test_queue_depth_uses_pending_request_count():
-    # 7 prompts in flight → 7, regardless of how the worker batches.
     fake = _fake_queue(pending_prompts=7)
     with patch(
         "cray_infra.api.fastapi.generate.metrics.get_inference_work_queue",
@@ -57,11 +44,7 @@ def test_queue_depth_streaming_inflight_added_on_top():
         new=AsyncMock(return_value=fake),
     ):
         result = _drain(metrics())
-    # 4 SDK prompts + 2 streaming = 6
     assert result["queue_depth"] == 6
-
-
-# ---- error-path handling ----------------------------------------------
 
 
 def test_queue_depth_clamps_negative_to_zero():

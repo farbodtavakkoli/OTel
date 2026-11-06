@@ -16,7 +16,7 @@ def train(tmp_path_factory, monkeypatch_module):
     dotenv = types.ModuleType("dotenv")
     dotenv.load_dotenv = lambda *a, **k: None
     monkeypatch_module.setitem(sys.modules, "dotenv", dotenv)
-    path = pathlib.Path(__file__).resolve().parents[1] / "train.py"
+    path = pathlib.Path(__file__).resolve().parents[3] / "train.py"
     spec = importlib.util.spec_from_file_location("scalarlm_train_under_test", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -97,19 +97,19 @@ def test_schedule_client_rejects_unknown_scheduler(train, monkeypatch):
         train.parse_args()
 
 
-def test_sft_defaults_to_full_parameter_compensated_bf16(train, monkeypatch):
+def test_sft_defaults_to_full_parameter_adamw_bf16(train, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["train.py"])
     config = train.parse_args()
-    assert config.optimizer_type is None
+    assert config.optimizer_type == "adamw"
     args = train.build_train_args(config)
     assert args["adapter_type"] == "none"
     assert args["training_storage_dtype"] == "bfloat16"
-    assert args["optimizer_type"] == "compensated_adamw"
+    assert args["optimizer_type"] == "adamw"
     assert args["dtype"] == "auto"
 
 
-@pytest.mark.parametrize("storage,optimizer", [("float32", "adamw"), ("bfloat16", "compensated_adamw")])
-def test_sft_storage_override_infers_optimizer(train, monkeypatch, storage, optimizer):
+@pytest.mark.parametrize("storage,optimizer", [("float32", "adamw"), ("bfloat16", "adamw")])
+def test_sft_storage_override_defaults_to_adamw(train, monkeypatch, storage, optimizer):
     monkeypatch.setattr(sys, "argv", ["train.py", "--training_storage_dtype", storage])
     args = train.build_train_args(train.parse_args())
     assert args["training_storage_dtype"] == storage
@@ -117,7 +117,7 @@ def test_sft_storage_override_infers_optimizer(train, monkeypatch, storage, opti
 
 
 @pytest.mark.parametrize("storage", ["float32", "bfloat16"])
-@pytest.mark.parametrize("optimizer", ["compensated_adamw", "adamw", "sgd", "rmsprop"])
+@pytest.mark.parametrize("optimizer", ["adamw", "sgd", "rmsprop"])
 def test_sft_explicit_optimizer_is_preserved(train, monkeypatch, storage, optimizer):
     monkeypatch.setattr(sys, "argv", ["train.py", "--training_storage_dtype", storage,
                                       "--optimizer_type", optimizer, "--adapter_type", "lora"])
@@ -135,7 +135,7 @@ def test_nonlanguage_modes_keep_float32_adamw_defaults(train, monkeypatch, mode)
     assert args["optimizer_type"] == "adamw"
 
 
-@pytest.mark.parametrize("optimizer", [None, "adamw", "sgd"])
+@pytest.mark.parametrize("optimizer", [None, "adamw", "sgd", "rmsprop"])
 def test_older_namespace_without_storage_dtype_remains_supported(train, monkeypatch, optimizer):
     monkeypatch.setattr(sys, "argv", ["train.py"])
     config = train.parse_args()
@@ -143,7 +143,7 @@ def test_older_namespace_without_storage_dtype_remains_supported(train, monkeypa
     config.optimizer_type = optimizer
     args = train.build_train_args(config)
     assert args["training_storage_dtype"] == "bfloat16"
-    assert args["optimizer_type"] == (optimizer or "compensated_adamw")
+    assert args["optimizer_type"] == (optimizer or "adamw")
 
 
 @pytest.mark.parametrize("flag", ["--training_storage_dtype", "--optimizer_type"])

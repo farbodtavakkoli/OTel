@@ -31,7 +31,6 @@ def main():
                 lines=arguments.lines,
             )
         else:
-            # Default behavior: training job logs
             view_logs(
                 model_name=arguments.model,
                 tail=arguments.tail,
@@ -56,7 +55,7 @@ def main():
 
     elif arguments.command == "cancel":
         cancel(model_name=arguments.model)
-    
+
     elif arguments.command == "delete":
         delete(model_name=arguments.model)
 
@@ -76,7 +75,6 @@ def setup_logging():
 def parse_arguments():
     parser = ArgumentParser(description="The command line interface for MasInt ScalarLM")
 
-    # Add a subparser for the 'logs' command
     subparsers = parser.add_subparsers(dest="command")
 
     add_logs_parser(subparsers)
@@ -96,10 +94,9 @@ def parse_arguments():
 def add_logs_parser(subparsers):
     logs_parser = subparsers.add_parser("logs", help="View logs")
 
-    # Add optional positional argument for service name
     logs_parser.add_argument(
         "service_name",
-        nargs="?",  # Makes it optional
+        nargs="?",
         default=None,
         help="The name of the service to view logs for (optional)"
     )

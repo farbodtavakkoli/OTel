@@ -7,26 +7,13 @@ import { getAlias, subscribe } from "@/stores/aliases";
 interface ModelPickerProps {
   value: string;
   onChange: (model: string) => void;
-  /** If true, first change on a non-empty conversation warns via the caller. */
   locked?: boolean;
 }
 
-/**
- * Sorts a model list into:
- *   1. The deployment's base model (from api-config.json::default_model)
- *   2. Post-trained adapters, most recently registered first
- *   3. Anything else, in upstream order
- *
- * A virtual "latest" entry is prepended so users can always resolve to the
- * newest trained model without knowing its hash. ScalarLM's backend accepts
- * model: "latest" and resolves it via get_latest_model() — see generate.py:51.
- */
 export function ModelPicker({ value, onChange, locked }: ModelPickerProps) {
   const { data, isPending, error } = useModels();
   const { default_model } = getApiConfig();
 
-  // Re-render dropdown labels when aliases change. Monotonic signal so
-  // getSnapshot returns a stable value until an actual alias edit fires.
   useSyncExternalStore(subscribeAliasVersion, getAliasVersion, getAliasVersion);
 
   const options = useMemo<SortedModels>(() => {
@@ -100,7 +87,6 @@ function sortModels(
 
 function labelForModel(m: OpenAIModel): string {
   const alias = getAlias(m.id);
-  // Adapter IDs are SHA-256 hashes — shortened for a dense dropdown display.
   const shortId = m.id.length > 20 ? `${m.id.slice(0, 12)}…` : m.id;
   const head = alias ? `${alias} (${m.id.slice(0, 8)})` : shortId;
   if (!m.created) return head;
@@ -108,10 +94,6 @@ function labelForModel(m: OpenAIModel): string {
   return `${head} · ${ago}`;
 }
 
-// Monotonic signal for useSyncExternalStore. The subscribe wrapper bumps the
-// counter before invoking React's listener, so getSnapshot returns a value
-// that's === stable between edits (avoiding infinite re-renders) but changes
-// when any alias is edited.
 let aliasVersion = 0;
 function subscribeAliasVersion(listener: () => void): () => void {
   return subscribe(() => {

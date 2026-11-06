@@ -4,11 +4,8 @@ import clsx from "clsx";
 interface MenuItem {
   label: string;
   onClick: () => void;
-  /** Style the item as destructive. */
   danger?: boolean;
-  /** Disable the item (e.g., no conversation to delete). */
   disabled?: boolean;
-  /** Optional kbd label rendered on the right. */
   hint?: string;
 }
 
@@ -16,11 +13,6 @@ interface ConversationMenuProps {
   items: MenuItem[];
 }
 
-/**
- * Lightweight "⋯" popover used in the conversation header. Close on outside
- * click, Escape, or item activation. No portal — the popover sits directly
- * below the trigger; at the header's z-index the small overflow is fine.
- */
 export function ConversationMenu({ items }: ConversationMenuProps) {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);

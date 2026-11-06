@@ -34,16 +34,6 @@ async def launch_training_job(train_args: Dict):
 
 
 def validate_gpu_request(train_args: Dict):
-    """
-    Reject a GPU-requesting job up front when no SLURM node has a GPU.
-    Without this, sbatch happily queues the job and it sits PENDING
-    forever (or worse, runs on CPU silently with the
-    `--gres=gpu` flag dropped). Raising here surfaces the mismatch
-    to the SDK caller as a 400 instead of a phantom-pending job.
-
-    `gpus: 0` in the job config opts out of the check for legit
-    CPU-only training.
-    """
     requested_gpus = train_args.get("gpus", 1)
     if requested_gpus < 1:
         return
@@ -62,7 +52,6 @@ def validate_gpu_request(train_args: Dict):
 async def wait_for_slurm():
     config = get_config()
 
-    # wait up to 30 seconds for slurm to be ready
     start_time = time.time()
 
     while time.time() - start_time < config.get("slurm_wait_time", 30):
@@ -106,7 +95,6 @@ def start_slurm_job(train_args):
 
 
 def create_slurm_run_command(train_args):
-
     run_command = ["sbatch"]
 
     tasks_per_node = get_tasks_per_node(train_args)
@@ -120,9 +108,6 @@ def create_slurm_run_command(train_args):
     run_command += [f"--nodes={node_count}"]
     logger.info(f"node_count: {node_count}")
 
-    # PR #5: give the job the whole node. A training job already asks for every
-    # GPU it intends to use, and letting an unrelated job land on the same node
-    # perturbs both the collectives and any timing measured from them.
     run_command += ["--exclusive"]
 
     cpu_per_task = get_cpu_per_task(train_args)
@@ -133,14 +118,6 @@ def create_slurm_run_command(train_args):
     run_command += [f"--time={train_time_limit}"]
     logger.info(f"train_time_limit: {train_time_limit}")
 
-    # `--signal=B:TERM@grace` makes SLURM send SIGTERM to the batch
-    # shell `grace` seconds before the slice's --time runs out. The
-    # bash entrypoint `exec`s mpirun, so this signal lands on mpirun
-    # directly; mpirun forwards to ranks; the trainer's SIGTERM handler
-    # sets stop_flag, the loop drains and checkpoints cleanly.
-    # restart_megatron_jobs (the API server's periodic reconciler)
-    # then sees the job missing from squeue with status=TRAINING and
-    # queues the next slice — see docs/training-lifecycle.md §5.4.
     signal_grace = get_config().get("signal_grace_seconds", 300)
     run_command += [f"--signal=B:TERM@{signal_grace}"]
 
@@ -164,14 +141,12 @@ def get_train_job_entrypoint(train_args: Dict):
     config = get_config()
     train_job_entrypoint_script = config["train_job_entrypoint"]
 
-    # Copy the script to the job directory
     job_directory = get_training_job_directory(train_args)
 
     train_job_entrypoint = os.path.join(job_directory, "train_job_entrypoint.sh")
 
     shutil.copyfile(train_job_entrypoint_script, train_job_entrypoint)
 
-    # Replace the REPLACE_CONFIG_PATH with the config path within the job directory
     with open(train_job_entrypoint, "r") as f:
         entrypoint_script = f.read()
 
@@ -266,14 +241,6 @@ def get_total_cpu_count_from_slurm():
 
 
 def get_train_time_limit(train_args: Dict):
-    # Returns the per-SLURM-slice --time, NOT the user's total training
-    # budget. `train_args["timeout"]` is the total time the user wants
-    # the job to run for; each SLURM slice is capped at max_train_time
-    # (cluster's hard cap on a single job). On per-slice timeout the
-    # trainer checkpoints, exits, and restart_megatron_jobs requeues
-    # (docs/training-lifecycle.md §5.4). TimeoutCallback stops
-    # training once accumulated elapsed across slices reaches
-    # `train_args["timeout"]`.
     train_time = train_args.get("timeout", None)
 
     config = get_config()
@@ -286,7 +253,6 @@ def get_train_time_limit(train_args: Dict):
     else:
         train_time = min(train_time, max_train_time)
 
-    # convert seconds to DD:HH:MM:SS
     return format_timedelta(
         datetime.timedelta(seconds=train_time + extra_training_seconds)
     )
@@ -300,7 +266,6 @@ def format_timedelta(delta):
 
 
 def run_sbatch(run_command, train_args):
-
     clean_environs = os.environ.copy()
     clean_environs = {
         k: v for k, v in clean_environs.items() if not k.startswith("PMI")

@@ -25,7 +25,6 @@ def benchmark_backward():
 
 
 def run_backward_benchmark():
-
     models = select_appropriate_models_for_this_machine()
 
     warmup(
@@ -60,19 +59,16 @@ def warmup(model_name, batch_size, input_tokens):
 
 
 def run_backward(model_name, batch_size, input_tokens):
-
     model = AutoModelForCausalLM.from_pretrained(model_name)
 
     model.to(torch.bfloat16)
     model.to(get_device())
 
-    # Input tokens are randomly generated ints between 0 and the model's vocab size
     input_ids = torch.randint(
         low=0, high=model.config.vocab_size, size=(batch_size, input_tokens),
         device=get_device()
     )
 
-    # Run the backward pass
     start = time.time()
     iterations = 0
     while time.time() - start < 3:
@@ -108,24 +104,19 @@ def run_backward(model_name, batch_size, input_tokens):
 
 
 def calculate_flop_count(model, batch_size, input_tokens):
-    # parameter count
     param_count = sum(p.numel() for p in model.parameters())
 
-    # GEMM flops
     gemm_flops = 3 * 2 * batch_size * (input_tokens) * param_count
 
     return gemm_flops
 
 
 def calculate_byte_count(model, batch_size, input_tokens):
-    # parameter count
     param_count = sum(p.numel() for p in model.parameters())
 
-    # Get the number of bytes in the model
-    model_byte_count = param_count * 2  # 2 bytes per bfloat16
+    model_byte_count = param_count * 2
 
-    # Input and output byte count
-    input_byte_count = batch_size * input_tokens * 4  # 4 bytes per int32
+    input_byte_count = batch_size * input_tokens * 4
 
     return input_byte_count + model_byte_count
 
@@ -138,7 +129,6 @@ def get_device():
 
 
 def save_results(results):
-    # Save results to a json file
     path = "/app/cray/data/benchmark_backward.json"
 
     with open(path, "w") as f:
@@ -146,15 +136,9 @@ def save_results(results):
 
 
 def select_appropriate_models_for_this_machine():
-    # Run a GEMM operation to determine the peak GEMM flops of the machine
-    # This will be used to determine which models to run the benchmark on
-
     gemm_flops = calculate_gemm_flops()
 
     logger.info(f"Peak GEMM performance: {gemm_flops / 1e12} TFLOP/s")
-
-    # Machines with over 1TFLOP/s peak GEMM performance can run the llama models
-    # Over 10 TFLOP/s can run the 70B model
 
     if gemm_flops > 10e12:
         return benchmark_model_list

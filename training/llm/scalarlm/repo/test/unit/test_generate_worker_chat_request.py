@@ -1,5 +1,3 @@
-"""Queue-backed chat requests must retain vLLM's structured semantics."""
-
 import json
 from unittest.mock import AsyncMock, MagicMock
 

@@ -21,9 +21,6 @@ for _p in (os.environ.get("GRPO_COMMON_DIR"), os.path.join(HERE, "..", "grpo_com
     if _p and os.path.isdir(_p) and _p not in sys.path:
         sys.path.insert(0, os.path.abspath(_p))
 
-# Selects how GPUs are granted to the container and how --render-nodes entries are read; see the
-# GPU selection table in README.md. SCALARLM_LOOP_TRAIN_ROCR_DEVICES indexes into the granted set,
-# which the container sees renumbered from 0 on either platform.
 PLATFORM = os.environ.get("GRPO_PLATFORM", "rocm")
 
 
@@ -94,7 +91,7 @@ def turn_end_string(tok) -> str:
                                        tokenize=False, add_generation_prompt=False)
         tail = text.split(marker, 1)[1].strip()
         return tail or (tok.eos_token or "")
-    except Exception:  # noqa: BLE001
+    except Exception:
         return tok.eos_token or ""
 
 
@@ -104,7 +101,7 @@ def http_json(url, payload=None, timeout=600.0, method=None):
                                  method=method or ("POST" if data is not None else "GET"))
     with urllib.request.urlopen(req, timeout=timeout) as r:
         body = r.read().decode()
-    if body.startswith("data:"):  # the OpenAI proxy answers with an SSE media type but a plain JSON body
+    if body.startswith("data:"):
         body = body[len("data:"):].strip()
     return json.loads(body)
 
@@ -121,7 +118,7 @@ def wait_health(api_url: str, timeout_s: float, poll_s: float = 5.0) -> dict:
             last = health(api_url, timeout=5)
             if last.get("all") == "up":
                 return last
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             last = repr(e)
         time.sleep(poll_s)
     raise TimeoutError(f"ScalarLM at {api_url} not healthy after {timeout_s:.0f}s: {last}")
@@ -161,7 +158,7 @@ def rollout(api_url, model, rendered_prompts, G, max_tokens, seed_base, concurre
             try:
                 return completion_request(api_url, model, rendered_prompts[pi], max_tokens,
                                           seed_base + pi * 1000 + gi, want_logprobs, temperature)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 err = e
                 time.sleep(2.0 * (attempt + 1))
         return {"text": "", "finish_reason": "error", "completion_tokens": 0, "error": repr(err),
@@ -193,7 +190,6 @@ def wait_for_job(api_url, model_name, poll_s=2.0, timeout_s=7200):
             if last == "FAILED":
                 raise RuntimeError(f"training job FAILED: {json.dumps(status)[:2000]}")
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
-            # transient: the API server stalls while a job logs; the timeout_s budget still bounds us
             print(f"    poll error {e}", flush=True)
         time.sleep(poll_s)
     raise TimeoutError(f"job {model_name} not COMPLETED after {timeout_s}s")
@@ -288,7 +284,7 @@ def generate(api_url, model_name, prompt, max_tokens=8, temperature=0.0, timeout
             if res.get("response") is not None:
                 return time.time() - t0, res["response"]
             ids = [r["request_id"] for r in out["results"]]
-            while time.time() - t0 < timeout_s:  # the API returns after its response_timeout with None
+            while time.time() - t0 < timeout_s:
                 r0 = http_json(f"{api_url}/v1/generate/get_results", {"request_ids": ids}, timeout=300)["results"][0]
                 if r0.get("error"):
                     raise RuntimeError(r0["error"])
@@ -297,7 +293,7 @@ def generate(api_url, model_name, prompt, max_tokens=8, temperature=0.0, timeout
                 time.sleep(0.5)
         except urllib.error.HTTPError as e:
             body = e.read().decode(errors="replace")[:300]
-            if e.code == 404:  # not registered yet
+            if e.code == 404:
                 time.sleep(1.0)
                 continue
             raise RuntimeError(f"generate against {model_name}: HTTP {e.code} {body}")
@@ -362,10 +358,6 @@ def group_advantages(rewards, G, keep_zero_spread=False):
 
 
 def model_revision(model_dir: str) -> str:
-    # The trainer resolves the model through snapshot_download with HF_HUB_OFFLINE=1, so the cache
-    # entry needs a revision id. Any stable 40-hex string works: it only names a directory and is
-    # written to refs/main. The derived id must stay deterministic, or the same checkpoint remaps
-    # to a new cache entry on every run.
     rev_file = os.path.join(model_dir, "HF_REVISION")
     if os.path.exists(rev_file):
         with open(rev_file) as f:
@@ -414,7 +406,6 @@ def server_command(name, image, model_name, model_dir, mount, hf_cache, jobs_dir
             "-e", 'SCALARLM_LIMIT_MM_PER_PROMPT={"image":0,"audio":0}',
             "-e", f"SCALARLM_VLLM_ARGS={vllm_args}",
             "-e", f"SCALARLM_LOOP_TRAIN_ROCR_DEVICES={train_rocr}",
-            # read by train_job_entrypoint_gpu_pinned.sh to choose ROCR_ vs CUDA_VISIBLE_DEVICES
             "-e", f"GRPO_PLATFORM={PLATFORM}",
             "-e", "HF_HUB_OFFLINE=1", "-e", "TRANSFORMERS_OFFLINE=1", "-e", "HF_DATASETS_CACHE=/tmp/hf_datasets",
             "-v", f"{os.path.abspath(model_dir)}:{mount}:ro",
@@ -576,7 +567,6 @@ def peft_check(job_dir: str, out_dir: str, base: str, prompts: list, max_new_tok
 
 
 def _cli():
-    # Image-only, not host: these checks need torch and peft, which the client venv does not carry.
     ap = argparse.ArgumentParser(description="Checkpoint-level adapter checks, run inside the ScalarLM image.",
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -622,8 +612,8 @@ def parse_args():
     p.add_argument("--concurrency", type=int, default=256, help="parallel /v1/completions requests")
     p.add_argument("--adapter-type", choices=("none", "lora"), default="lora")
     p.add_argument("--training-storage-dtype", choices=("bfloat16", "float32"), default="bfloat16")
-    p.add_argument("--optimizer-type", choices=("compensated_adamw", "adamw", "sgd", "rmsprop"), default=None,
-                   help="default: compensated_adamw for bfloat16 storage, adamw for float32")
+    p.add_argument("--optimizer-type", choices=("adamw", "sgd", "rmsprop"), default="adamw",
+                   help="default: adamw for all training storage dtypes")
     p.add_argument("--lora-r", type=int, default=16)
     p.add_argument("--lora-alpha", type=int, default=32)
     p.add_argument("--lora-regex", default=None, help="PEFT target_modules regex (default: derived from the model class)")
@@ -668,8 +658,6 @@ def parse_args():
     v.add_argument("--verify-prompt", action="append", default=None)
     p.add_argument("--dry-run", action="store_true", help="print the server command, train_args and plan, then exit")
     args = p.parse_args()
-    args.optimizer_type = args.optimizer_type or (
-        "compensated_adamw" if args.training_storage_dtype == "bfloat16" else "adamw")
     args.model = os.path.abspath(args.model)
     args.model_name = args.model_name or served_model_name(args.model)
     args.jobs_dir = os.path.abspath(args.jobs_dir or os.path.join(args.output_dir, "jobs"))

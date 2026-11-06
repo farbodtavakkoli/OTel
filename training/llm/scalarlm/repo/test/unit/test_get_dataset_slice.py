@@ -1,11 +1,3 @@
-"""
-Unit tests for infra/cray_infra/training/get_dataset_slice.py.
-
-Contract under test: ui/docs/dataset-viewer.md §API. The endpoint is
-thin — a pagination + substring-filter wrapper around dataset.jsonlines
-— so these tests stand in for a component-layer test of the HTTP route.
-"""
-
 import json
 import os
 from unittest.mock import patch
@@ -44,9 +36,6 @@ def resolve(job_dir):
         yield
 
 
-# ---- happy-path pagination -----------------------------------------------
-
-
 def test_unfiltered_slice_returns_first_page(job_dir, resolve):
     _write_dataset(
         job_dir, [{"input": f"in-{i}", "output": f"out-{i}"} for i in range(10)]
@@ -69,7 +58,6 @@ def test_unfiltered_slice_respects_offset(job_dir, resolve):
 
     result = get_dataset_slice("deadbeef", offset=7, limit=5)
 
-    # Only 3 rows past offset=7 in a 10-row file.
     assert [e["index"] for e in result["examples"]] == [7, 8, 9]
     assert result["total"] == 10
 
@@ -79,9 +67,6 @@ def test_empty_file_returns_zero_total(job_dir, resolve):
     result = get_dataset_slice("deadbeef")
     assert result["total"] == 0
     assert result["examples"] == []
-
-
-# ---- substring filter ----------------------------------------------------
 
 
 def test_filter_matches_case_insensitive(job_dir, resolve):
@@ -105,7 +90,6 @@ def test_filter_offset_applies_to_matches_not_lines(job_dir, resolve):
     rows = [{"input": "miss"}] * 20 + [{"input": "hit"}] * 5 + [{"input": "miss"}] * 5
     _write_dataset(job_dir, rows)
 
-    # Skip the first 2 matches, take the next 10 (only 3 remain).
     result = get_dataset_slice("deadbeef", offset=2, limit=10, q="hit")
 
     assert result["matched"] == 5
@@ -119,9 +103,6 @@ def test_filter_with_no_matches_returns_empty(job_dir, resolve):
     assert result["examples"] == []
 
 
-# ---- robustness ----------------------------------------------------------
-
-
 def test_malformed_line_is_counted_but_not_parsed(job_dir, resolve):
     path = os.path.join(job_dir, "dataset.jsonlines")
     with open(path, "w") as f:
@@ -133,12 +114,10 @@ def test_malformed_line_is_counted_but_not_parsed(job_dir, resolve):
 
     assert result["total"] == 3
     assert [e["index"] for e in result["examples"]] == [0, 1, 2]
-    # The middle row surfaces the parse error rather than vanishing.
     assert "__parse_error__" in result["examples"][1]["raw"]
 
 
 def test_long_field_is_clipped(job_dir, resolve, monkeypatch):
-    # Shrink the clip so the test doesn't need to write megabytes.
     monkeypatch.setattr(slice_mod, "MAX_FIELD_BYTES", 16)
 
     huge = "x" * 1000
@@ -153,7 +132,6 @@ def test_long_field_is_clipped(job_dir, resolve, monkeypatch):
 
 
 def test_truncated_flag_set_when_scan_exceeds_budget(job_dir, resolve, monkeypatch):
-    # Force the scan-budget tripwire to fire after a few rows.
     monkeypatch.setattr(slice_mod, "MAX_MATCH_SCAN_BYTES", 64)
 
     _write_dataset(
@@ -167,11 +145,7 @@ def test_truncated_flag_set_when_scan_exceeds_budget(job_dir, resolve, monkeypat
     assert result["total"] < 50
 
 
-# ---- errors --------------------------------------------------------------
-
-
 def test_missing_dataset_returns_404(job_dir, resolve):
-    # Directory exists (resolve fixture), but no dataset.jsonlines inside.
     with pytest.raises(HTTPException) as exc:
         get_dataset_slice("deadbeef")
     assert exc.value.status_code == 404

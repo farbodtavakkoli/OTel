@@ -61,13 +61,11 @@ async def upload(request: Request):
 
         request_path = get_request_path(file_hash.hexdigest())
 
-        # skip the move if the file already exists
         if os.path.exists(request_path):
             os.remove(temp_filepath)
             logger.info(f"File with hash {file_hash.hexdigest()} already exists, skipping")
             return UploadResult(request_id=file_hash.hexdigest())
 
-        # rename the file to its final destination
         os.makedirs(os.path.dirname(request_path), exist_ok=True)
         shutil.move(temp_filepath, request_path)
 
@@ -90,7 +88,6 @@ async def upload(request: Request):
             detail=f"Maximum file size limit ({max_file_size} bytes) exceeded",
         )
     except Exception as e:
-        # Log the backtrace
         logger.exception(e)
 
         raise HTTPException(
@@ -129,7 +126,7 @@ def get_file_hash(filepath: str) -> hashlib._hashlib.HASH:
     sha256 = hashlib.sha256()
     with open(filepath, "rb") as f:
         while True:
-            data = f.read(65536)  # Read in 64k chunks
+            data = f.read(65536)
             if not data:
                 break
             sha256.update(data)

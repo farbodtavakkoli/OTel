@@ -1,19 +1,3 @@
-"""
-Read-only listing of inference request files persisted to
-`upload_base_path`. See docs/inference-request-browser.md §4.1.
-
-The shape on disk is three files per group_request_id (the SHA-256 of
-the request batch contents):
-  - `{hash}.json`        — the request batch (list of request dicts)
-  - `{hash}_response.json` — the responses (or absent if still in flight)
-  - `{hash}_status.json`   — the in_progress / completed marker
-
-We treat `{hash}.json` as the canonical row. A status file with no
-matching request file is dropped from the listing — that situation
-shouldn't occur in normal operation, and surfacing it would be
-misleading because there's nothing to display.
-"""
-
 import json
 import logging
 import os
@@ -45,14 +29,9 @@ async def list_requests(cursor: float | None, limit: int) -> dict[str, Any]:
         return {"rows": [], "next_cursor": None, "has_more": False}
 
     entries = _scan_request_entries(base_path)
-    # Newest first. Stable sort keeps deterministic order on mtime ties.
     entries.sort(key=lambda e: e[1], reverse=True)
 
     if cursor is not None:
-        # Cursor is the mtime of the last row from the previous page.
-        # Strict-less keeps us from double-listing it. Float equality
-        # would only collide on exact-tie mtimes; we accept the tiny
-        # risk of skipping a tied row over the bigger risk of dups.
         entries = [e for e in entries if e[1] < cursor]
 
     page = entries[:limit]
@@ -112,11 +91,6 @@ def _build_row(name: str, mtime: float, base_path: str) -> dict[str, Any]:
 
 
 def _peek_request_file(path: str) -> tuple[int, str, str, str]:
-    """
-    Read just enough of the request file to populate the listing row.
-    Truncated/corrupt files return placeholders rather than 500ing —
-    surfacing the row's existence is more useful than hiding it.
-    """
     try:
         with open(path) as f:
             data = json.load(f)

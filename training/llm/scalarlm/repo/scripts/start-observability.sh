@@ -1,13 +1,10 @@
 #!/bin/bash
-# Start observability stack (auto-detects CPU vs NVIDIA GPU)
-
 set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 COMPOSE_FILE="$PROJECT_ROOT/docker-compose.observability.yaml"
 
-# Allow override via command line argument
 FORCE_MODE="${1:-}"
 
 echo "========================================"
@@ -15,7 +12,6 @@ echo "ScalarLM Observability Stack Startup"
 echo "========================================"
 echo ""
 
-# Detect if NVIDIA GPU is available (unless overridden)
 if [ "$FORCE_MODE" = "gpu" ] || [ "$FORCE_MODE" = "nvidia" ]; then
     echo "✓ GPU mode (forced via argument)"
     echo "  Starting observability stack WITH GPU metrics (DCGM exporter)"
@@ -44,11 +40,9 @@ else
     PROM_CONFIG="prometheus-cpu.yml"
 fi
 
-# Copy the appropriate Prometheus config
 echo "Configuring Prometheus with $PROM_CONFIG..."
 cp "$PROJECT_ROOT/deployment/observability/$PROM_CONFIG" "$PROJECT_ROOT/deployment/observability/prometheus.yml"
 
-# Start services
 echo "Starting services..."
 cd "$PROJECT_ROOT"
 docker-compose -f docker-compose.observability.yaml $PROFILE up -d
@@ -65,7 +59,6 @@ echo ""
 echo "Waiting 10 seconds for services to initialize..."
 sleep 10
 
-# Verify services are running
 echo ""
 echo "Service Status:"
 docker-compose -f docker-compose.observability.yaml ps

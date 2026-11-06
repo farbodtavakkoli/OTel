@@ -1,22 +1,10 @@
-"""
-Pin the contract for `format_exception`.
-
-Production motivation: `str(AssertionError())` is `""`, and vLLM's
-`request_output_to_completion_response` has a bare assert
-(serving.py:481). The empty string then propagated through
-finish_work and the chat completions wrapper as `error: ""`,
-surfacing to the client as a 200 OK with empty `content` — silent
-"success" for what was actually a hard failure.
-"""
-
 from cray_infra.one_server.format_exception import format_exception
 
 
 def test_carries_type_when_str_is_empty():
-    """Bare AssertionError — the production case that surfaced this."""
     out = format_exception(AssertionError())
     assert out == "AssertionError"
-    assert out  # non-empty — the whole point
+    assert out
 
 
 def test_carries_type_for_keyerror_with_empty_string_arg():
@@ -37,8 +25,6 @@ def test_includes_message_for_assertion_with_text():
 
 
 def test_handles_nested_exception_chain():
-    """A wrapped exception carries the outer type/repr; the chain is
-    preserved by exc_info logging elsewhere, not here."""
     try:
         try:
             raise ValueError("inner")
@@ -51,8 +37,6 @@ def test_handles_nested_exception_chain():
 
 
 def test_never_returns_empty_string():
-    """The whole point: any exception, no matter how empty, gets a
-    non-empty diagnostic. Otherwise the silent-success bug recurs."""
     for exc in (
         Exception(),
         AssertionError(),

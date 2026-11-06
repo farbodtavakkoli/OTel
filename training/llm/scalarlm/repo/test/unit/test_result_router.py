@@ -1,15 +1,3 @@
-"""
-Unit tests for ResultRouter.
-
-Contract (see docs/openai-chat-completions-queue.md §8):
-- register(cid) creates a Future under that correlation id.
-- resolve(cid, result) sets the Future's result and removes the entry.
-- unregister(cid) removes the entry without resolving (for client disconnect).
-- in_flight_count gauges currently-registered ids.
-- resolve on an unknown cid is a silent no-op (post-disconnect race).
-- register on a duplicate cid is a programmer error (raises).
-"""
-
 import asyncio
 
 import pytest
@@ -34,10 +22,6 @@ async def test_register_returns_future_pending_until_resolve():
 
 @pytest.mark.asyncio
 async def test_resolve_unknown_cid_is_silent_no_op():
-    """
-    Worker may produce a result for a cid whose handler already
-    disconnected. That's normal; resolve must not raise.
-    """
     router = ResultRouter()
     router.resolve("never-registered", {"answer": 0})
     assert router.in_flight_count == 0
@@ -45,7 +29,6 @@ async def test_resolve_unknown_cid_is_silent_no_op():
 
 @pytest.mark.asyncio
 async def test_unregister_removes_without_resolving():
-    """Client-disconnect path: drop the future, don't set a result."""
     router = ResultRouter()
     cid = "req-2"
     future = router.register(cid)
@@ -54,14 +37,12 @@ async def test_unregister_removes_without_resolving():
 
     assert router.in_flight_count == 0
     assert not future.done()
-    # A subsequent resolve under that cid must not raise either.
     router.resolve(cid, {"answer": "late"})
     assert not future.done()
 
 
 @pytest.mark.asyncio
 async def test_duplicate_register_raises():
-    """A repeated cid is a bug in the caller; surface it loudly."""
     router = ResultRouter()
     router.register("dup")
     with pytest.raises(KeyError):
@@ -85,10 +66,6 @@ async def test_in_flight_count_tracks_concurrent_registrations():
 
 @pytest.mark.asyncio
 async def test_handler_workflow_resolve_unblocks_awaiter():
-    """
-    End-to-end shape of the production flow: handler awaits the future,
-    a separate task simulates the worker calling resolve.
-    """
     router = ResultRouter()
     cid = "req-await"
     future = router.register(cid)

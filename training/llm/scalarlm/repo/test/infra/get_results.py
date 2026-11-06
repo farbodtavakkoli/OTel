@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 class TestGetResults(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-
         logger.info("Starting server")
 
         self.app = await start_cray_server(server_list=["api", "vllm"])
@@ -43,10 +42,6 @@ class TestGetResults(unittest.IsolatedAsyncioTestCase):
         for r in new_results["results"]:
             self.assertTrue(r["request_id"] in ids)
 
-
     async def asyncTearDown(self):
         logger.debug("Shutting down server")
         await self.app.shutdown()
-
-
-

@@ -11,7 +11,6 @@ def get_latest_checkpoint_path():
     job_config = get_job_config()
     job_path = job_config["job_directory"]
 
-    # Checkpoints are named checkpoint_<step>.pt; the latest is the highest step count.
     checkpoint_files = [
         f
         for f in os.listdir(job_path)
@@ -32,7 +31,6 @@ def delete_old_checkpoints():
     job_config = get_job_config()
     job_path = job_config["job_directory"]
 
-    # Checkpoints are named checkpoint_<step>.pt; the latest is the highest step count.
     checkpoint_files = [
         f
         for f in os.listdir(job_path)

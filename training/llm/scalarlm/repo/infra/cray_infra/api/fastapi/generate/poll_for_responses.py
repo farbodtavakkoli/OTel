@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 
 
 async def poll_for_responses(group_request_id):
-
     request_ids = get_request_ids(group_request_id)
 
     config = get_config()
@@ -70,19 +69,16 @@ async def poll_for_responses(group_request_id):
 
         await asyncio.sleep(0.1)
 
-    # set the response to None for any requests that did not finish
     for request_id in request_ids:
         if request_id not in responses_so_far:
             logger.info(f"Request {request_id} did not finish in time")
             responses.results.append(Result(request_id=request_id, response=None))
 
-    # Sort the responses by request_id, with None responses at the end
     responses.results.sort(key=lambda x: (x.request_id is None, x.request_id))
 
     return responses
 
 def truncate_fields(response):
-    # Limit the length of the prompt and error fields to 100 characters
     response = copy.deepcopy(response)
     response["prompt"] = str(response.get("prompt", ""))[:100]
     response["error"] = str(response.get("error", ""))[:100]
@@ -101,7 +97,6 @@ def get_request_ids(group_request_id):
     return request_ids
 
 async def get_results(group_request_id, total_requests):
-
     path = group_request_id_to_response_path(group_request_id)
 
     if not os.path.exists(path):
