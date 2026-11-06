@@ -137,20 +137,15 @@ ScalarLM deploys any Hugging Face-hosted model. The following have been validate
 
 ## Docker Support
 
-### Prebuilt Containers
+### Current Images
 
-| Target | Container | Latest Release |
-|---|---|---|
-| NVIDIA H100 | `farbodatdocker/scalarlm` | `farbodatdocker/scalarlm:h100-v2.3` |
-| AMD MI355 | `farbodatdocker/scalarlm` | `farbodatdocker/scalarlm:mi355-v1.8` |
-| AWS Trainium2 | `farbodatdocker/scalarlm` | `farbodatdocker/scalarlm:trainium2-v1.0` |
-| NVIDIA BLACKWELL | `gdiamos/scalarlm-nvidia-12.0:latest` | `gdiamos/scalarlm-nvidia-12.0:v1.0` |
-| NVIDIA HOPPER | `gdiamos/scalarlm-nvidia-8.0:latest` | `gdiamos/scalarlm-nvidia-8.0:v1.0` |
-| NVIDIA HOPPER | `gdiamos/scalarlm-nvidia-8.6:latest` | `gdiamos/scalarlm-nvidia-8.6:v1.0` |
-| NVIDIA ADA | `gdiamos/scalarlm-nvidia-7.5:latest` | `gdiamos/scalarlm-nvidia-7.5:1.0` |
-| ARM | `gdiamos/scalarlm-arm:latest` | `gdiamos/scalarlm-arm:v1.0` |
-| AMD MI300 | `gdiamos/scalarlm-amd-mi300:latest` | `gdiamos/scalarlm-amd-mi300:v1.0` |
-| x86 CPU | `gdiamos/scalarlm-cpu:latest` | `gdiamos/scalarlm-cpu:v1.0` |
+See the [canonical hardware image table](../readme_scalarlm.md#server-image)
+for AMD MI355X, NVIDIA H100, AWS Trainium2 and the preserved upstream
+BLACKWELL, HOPPER, ADA, ARM, AMD MI300 and x86 CPU references.
+Upstream names and tags retain their original spelling; availability and hardware
+validation were not checked here. H100 is local only and has not been pushed.
+Trainium2 is a pending build target,
+not an available image.
 
 ### Quick Docker Start
 

@@ -13,6 +13,8 @@ HERE = Path(__file__).resolve().parents[3]
 @pytest.fixture
 def modules(monkeypatch):
     def load(name, filename):
+        if not (HERE / filename).is_file():
+            pytest.skip(f"Client {filename} is not shipped in the server image")
         spec = importlib.util.spec_from_file_location(name, HERE / filename)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
