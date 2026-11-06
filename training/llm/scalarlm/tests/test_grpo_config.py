@@ -2,6 +2,7 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+import types
 
 import pytest
 
@@ -32,6 +33,43 @@ def cli(monkeypatch, tmp_path):
         return utils.parse_args()
 
     return parse
+
+
+@pytest.mark.parametrize("selected", [None, "haiku_reward"])
+def test_loop_selects_reward_module_and_records_its_rubric(modules, cli, monkeypatch, selected):
+    utils, driver = modules
+    args = cli(utils, "--steps", "0", "--warmup-steps", "0")
+    if selected is None:
+        monkeypatch.delenv("GRPO_JUDGE_MODULE", raising=False)
+    else:
+        monkeypatch.setenv("GRPO_JUDGE_MODULE", selected)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("zero-cycle reward selection must not score, roll out, or train")
+
+    for name in ("judge_reward", "haiku_reward"):
+        reward = types.ModuleType(name)
+        reward.RUBRIC_VERSION = f"test-{name}"
+        reward.score_batch = forbidden
+        monkeypatch.setitem(sys.modules, name, reward)
+    for name in ("rollout", "submit_training_job", "sync_adapter"):
+        monkeypatch.setattr(utils, name, forbidden)
+    output = Path(args.output_dir)
+    output.mkdir()
+    summary = driver.run_loop(args, [], "", driver.base_train_args(args, "targets"), False, str(output))
+    assert summary["rubric"] == f"test-{selected or 'judge_reward'}"
+    assert summary["n_cycles"] == 0
+    assert summary["models"] == []
+    assert json.loads((output / "summary.json").read_text())["rubric"] == summary["rubric"]
+
+
+def test_unknown_reward_module_fails_before_rollout(modules, cli, monkeypatch):
+    utils, driver = modules
+    args = cli(utils, "--steps", "0", "--warmup-steps", "0")
+    monkeypatch.setenv("GRPO_JUDGE_MODULE", "scalarlm_nonexistent_reward_for_test")
+    with pytest.raises(ModuleNotFoundError, match="scalarlm_nonexistent_reward_for_test"):
+        driver.run_loop(args, [], "", {}, False, args.output_dir)
+    assert not Path(args.output_dir).exists()
 
 
 def test_cli_defaults_select_lora_grpo_and_compensated_bf16(modules, cli):

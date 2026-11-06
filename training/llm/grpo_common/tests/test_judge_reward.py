@@ -14,8 +14,8 @@ def judge(monkeypatch):
                  "GRPO_JUDGE_CONCURRENCY", "GRPO_JUDGE_TIMEOUT_S", "GRPO_JUDGE_MAX_TOKENS"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("LITELLM_KEY", "unit-test-credential")
-    path = Path(__file__).resolve().parents[1] / "judge_reward.py"
-    spec = importlib.util.spec_from_file_location("judge_reward_under_test", path)
+    path = Path(__file__).resolve().parents[1] / "haiku_reward.py"
+    spec = importlib.util.spec_from_file_location("haiku_reward_under_test", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

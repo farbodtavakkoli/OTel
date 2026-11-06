@@ -109,7 +109,9 @@ def validate_loop_adapter(args):
 def run_loop(args, rows: list, turn_end: str, train_args_base: dict, want_lp: bool, run_dir: str,
              persistent=None) -> dict:
     validate_loop_adapter(args)
-    from judge_reward import RUBRIC_VERSION, score_batch
+    from importlib import import_module
+    reward_module = import_module(os.environ.get("GRPO_JUDGE_MODULE", "judge_reward"))
+    RUBRIC_VERSION, score_batch = reward_module.RUBRIC_VERSION, reward_module.score_batch
 
     G, n_cycles = args.group_size, args.warmup_steps + args.steps
     cycles_path = os.path.join(run_dir, "cycles.jsonl")
