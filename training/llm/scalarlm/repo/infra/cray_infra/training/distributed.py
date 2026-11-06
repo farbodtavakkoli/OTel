@@ -23,6 +23,7 @@ NCCL collectives require CUDA tensors, so every buffer is moved on-device and
 made contiguous here — callers that used to hand in CPU tensors keep working.
 """
 
+import logging
 import os
 import sys
 import time
@@ -103,10 +104,15 @@ def init():
     local_rank = _local_rank()
     torch.cuda.set_device(local_rank)
 
-    job_config = get_job_config()
+    if os.environ.get("CRAY_TRAINING_JOB_CONFIG_PATH"):
+        timeout_seconds = get_job_config()["process_group_timeout_seconds"]
+    else:
+        from cray_infra.util.default_job_config import JobConfig
+        timeout_seconds = JobConfig.model_fields["process_group_timeout_seconds"].default
+    logging.getLogger(__name__).info("Initializing NCCL process group with timeout_seconds=%s", timeout_seconds)
     dist.init_process_group(
         backend="nccl",
-        timeout=timedelta(seconds=job_config["process_group_timeout_seconds"]),
+        timeout=timedelta(seconds=timeout_seconds),
     )
     _trace(
         f"init_process_group complete rank={dist.get_rank()} "
