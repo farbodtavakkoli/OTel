@@ -63,6 +63,27 @@ def test_nccl_init_uses_timeout_from_job_config(tmp_path, monkeypatch, seconds):
     assert [call[0] for call in calls.mock_calls] == ["set_device", "init_process_group"]
 
 
+def test_nccl_init_without_job_config_uses_default(monkeypatch, caplog):
+    monkeypatch.delenv("CRAY_TRAINING_JOB_CONFIG_PATH", raising=False)
+    monkeypatch.setenv("LOCAL_RANK", "0")
+    monkeypatch.setattr(distributed, "_trace", Mock())
+    monkeypatch.setattr(distributed.dist, "is_initialized", lambda: False)
+    monkeypatch.setattr(distributed.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(distributed.torch.cuda, "set_device", Mock())
+    monkeypatch.setattr(distributed.dist, "get_rank", lambda: 0)
+    monkeypatch.setattr(distributed.dist, "get_world_size", lambda: 1)
+    monkeypatch.setattr(distributed.dist, "get_backend", lambda: "nccl")
+    load_config = Mock(side_effect=AssertionError("job config must not be loaded"))
+    initialize = Mock()
+    monkeypatch.setattr(distributed, "get_job_config", load_config)
+    monkeypatch.setattr(distributed.dist, "init_process_group", initialize)
+    with caplog.at_level("INFO"):
+        distributed.init()
+    load_config.assert_not_called()
+    initialize.assert_called_once_with(backend="nccl", timeout=timedelta(seconds=3600))
+    assert "timeout_seconds=3600" in caplog.text
+
+
 def test_nccl_init_already_initialized_does_not_load_config(monkeypatch):
     monkeypatch.setattr(distributed, "_trace", Mock())
     monkeypatch.setattr(distributed.dist, "is_initialized", lambda: True)
