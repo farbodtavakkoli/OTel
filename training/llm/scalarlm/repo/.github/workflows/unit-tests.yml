@@ -3,7 +3,6 @@ name: Build and run unit tests
 on:
   workflow_dispatch:
 
-
 jobs:
   docker-image:
     runs-on: ubuntu-latest

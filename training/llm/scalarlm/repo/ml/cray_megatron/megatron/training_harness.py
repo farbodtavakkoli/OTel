@@ -33,7 +33,6 @@ class TrainingHarness:
         current_status = get_status()
 
         current_status["status"] = status
-        # Heartbeat: a job untouched within training_heartbeat_seconds is treated as dead.
         current_status["last_updated"] = time.time()
         for key, value in metadata.items():
             current_status[key] = value

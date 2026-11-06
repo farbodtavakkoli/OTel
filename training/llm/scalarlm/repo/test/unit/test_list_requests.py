@@ -1,14 +1,3 @@
-"""
-Unit tests for list_requests.
-
-Contract (see docs/inference-request-browser.md §4.1):
-- Returns request files only — `_response.json` and `_status.json`
-  are never first-class rows.
-- Sorted newest first; mtime cursor pagination is exclusive.
-- Tolerates missing/corrupt files: surfaces the row with placeholders
-  rather than 500ing.
-"""
-
 import hashlib
 import json
 import os
@@ -29,7 +18,6 @@ def upload_dir(tmp_path, monkeypatch):
         "cray_infra.api.fastapi.generate.list_requests.get_config",
         return_value=fake_config,
     ):
-        # The status/response path helpers also pull from get_config().
         with patch(
             "cray_infra.api.work_queue.group_request_id_to_status_path.get_config",
             return_value=fake_config,
@@ -126,7 +114,6 @@ async def test_pagination_cursor_excludes_previous_page(upload_dir):
     assert page3["has_more"] is False
     assert page3["next_cursor"] is None
 
-    # No id appears twice across the three pages.
     seen = [r["request_id"] for page in (page1, page2, page3) for r in page["rows"]]
     assert len(seen) == len(set(seen))
 
@@ -137,7 +124,6 @@ async def test_skips_response_and_status_files(upload_dir):
     rid, _ = _write_request(upload_dir, "x", "p", mtime=base)
     _write_status(upload_dir, rid)
     _write_response(upload_dir, rid)
-    # An orphan status without a request file must not show up.
     orphan = _hex_id("orphan")
     with open(os.path.join(upload_dir, f"{orphan}_status.json"), "w") as f:
         f.write("{}")
@@ -168,7 +154,7 @@ async def test_long_prompts_are_truncated_with_ellipsis(upload_dir):
     result = await list_requests(cursor=None, limit=50)
     preview = result["rows"][0]["prompt_preview"]
     assert preview.endswith("…")
-    assert len(preview) <= 121  # 120 chars + ellipsis
+    assert len(preview) <= 121
 
 
 @pytest.mark.asyncio
@@ -177,11 +163,9 @@ async def test_limit_is_clamped(upload_dir):
     for i in range(3):
         _write_request(upload_dir, f"r{i}", f"p{i}", mtime=base - i)
 
-    # limit=0 → clamped to 1
     one = await list_requests(cursor=None, limit=0)
     assert len(one["rows"]) == 1
 
-    # limit=10000 → capped at MAX_LIMIT, but only 3 rows exist
     big = await list_requests(cursor=None, limit=10_000)
     assert len(big["rows"]) == 3
 
@@ -190,7 +174,6 @@ async def test_limit_is_clamped(upload_dir):
 async def test_non_hex_filenames_ignored(upload_dir):
     base = time.time()
     rid_good, _ = _write_request(upload_dir, "good", "p", mtime=base)
-    # Extra files that match neither pattern should be ignored.
     with open(os.path.join(upload_dir, "not-a-hash.json"), "w") as f:
         f.write("[]")
     with open(os.path.join(upload_dir, "README.txt"), "w") as f:

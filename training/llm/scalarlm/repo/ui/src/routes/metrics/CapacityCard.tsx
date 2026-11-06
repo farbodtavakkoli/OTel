@@ -5,15 +5,6 @@ import { ErrorState } from "@/components/ErrorState";
 import { Skeleton } from "@/components/Skeleton";
 import { Stat } from "@/components/Stat";
 
-/**
- * Capacity card today shows total GPUs/nodes from the dedicated megatron
- * endpoints plus a rough "nodes busy" count derived from running SLURM jobs.
- *
- * The design calls for inference-vs-training GPU gauges, but that requires
- * `/v1/vllm/stats` (KV cache utilization + GPU allocation) which the backend
- * does not yet expose. Per `docs/ui-design.md` §8.3 we gracefully degrade and
- * surface the missing dependency inline.
- */
 const RUNNING_STATES = new Set(["R", "RUNNING", "COMPLETING"]);
 
 export function CapacityCard() {

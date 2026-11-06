@@ -1,10 +1,3 @@
-"""
-Build the rotating file handlers used by the API/vllm/megatron
-processes. Lives in its own module (not in main.py) so unit tests
-can exercise rotation without paying for `import torch` and the
-rest of the vLLM bootstrap chain that main.py drags in.
-"""
-
 import logging
 import logging.handlers
 import os
@@ -14,18 +7,6 @@ from cray_infra.util.get_config import get_config
 
 
 def get_log_file_handlers() -> List[logging.Handler]:
-    """
-    One RotatingFileHandler per server in `server_list`. Each file
-    rotates at `log_max_bytes` and keeps `log_backup_count` backups.
-
-    Without rotation the API process writes
-    /app/cray/nfs/logs/{vllm,megatron,api}.log forever; once the small
-    NFS PVC operators allocate for slurm config + logs (974 MB on the
-    gemma4 cluster) hits 100%, slurm.conf writes start failing and
-    the pod loses node config. The defaults in default_config.py
-    (10 MB × 5 backups × 3 files = 180 MB worst case) are sized for
-    that volume.
-    """
     config = get_config()
 
     log_base_path = config["log_directory"]

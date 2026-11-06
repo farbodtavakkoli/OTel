@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 
 
 async def start_cray_server(server_list: list):
-
     server_status = ServerStatus()
 
     logger.debug(f"Starting servers: {server_list}")
@@ -33,7 +32,6 @@ async def start_cray_server(server_list: list):
         server_status.tasks.append(vllm_task)
         started_any_server = True
 
-        # Start the generate worker
         logger.debug("Starting Generate Worker")
         worker_task = asyncio.create_task(
             create_generate_worker(server_status=server_status)

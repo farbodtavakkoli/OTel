@@ -1,7 +1,3 @@
-/**
- * Boot-time runtime config. Fetched from /app/api-config.json, which is served
- * dynamically by FastAPI so the same bundle can run against any deployment.
- */
 export interface ApiConfig {
   api_base: string;
   version: string;
@@ -11,9 +7,6 @@ export interface ApiConfig {
 
 const CONFIG_URL = "/app/api-config.json";
 
-// Fallbacks used when the config endpoint is unreachable — e.g. during pure
-// static-file dev or if the API hasn't come up yet. These keep the UI
-// navigable; real data fetches will still fail with a visible error.
 const FALLBACK: ApiConfig = {
   api_base: "/v1",
   version: "unknown",
@@ -52,7 +45,6 @@ export async function loadApiConfig(): Promise<ApiConfig> {
   return inFlight;
 }
 
-/** Synchronous accessor. Returns the fallback until loadApiConfig resolves. */
 export function getApiConfig(): ApiConfig {
   return cached ?? FALLBACK;
 }

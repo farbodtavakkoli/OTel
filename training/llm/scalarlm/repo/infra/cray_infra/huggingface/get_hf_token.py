@@ -15,7 +15,6 @@ def get_hf_token():
     if config["hf_token"] != "":
         return config["hf_token"]
 
-    # Fuck you huggingface
     encrypted_token = config["hf_encrypted_token"]
     key = config["encryption_key"]
 

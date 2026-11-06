@@ -1,6 +1,3 @@
-# Qwen3-Next 80B A3B Instruct (FP8). Inference-only on a shared host
-# that already has the HF cache on disk.
-
 image:
   tag: v1.0rc14
 

@@ -1,6 +1,3 @@
-"""Assertions shared by the live completion-stream smoke test."""
-
-
 def assert_valid_completion_stream(events: list[dict]) -> None:
     choices = [
         choice

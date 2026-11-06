@@ -1,7 +1,3 @@
-{{/*
-Names. All resources are scoped by Release.Name so two instances of the
-chart can live side-by-side in the same namespace.
-*/}}
 {{- define "scalarlm.fullname" -}}
 {{- printf "%s" .Release.Name | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
@@ -26,10 +22,6 @@ chart can live side-by-side in the same namespace.
 {{- end -}}
 {{- end -}}
 
-{{/*
-Labels. `selectorLabels` is stable across upgrades and used in Deployment
-selectors; `labels` is the richer set suitable for metadata.
-*/}}
 {{- define "scalarlm.commonLabels" -}}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 app.kubernetes.io/instance: {{ .Release.Name }}
@@ -76,11 +68,6 @@ app.kubernetes.io/name: {{ include "scalarlm.cloudflaredFullName" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
-{{/*
-Render a cray-config.yaml body for a given server_list. Accepts a dict:
-  { root: ., serverList: "api|vllm|megatron", extra: <map> }
-The map in `extra` is merged over `.Values.extraConfig` last.
-*/}}
 {{- define "scalarlm.crayConfig" -}}
 {{- $root := .root -}}
 {{- $lines := list -}}
@@ -98,9 +85,6 @@ The map in `extra` is merged over `.Values.extraConfig` last.
 {{- end -}}
 {{- range $k, $v := $root.Values.extraConfig -}}
 {{- if and (kindIs "string" $v) (eq $v "") -}}
-{{/* Preserve explicit empty-string opt-outs such as reasoning_parser: "".
-     An unquoted empty YAML value would reload as null and re-enable
-     model-name detection. */}}
 {{- $lines = append $lines (printf "%s: \"\"" $k) -}}
 {{- else -}}
 {{- $lines = append $lines (printf "%s: %v" $k $v) -}}
@@ -112,10 +96,6 @@ The map in `extra` is merged over `.Values.extraConfig` last.
 {{- join "\n" $lines -}}
 {{- end -}}
 
-{{/*
-Node affinity block from a list of preferred hostnames. Renders nothing
-when the list is empty so the template is a no-op by default.
-*/}}
 {{- define "scalarlm.nodeAffinity" -}}
 {{- if . -}}
 affinity:
@@ -133,10 +113,6 @@ affinity:
 {{- end -}}
 {{- end -}}
 
-{{/*
-Common DNS config — every pod needs to resolve the megatron headless
-service for slurmd peer discovery.
-*/}}
 {{- define "scalarlm.dnsConfig" -}}
 dnsConfig:
   searches:
@@ -149,10 +125,6 @@ dnsConfig:
       value: "1"
 {{- end -}}
 
-{{/*
-Render an env list from a map. Usage: include "scalarlm.envFromMap" .map
-Keys are converted to env-var names verbatim; values are stringified.
-*/}}
 {{- define "scalarlm.envFromMap" -}}
 {{- range $k, $v := . }}
 - name: {{ $k }}

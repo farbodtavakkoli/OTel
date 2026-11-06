@@ -1,11 +1,9 @@
-# Decision outcomes for doc_mask_decision().
-BUILD = "build"                    # construct the 4D block-diagonal+causal mask
-SKIP_MULTIMODAL = "skip_multimodal"  # wrapper masks loss by a 2D mask; keep 2D
-SKIP_SSM = "skip_ssm"              # hybrid Mamba/SSM mixer needs a 2D mask; keep 2D
-SKIP_SEQLEN = "skip_seqlen"        # mask too large to materialize; keep 2D
-NONE = "none"                      # batch isn't packed (no document_ids)
+BUILD = "build"
+SKIP_MULTIMODAL = "skip_multimodal"
+SKIP_SSM = "skip_ssm"
+SKIP_SEQLEN = "skip_seqlen"
+NONE = "none"
 
-# Hybrid Mamba/SSM model_types that need a 2D mask.
 _SSM_MODEL_TYPES = {
     "nemotron_h",
     "falcon_h1",
@@ -26,7 +24,6 @@ def is_diffusion(model_config) -> bool:
     if model_config is None:
         return False
     return getattr(model_config, "model_type", None) == "diffusion_gemma"
-
 
 
 def has_ssm_layers(model_config) -> bool:

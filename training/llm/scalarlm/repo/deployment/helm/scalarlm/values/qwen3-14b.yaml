@@ -1,6 +1,3 @@
-# Qwen3-14B on an RDMA-enabled training cluster. Durable PVC cache + a
-# hostPath /dev/shm for NCCL.
-
 image:
   tag: v1.0rc13
 

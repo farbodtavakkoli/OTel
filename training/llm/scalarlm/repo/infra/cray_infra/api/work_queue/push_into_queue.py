@@ -25,4 +25,3 @@ async def push_into_queue(request_count, item_path):
         }
 
         json.dump(status, status_file)
-

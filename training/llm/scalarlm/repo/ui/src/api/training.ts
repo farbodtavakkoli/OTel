@@ -10,12 +10,6 @@ import { getApiConfig } from "./config";
 import { buildTar } from "@/lib/tar";
 import type { TrainArgs } from "@/lib/trainArgsSchema";
 
-/**
- * TrainingJobStatus from infra/cray_infra/training/training_job_status.py.
- * "CANCELLED" is written by cancel.py:65-66 as a free-form string (not
- * present in the Python enum) — included here so the UI can render and
- * branch on the actual server-written values.
- */
 export type TrainingJobStatus =
   | "QUEUED"
   | "TRAINING"
@@ -31,7 +25,6 @@ export interface TrainingHistoryPoint {
   time?: number;
 }
 
-/** Row shape returned by GET /v1/megatron/list_models. */
 export interface ModelListEntry {
   name: string;
   deployed: boolean;
@@ -57,7 +50,6 @@ export function useModelList() {
   });
 }
 
-/** GET /v1/megatron/train/{job_hash} — status + config + deployed flag. */
 export interface TrainingJobDetail {
   job_status: {
     status: TrainingJobStatus;
@@ -92,7 +84,6 @@ export function useTrainingJob(jobHash: string | undefined) {
     queryKey: ["training-job", jobHash],
     enabled: Boolean(jobHash),
     queryFn: () => apiFetch<TrainingJobDetail>(`/megatron/train/${jobHash}`),
-    // Tight poll while live; relaxed once terminal.
     refetchInterval: (query) => {
       const status = query.state.data?.job_status?.status;
       if (status === "QUEUED" || status === "TRAINING") return 2_000;
@@ -102,21 +93,11 @@ export function useTrainingJob(jobHash: string | undefined) {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Dataset viewer
-//
-// GET /v1/megatron/train/{job_hash}/dataset returns a windowed view of the
-// job's dataset.jsonlines — see ui/docs/dataset-viewer.md for the contract.
-// We keep previous data while paging / typing in the search box so the list
-// doesn't blank between requests.
-// ---------------------------------------------------------------------------
-
 export interface DatasetExample {
   index: number;
   input?: string;
   output?: string;
   raw: Record<string, unknown>;
-  /** Dotted paths of fields the server clipped to MAX_FIELD_BYTES (4 KiB). */
   truncated_fields?: string[];
 }
 
@@ -195,22 +176,10 @@ export function useRestartJob() {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Log tailing
-//
-// /v1/megatron/train/logs/{model} is advertised as SSE but yields newline-
-// delimited JSON `{"line": "...", "line_number": N}\n`. EventSource would
-// mis-parse it — we consume the body stream directly. The generator also
-// finishes at EOF (it doesn't tail), so when the job is still running we
-// re-open with `starting_line_number=<last_seen>` after a short delay.
-// ---------------------------------------------------------------------------
-
 export interface LogLine {
   line: string;
   line_number: number;
-  /** Start of this line in the file; set by the service-logs endpoint. */
   byte_offset?: number;
-  /** Resume token: pass as `starting_byte_offset` on the next connect. */
   next_offset?: number;
 }
 
@@ -241,8 +210,6 @@ export async function tailTrainingLogs({
       });
     } catch (err) {
       if (signal.aborted || (err as { name?: string }).name === "AbortError") break;
-      // Surface by reconnecting; the next streamOnce will either succeed or
-      // fail again, giving observable failure without locking up the UI.
     }
 
     if (!isStillRunning()) {
@@ -269,17 +236,6 @@ async function streamOnce(
   return streamNdjsonLogOnce(url, startingLine, signal, onLine);
 }
 
-/**
- * Fetch the COMPLETE stitched training log (all slurm-*.out slices,
- * concatenated server-side) as a single string, from line 0 to EOF.
- *
- * The live LogPane keeps only a rolling MAX_LINES tail in memory, so its
- * in-memory buffer is not a faithful copy of the full log for long /
- * multi-slice (resumed) jobs. Download must therefore re-read from the
- * server rather than serialize that capped buffer. The endpoint's generator
- * finishes at EOF (it does not tail), so a single pass returns the whole log
- * captured up to now.
- */
 export async function fetchFullTrainingLog(
   modelName: string,
   signal: AbortSignal,
@@ -293,11 +249,6 @@ export async function fetchFullTrainingLog(
   return parts.join("\n");
 }
 
-/**
- * Generic NDJSON log tailer. Both /megatron/train/logs/{model} and
- * /health/logs/{service} emit newline-delimited JSON of the same
- * {line, line_number} shape and finish at EOF.
- */
 export async function streamNdjsonLogOnce(
   url: string,
   startingLine: number,
@@ -329,8 +280,6 @@ export async function streamNdjsonLogOnce(
         }
         onLine(parsed);
       } catch {
-        // Skip malformed lines silently — resuming from lastLine on the next
-        // reconnect will pull them again from the server if they persist.
       }
     }
   }
@@ -351,35 +300,16 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Training job submission
-//
-// POST /v1/megatron/train takes a multipart body with two parts:
-//   - `file`    — a tarball containing `dataset.jsonlines` at the root
-//                 (server calls tarfile.open(..., "r") which auto-detects
-//                 compression; uncompressed tar is accepted)
-//   - `params`  — JSON-encoded train_args dict
-//
-// We need upload progress feedback for large datasets, and the Fetch API
-// still has no reliable upload.onprogress in browsers. Using XMLHttpRequest
-// here is a pragmatic concession; the rest of the API layer stays on fetch.
-// ---------------------------------------------------------------------------
-
 export interface SubmitProgress {
   loaded: number;
   total: number;
-  /** 0..1, or null when total isn't known (shouldn't happen here — we set it). */
   fraction: number | null;
 }
 
 export interface SubmitTrainingJobInput {
-  /** Raw JSONL bytes for `dataset.jsonlines`. */
   datasetJsonl: string;
-  /** Validated train_args to encode as the `params` multipart field. */
   trainArgs: TrainArgs;
-  /** Emitted as upload progresses. */
   onProgress?: (p: SubmitProgress) => void;
-  /** Abort the XHR. */
   signal?: AbortSignal;
 }
 
@@ -469,7 +399,6 @@ export async function submitTrainingJob({
           const parsed = JSON.parse(xhr.responseText) as { detail?: string };
           if (parsed?.detail) detail = parsed.detail;
         } catch {
-          // leave as raw text
         }
         reject(
           new ApiError(
@@ -502,9 +431,6 @@ export async function submitTrainingJob({
       signal.addEventListener("abort", () => xhr.abort(), { once: true });
     }
 
-    // Wrapping in a Blob avoids an XHR typing quirk around SharedArrayBuffer
-    // and lets the browser pick the right Content-Length path. The cast is
-    // safe: body is a plain Uint8Array we just allocated, never shared memory.
     xhr.send(new Blob([body as BlobPart]));
   });
 }

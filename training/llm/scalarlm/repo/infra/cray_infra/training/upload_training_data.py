@@ -1,4 +1,3 @@
-
 from cray_infra.util.get_config import get_config
 
 from fastapi import Request, HTTPException, status
@@ -24,7 +23,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 async def upload_training_data(request: Request):
-
     try:
         temp_filepath = get_temp_filepath()
 
@@ -62,7 +60,6 @@ async def upload_training_data(request: Request):
             temp_filepath, file_hash.hexdigest(), train_args
         )
 
-        # delete the tarball
         os.remove(temp_filepath)
 
         if not file.multipart_filename:
@@ -88,7 +85,6 @@ async def upload_training_data(request: Request):
             detail=f"Maximum file size limit ({max_file_size} bytes) exceeded",
         )
     except Exception as e:
-        # Log the backtrace
         logger.exception(e)
 
         raise HTTPException(
@@ -98,15 +94,12 @@ async def upload_training_data(request: Request):
 
 
 def get_temp_filepath():
-    # Get a random temp file path
     return os.path.join(tempfile.gettempdir(), "training_job.tar.gz")
 
 
 def get_file_hash(filepath: str):
-    # Get the hash of the file
     sha256_hash = hashlib.sha256()
     with open(filepath, "rb") as f:
-        # Read and update hash string value in blocks of 4K
         for byte_block in iter(lambda: f.read(4096), b""):
             sha256_hash.update(byte_block)
 
@@ -129,12 +122,6 @@ class MaxBodySizeValidator:
             raise MaxBodySizeException(body_len=self.body_len)
 
 def extract_and_prepare_job(tar_path: str, dataset_hash: str, train_args: dict):
-    """Extract a training tar archive and populate train_args with paths.
-
-    Used by both the legacy single-POST path and the chunked upload path.
-    Returns (final_dataset_filepath, train_args) with job_directory and
-    training_data_path injected — matching the shape launch_training_job expects.
-    """
     config = get_config()
 
     train_args["dataset_hash"] = dataset_hash
@@ -175,4 +162,3 @@ def get_file_size(filepath: str):
         return os.path.getsize(filepath)
     except FileNotFoundError:
         return 0
-

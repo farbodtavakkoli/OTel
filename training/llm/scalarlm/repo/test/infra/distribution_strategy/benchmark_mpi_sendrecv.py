@@ -7,7 +7,7 @@ def create_buffer(arch_type, size, rank):
     if arch_type == 'cuda':
         return torch.ones(size, dtype=torch.float32, device='cuda')
     elif arch_type == 'rocm':
-        return torch.ones(size, dtype=torch.float32, device='cuda:' + str(rank))  # ROCm uses the same device string
+        return torch.ones(size, dtype=torch.float32, device='cuda:' + str(rank))
     else:
         return torch.ones(size, dtype=torch.float32, device='cpu')
 
@@ -31,7 +31,6 @@ def benchmark_send_recv(data_size, num_iters=100, warmup=10):
     for i in range(0, warmup * 2, 2):
         send_recv(sendbuf, i)
 
-    # Timing the collective operation
     barrier()
     t0 = time.time()
     for i in range(0, num_iters * 2, 2):
@@ -39,11 +38,10 @@ def benchmark_send_recv(data_size, num_iters=100, warmup=10):
     barrier()
     dt = time.time() - t0
 
-    # Verify correctness
     assert torch.allclose(sendbuf, torch.full_like(sendbuf, 1), atol=1e-6), "Verification failed"
 
     total_data = data_size * 4 * num_iters
-    bandwidth = (total_data / dt) / 1e9  # GB/s
+    bandwidth = (total_data / dt) / 1e9
     return bandwidth
 
 
@@ -55,14 +53,14 @@ if __name__ == "__main__":
     data_size = 262144 * 64 
     rank = get_rank()
     size = get_size()
-    
+
     assert size == 2, "This test only works with two ranks."
-    
+
     print(f"Rank {rank} of {size} running with data size {data_size}")
 
     bandwidth = benchmark_send_recv(data_size)
 
     if rank == 0:
         print(f"Send/Recv (GB/s): {bandwidth:.6}")
-        
+
     finalize_mpi()

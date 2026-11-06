@@ -11,9 +11,6 @@ import { ModelsPage } from "./routes/models/ModelsPage";
 import { SettingsPage } from "./routes/settings/SettingsPage";
 import { NotFound } from "./routes/NotFound";
 
-// The chat surface pulls in react-markdown + remark-gfm (~50 KB gzipped),
-// and it's not needed for any other route. Split it so the first paint on
-// /train, /metrics, etc. doesn't pay that cost.
 const ChatPage = lazy(() =>
   import("./routes/chat/ChatPage").then((m) => ({ default: m.ChatPage })),
 );

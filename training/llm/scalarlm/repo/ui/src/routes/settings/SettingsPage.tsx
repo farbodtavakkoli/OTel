@@ -28,9 +28,6 @@ export function SettingsPage() {
   const { data: health } = useHealth();
   const [askClear, setAskClear] = useState(false);
 
-  // Deployment-level URL is whatever the browser was loaded from. The api_base
-  // is relative ("/v1"), so strip it to get the hostname an external SDK would
-  // point at.
   const externalUrl =
     api.api_base === "/v1"
       ? window.location.origin
@@ -40,18 +37,14 @@ export function SettingsPage() {
     try {
       localStorage.clear();
     } catch {
-      // ignore
     }
     try {
       const req = indexedDB.deleteDatabase("scalarlm-chat");
       req.onblocked = () => {
-        /* ignore — will delete on next app restart */
       };
     } catch {
-      // ignore
     }
     setAskClear(false);
-    // Hard reload so hooks refresh against the cleared store.
     window.location.reload();
   };
 

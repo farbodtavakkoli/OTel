@@ -7,7 +7,6 @@ from cray_megatron.models.get_latest_checkpoint_path import get_latest_checkpoin
 from cray_infra.util.get_job_config import get_job_config
 
 from cray_megatron.collectives.main_rank_only import is_main_rank
-# Upload lives in its own module: importing cray_megatron.main initialises torch.distributed.
 from cray_megatron.hf_upload import upload_to_hf_if_enabled
 
 import traceback
@@ -22,7 +21,6 @@ from cray_infra.training.train_debug import (
 import faulthandler
 import time
 
-# A rank stuck in a collective raises nothing; faulthandler dumps every thread stack on a timer.
 if is_fault_handler_enabled():
     faulthandler.enable()
     faulthandler.dump_traceback_later(timeout=600, repeat=True)
@@ -55,8 +53,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 def main():
-
-    # Bring up the process group first: init() sets the device so model and communicator match.
     init_distributed()
 
     harness = TrainingHarness()
@@ -70,7 +66,6 @@ def main():
         trainer = MegatronTrainer(training_harness=harness)
         trainer.train()
 
-        # After train(), so the post-loop checkpoint is already on disk. Best-effort, rank 0 only.
         upload_to_hf_if_enabled()
     except Exception as e:
         print_exception()
@@ -85,7 +80,6 @@ def main():
 def setup_logging():
     logging.basicConfig(level=logging.DEBUG)
 
-    # Central noisy-library list lives in infra/cray_infra/util/quiet_loggers.py.
     try:
         from cray_infra.util.quiet_loggers import quiet_noisy_loggers
         quiet_noisy_loggers()
@@ -98,7 +92,6 @@ def setup_logging():
 
 def setup_signal_handler(harness):
     def signal_handler(sig, frame):
-        # Do not sys.exit here: set the flag and let TrainingLoop unwind through its checkpoint.
         logger.warning("Received signal %s — requesting graceful stop", sig)
         stop_flag.request_stop(signal_number=sig)
 

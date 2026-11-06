@@ -5,7 +5,7 @@ metadata:
   labels:
     {{- include "scalarlm.megatronlabels" . | nindent 4 }}
 spec:
-  clusterIP: None  # This makes it headless
+  clusterIP: None
   selector:
     {{- include "scalarlm.megatronlabels" . | nindent 4 }}
   ports:

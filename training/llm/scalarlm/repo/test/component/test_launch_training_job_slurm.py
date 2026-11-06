@@ -1,16 +1,3 @@
-"""
-Component-level test for launch_training_job against a real slurmctld.
-
-The unit tests in test/unit/test_launch_training_job_relaunch.py stub
-out subprocess and config; this one runs the real flow: an actual
-`sbatch` call against the slurmctld that the test runner starts, with
-a tiny shell-only entrypoint so we don't pull in torch/mpirun. The
-point is to catch breakage in the boundary the unit tests can't see —
-that the constructed sbatch argv parses and slurm accepts the
---signal=B:TERM@N flag (the long-jobs grace window, training-lifecycle.md
-§5.4).
-"""
-
 import asyncio
 import json
 import os
@@ -39,11 +26,6 @@ def _job_in_squeue(job_id: str) -> bool:
 
 
 def _write_noop_entrypoint(path: str) -> None:
-    """Tiny stand-in for scripts/train_job_entrypoint.sh. Just exits 0
-    after a short sleep — enough for the test to observe the job in
-    squeue before it completes, without needing python/torch/mpirun.
-    launch_training_job copies this verbatim into the job dir and
-    string-substitutes REPLACE_CONFIG_PATH (which we ignore here)."""
     with open(path, "w") as f:
         f.write(textwrap.dedent("""\
             #!/bin/bash
@@ -75,11 +57,6 @@ def job_workspace(tmp_path, monkeypatch):
 
 
 def test_sbatch_accepts_signal_flag_end_to_end(slurm_running, job_workspace):
-    """End-to-end: launch_training_job builds an sbatch argv with the
-    --signal=B:TERM@N flag and a real slurmctld accepts it. status.json
-    records the job_id; the id is reachable via squeue/sacct. A unit-
-    level stub can't catch a sbatch-template regression where slurm
-    rejects --signal=B:TERM@N — only a real sbatch round-trip can."""
     from cray_infra.training.launch_training_job import launch_training_job
 
     jobs_dir, submitted = job_workspace
@@ -104,10 +81,6 @@ def test_sbatch_accepts_signal_flag_end_to_end(slurm_running, job_workspace):
     assert status["job_id"] == job_id
     assert "start_time" in status
 
-    # If sbatch had rejected the --signal flag with EINVAL, we wouldn't
-    # have gotten a job_id back at all — so any non-empty id implicitly
-    # proves the flag was accepted. We additionally confirm the job is
-    # visible to slurm via squeue or (for very-short-lived jobs) sacct.
     deadline = time.time() + 5
     seen_in_squeue = False
     while time.time() < deadline:

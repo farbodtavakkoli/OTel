@@ -8,10 +8,6 @@ import { QueueCard } from "./QueueCard";
 import { ServiceLogsCard } from "./ServiceLogsCard";
 import { ThroughputCard } from "./ThroughputCard";
 
-/**
- * Sample capacity for the throughput sparkline. Samples are taken at the
- * throughput card's poll cadence (3s), so capacity × 3s = time span.
- */
 const RANGE_OPTIONS = [
   { label: "Last 5 min", samples: 100 },
   { label: "Last 15 min", samples: 300 },

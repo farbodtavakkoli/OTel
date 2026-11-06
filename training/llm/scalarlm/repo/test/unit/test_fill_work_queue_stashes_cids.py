@@ -1,13 +1,3 @@
-"""
-Verify that fill_work_queue stashes correlation_ids from a loaded
-batch into the correlation_id_map so update_and_ack can later resolve
-the matching ResultRouter futures.
-
-Mixed batches (some entries have a cid, some don't) must not cross-
-contaminate: only cids that were present in the JSON should be
-stashed, by their per-entry sub-id.
-"""
-
 import hashlib
 import json
 import os
@@ -29,7 +19,6 @@ def _reset():
 
 
 def _write_batch(tmp_path, requests):
-    """Mimic enqueue_coalesced_batch's filename convention."""
     contents = json.dumps(requests).encode("utf-8")
     contents_hash = hashlib.sha256(contents).hexdigest()
     path = os.path.join(tmp_path, f"{contents_hash}.json")
@@ -39,7 +28,6 @@ def _write_batch(tmp_path, requests):
 
 
 def _make_queue(path):
-    """A minimal mock of the work_queue interface used by fill_work_queue."""
     queue = AsyncMock()
     queue.get = AsyncMock(return_value=({"path": path}, 7))
     queue.ack = AsyncMock()
@@ -54,7 +42,6 @@ async def test_stashes_cid_for_each_entry_with_correlation_id(tmp_path):
     ]
     path, group_id = _write_batch(tmp_path, requests)
 
-    # Avoid the response-file-already-exists short-circuit.
     with patch.object(gwi, "group_request_id_to_response_path", return_value="/nonexistent/path"):
         await gwi.fill_work_queue(_make_queue(path))
 
@@ -67,7 +54,6 @@ async def test_stashes_cid_for_each_entry_with_correlation_id(tmp_path):
 
 @pytest.mark.asyncio
 async def test_does_not_stash_when_correlation_id_absent(tmp_path):
-    """Generate-path entries (no cid) must not produce stash entries."""
     requests = [{"prompt": "no-cid"}]
     path, group_id = _write_batch(tmp_path, requests)
 

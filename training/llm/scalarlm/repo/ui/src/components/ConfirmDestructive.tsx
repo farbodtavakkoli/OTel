@@ -4,9 +4,7 @@ interface ConfirmDestructiveProps {
   open: boolean;
   title: string;
   description: string;
-  /** User must type this exact string to enable the confirm button. */
   confirmationText: string;
-  /** Label on the destructive button. */
   actionLabel: string;
   onConfirm: () => void;
   onClose: () => void;

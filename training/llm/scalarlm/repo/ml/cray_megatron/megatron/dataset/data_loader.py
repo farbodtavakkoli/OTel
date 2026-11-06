@@ -12,11 +12,9 @@ import torch
 
 class DataLoader:
     def __init__(self, model, tokenizer, starting_epoch=0):
-
         self.model = model
         self.tokenizer = tokenizer
         self.batch_size = get_batch_size()
-        # On resume the trainer passes the saved epoch so the shuffle seed reproduces the ordering.
         self.epoch = starting_epoch
 
         self.dataset = load_dataset(
@@ -60,7 +58,6 @@ class DataLoader:
             try:
                 return next(self.iterator)
             except StopIteration:
-                # An empty reloaded epoch means this rank's shard is empty, not that the epoch ended.
                 world_size = get_data_parallel_world_size()
                 rank = get_data_parallel_rank()
                 raise RuntimeError(

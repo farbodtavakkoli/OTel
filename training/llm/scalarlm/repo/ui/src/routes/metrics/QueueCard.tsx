@@ -87,7 +87,7 @@ function QueueTable({ jobs }: { jobs: SqueueJob[] }) {
             >
               <Td className="font-mono text-xs">{job.jobId}</Td>
               <Td>
-                {/* Training jobs set job-name = basename(job_directory) = hash. */}
+                {                                                                  }
                 <Link
                   to={`/train/${job.name}`}
                   className="font-mono text-xs text-accent hover:underline"

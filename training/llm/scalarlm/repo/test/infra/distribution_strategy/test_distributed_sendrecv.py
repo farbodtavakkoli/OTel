@@ -1,12 +1,3 @@
-"""Pytest coverage for cray_infra.training.distributed point-to-point ops.
-
-Runs under torchrun automatically via the ``@pytest.mark.torchrun`` marker, or
-directly, for example::
-
-    torchrun --nnodes=1 --nproc-per-node=2 \\
-        -m pytest test/infra/distribution_strategy/test_distributed_sendrecv.py -xvs
-"""
-
 import pytest
 import torch
 

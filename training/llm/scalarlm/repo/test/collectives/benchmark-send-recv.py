@@ -29,21 +29,16 @@ from cray_infra.training.training_job_context import training_job_context
 def calculate_message_sizes():
     sizes = []
 
-    # Small messages: 1B to 1KB (powers of 2)
-    for i in range(0, 11):  # 1B to 1KB
+    for i in range(0, 11):
         sizes.append(2 ** i)
 
-    # Medium messages: 2KB to 1MB (powers of 2)
-    for i in range(11, 21):  # 2KB to 1MB
+    for i in range(11, 21):
         sizes.append(2 ** i)
 
-    # Large messages: 2MB to 512MB (powers of 2)
-    for i in range(21, 30):  # 2MB to 512MB
+    for i in range(21, 30):
         sizes.append(2 ** i)
 
-    # Very large messages: 1GB to 8GB (to saturate 800 Gbps)
-    # At 800 Gbps = 100 GB/s, we need large messages to achieve peak bandwidth
-    for i in range(30, 34):  # 1GB to 8GB
+    for i in range(30, 34):
         sizes.append(2 ** i)
 
     return sizes
@@ -58,33 +53,28 @@ def send_recv_benchmark(size_bytes, warmup_iterations=5, timing_iterations=10):
             print("Warning: Bisection rank is 0, skipping test to avoid deadlock.")
         return None
 
-    # Calculate tensor size (assuming float32 = 4 bytes)
     tensor_elements = size_bytes // 4
     if tensor_elements == 0:
-        tensor_elements = 1  # Minimum one element
+        tensor_elements = 1
 
-    # Create tensor on GPU if available, otherwise CPU
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     my_tensor = torch.ones(tensor_elements, dtype=torch.float32, device=device)
 
-    # Determine communication partner (cross network bisection)
     neighbor = (rank + bisection_rank) % world_size
     is_sender = rank < bisection_rank
 
-    # Warmup phase
-    barrier()  # Sync before warmup
+    barrier()
     for _ in range(warmup_iterations):
         if is_sender:
             send(my_tensor, neighbor)
         else:
             received_tensor = recv(torch.empty_like(my_tensor), neighbor)
-    barrier()  # Sync after warmup
+    barrier()
 
-    # Timing phase
     timings = []
 
     for iteration in range(timing_iterations):
-        barrier()  # Ensure all processes start together
+        barrier()
 
         start_time = time.perf_counter()
 
@@ -96,25 +86,22 @@ def send_recv_benchmark(size_bytes, warmup_iterations=5, timing_iterations=10):
         end_time = time.perf_counter()
         timings.append(end_time - start_time)
 
-        barrier()  # Sync after each iteration
+        barrier()
 
-    # Calculate statistics
     if len(timings) > 0:
         avg_time = statistics.mean(timings)
         min_time = min(timings)
         max_time = max(timings)
         std_time = statistics.stdev(timings) if len(timings) > 1 else 0.0
 
-        # Calculate bandwidth (bytes per second)
-        # Note: This is unidirectional bandwidth
         bandwidth_bps = size_bytes / avg_time
-        bandwidth_gbps = bandwidth_bps / (1024**3)  # Convert to GB/s
-        bandwidth_gbps_network = bandwidth_gbps * 8  # Convert to Gbps
+        bandwidth_gbps = bandwidth_bps / (1024**3)
+        bandwidth_gbps_network = bandwidth_gbps * 8
 
         results = {
             'size_bytes': size_bytes,
             'size_mb': size_bytes / (1024**2),
-            'avg_latency_us': avg_time * 1e6,  # Convert to microseconds
+            'avg_latency_us': avg_time * 1e6,
             'min_latency_us': min_time * 1e6,
             'max_latency_us': max_time * 1e6,
             'std_latency_us': std_time * 1e6,
@@ -184,25 +171,21 @@ def main():
             all_results.append(result)
             print_benchmark_result(result)
 
-    # Print summary
     if rank == 0:
         print("\n" + "="*90)
         print("Benchmark Summary:")
 
         if all_results:
-            # Find peak bandwidth
             peak_bw_result = max(all_results, key=lambda x: x['bandwidth_gbps'])
             print(f"Peak bandwidth: {peak_bw_result['bandwidth_gbps']:.2f} Gbps "
                   f"at {format_size(peak_bw_result['size_bytes'])}")
 
-            # Find minimum latency (for small messages)
             small_msgs = [r for r in all_results if r['size_bytes'] <= 1024]
             if small_msgs:
                 min_lat_result = min(small_msgs, key=lambda x: x['min_latency_us'])
                 print(f"Minimum latency: {min_lat_result['min_latency_us']:.2f} μs "
                       f"for {format_size(min_lat_result['size_bytes'])}")
 
-            # Check if we achieved target bandwidth
             target_gbps = 800
             achieved_percentage = (peak_bw_result['bandwidth_gbps'] / target_gbps) * 100
             print(f"Link utilization: {achieved_percentage:.1f}% of 800 Gbps target")
@@ -210,7 +193,6 @@ def main():
         print("="*90)
         print("Benchmark completed successfully!")
 
-# Run the benchmark
 if __name__ == "__main__":
     with training_job_context():
         main()
@@ -219,4 +201,3 @@ if __name__ == "__main__":
 
 
 main()
-

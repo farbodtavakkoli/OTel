@@ -30,7 +30,6 @@ async def get_training_job_info(job_hash: str):
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Training job was not found at {job_directory_path}",
             )
-        # Get job config
         job_config = None
 
         config_filepath = os.path.join(job_directory_path, "config.yaml")
@@ -67,10 +66,6 @@ async def get_training_job_info(job_hash: str):
 
 def get_job_directory_for_hash(hash_id: str):
     config = get_config()
-    # Synology FIRST so it wins the perfect-match lookup below when a hash
-    # exists in both locations. Synology is the canonical post-COMPLETED
-    # archive; PVC fallback covers in-progress runs that haven't been
-    # archived yet. Keep these two blocks in sync with list_models.py.
     bases = []
     synology_dir = "/mnt/synology/jobs"
     if os.path.exists(synology_dir):
@@ -79,13 +74,11 @@ def get_job_directory_for_hash(hash_id: str):
     if os.path.exists(config["training_job_directory"]):
         bases.append(config["training_job_directory"])
 
-    # 1. Try perfect match on all bases
     for base in bases:
         perfect_match = os.path.join(base, hash_id)
         if os.path.exists(perfect_match):
             return perfect_match
 
-    # 2. Check for partial match on all bases
     for base in bases:
         if not os.path.isdir(base):
             continue
@@ -110,7 +103,6 @@ def get_training_job_status(job_hash: str):
     job_directory_path = get_job_directory_for_hash(job_hash)
     status_filepath = os.path.join(job_directory_path, "status.json")
 
-    # Get job status
     try:
         with open(status_filepath, "r") as file:
             job_status = json.loads(file.readline().strip())

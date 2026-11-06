@@ -1,5 +1,3 @@
-"""Regression tests for the live profile's shell orchestration."""
-
 import json
 import os
 import signal
@@ -241,7 +239,7 @@ raise SystemExit(9)
         stdout, stderr = process.communicate(timeout=5)
         raise AssertionError(stdout + stderr)
 
-    process.send_signal(signal_number)  # Deliberately signal only the harness PID.
+    process.send_signal(signal_number)
     stdout, stderr = process.communicate(timeout=5)
 
     assert process.returncode == exit_code, stdout + stderr

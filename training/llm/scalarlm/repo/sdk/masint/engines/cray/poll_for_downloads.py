@@ -39,7 +39,6 @@ async def poll_for_downloads(result, api_url=None):
 
                     final_result = json.load(f)
 
-    # convert the results from a dict to a list, sorted by key to preserve prompt order
     if "results" in final_result:
         final_result["results"] = [
             response for _, response in sorted(

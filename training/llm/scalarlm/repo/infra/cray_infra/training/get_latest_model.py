@@ -12,7 +12,7 @@ def get_latest_model():
     bases = []
     if os.path.exists(config["training_job_directory"]):
         bases.append(config["training_job_directory"])
-    
+
     synology_dir = "/mnt/synology/jobs"
     if os.path.exists(synology_dir):
         bases.append(synology_dir)

@@ -1,14 +1,4 @@
 #!/usr/bin/env python3
-"""
-Continuous load generator for observability testing.
-
-Sends requests to the OpenAI-compatible endpoint to generate real traffic.
-Run this in the background while viewing Grafana to see live metrics.
-
-Usage:
-    python test/infra/generate_load.py [--requests N] [--delay SECONDS]
-"""
-
 import argparse
 import requests
 import time
@@ -32,7 +22,6 @@ PROMPTS = [
 
 
 def send_chat_completion(prompt: str, max_tokens: int = 50) -> dict:
-    """Send a chat completion request to ScalarLM"""
     payload = {
         "model": "tiny-random/qwen3",
         "messages": [
@@ -63,7 +52,6 @@ def send_chat_completion(prompt: str, max_tokens: int = 50) -> dict:
 
 
 def generate_load(num_requests: int, delay: float):
-    """Generate continuous load"""
     print(f"Starting load generator...")
     print(f"  Requests: {num_requests}")
     print(f"  Delay: {delay}s between requests")
@@ -114,7 +102,6 @@ def main():
     parser.add_argument("--delay", type=float, default=1.0, help="Delay between requests (seconds)")
     args = parser.parse_args()
 
-    # Check if ScalarLM is running
     try:
         response = requests.get(f"{SCALARLM_URL}/v1/health", timeout=2)
         print(f"✓ ScalarLM is running")

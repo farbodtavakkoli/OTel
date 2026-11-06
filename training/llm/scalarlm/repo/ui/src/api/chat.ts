@@ -3,11 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 import { getApiConfig } from "./config";
 
-/**
- * GET /v1/models — vLLM's OpenAI-compatible list. The ScalarLM backend is a
- * plain passthrough (see openai_v1_router.py:27), so the shape is the
- * upstream OpenAI shape.
- */
 export interface OpenAIModel {
   id: string;
   object: "model";
@@ -31,18 +26,6 @@ export function useModels() {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Chat streaming
-//
-// POST /v1/chat/completions with stream: true returns SSE-framed JSON chunks:
-//   data: {"choices": [{"delta": {"content": "..."}, ...}], ...}\n\n
-//   data: [DONE]\n\n
-//
-// We consume the body as a stream, parse framing ourselves, and yield content
-// deltas to the caller. AbortController hangs off the same signal that the UI
-// uses to wire up the Stop button.
-// ---------------------------------------------------------------------------
-
 export interface ChatMessageInput {
   role: "system" | "user" | "assistant";
   content: string;
@@ -53,7 +36,6 @@ export interface ChatStreamOptions {
   messages: ChatMessageInput[];
   signal: AbortSignal;
   onDelta: (delta: string) => void;
-  /** Optional — receives the final aggregated usage record if the server sends one. */
   onFinal?: (usage: Record<string, unknown> | null) => void;
   temperature?: number;
   max_tokens?: number;
@@ -97,7 +79,6 @@ export async function streamChatCompletion({
     try {
       detail = JSON.parse(detail as string);
     } catch {
-      // leave as text
     }
     const err: ChatStreamError = {
       status: resp.status,
@@ -120,7 +101,6 @@ export async function streamChatCompletion({
       if (done) break;
       buf += value;
 
-      // Split on the SSE event separator.
       let sep: number;
       while ((sep = buf.indexOf("\n\n")) >= 0) {
         const event = buf.slice(0, sep);
@@ -157,7 +137,6 @@ export async function streamChatCompletion({
             ) {
               throw err as ChatStreamError;
             }
-            // Malformed chunk — drop silently; a reconnect isn't possible mid-stream.
           }
         }
       }

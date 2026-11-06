@@ -54,7 +54,6 @@ class TokenformerAdapter(nn.Module):
         nn.init.uniform_(self.tokenformer_v, a=-v_gain, b=v_gain)
         nn.init.zeros_(self.tokenformer_p)
 
-    # Call layer with all inputs and kwargs
     def forward(self, hidden_states: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         all_base_layer_results = self.layer(hidden_states, *args, **kwargs)
 
@@ -65,7 +64,6 @@ class TokenformerAdapter(nn.Module):
         else:
             base_layer_results = all_base_layer_results
 
-        # sum the two outputs
         layer_and_adapter_sum = base_layer_results + tokenformer_results
 
         if isinstance(all_base_layer_results, tuple):
@@ -76,7 +74,6 @@ class TokenformerAdapter(nn.Module):
         return results
 
     def tokenformer_op(self, query: torch.Tensor) -> torch.Tensor:
-        # Cast parameters to match query dtype
         dtype = query.dtype
 
         q = query.view(
@@ -106,12 +103,10 @@ class TokenformerAdapter(nn.Module):
 
         query_batch = query.view([-1, 1, self.hidden_size])
 
-        # Also cast tokenformer_p
         result = torch.bmm(query_batch, proj_down) @ self.tokenformer_p.to(dtype)
 
         return result.view(query.shape)
 
-    # Visualize the size of the parameters
     def __repr__(self):
         return (
             f"TokenformerAdapter(\nhidden_size={self.hidden_size}\n(layer): "
@@ -169,7 +164,6 @@ class TokenformerSurgeon(ABC):
             logger.error("Model does not have config or model_config attribute")
             return
 
-        # Wrap the layer with a TokenformerAdapter
         self._recursive_setattr(
             self.model,
             name,
@@ -177,7 +171,6 @@ class TokenformerSurgeon(ABC):
         )
 
     def insert_adapter_modules(self):
-        # Add tokenformer adapters for mlp and attention
         for name, layer in self.model.named_modules():
             self.update_layer(name, layer)
 

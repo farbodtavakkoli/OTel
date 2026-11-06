@@ -1,18 +1,9 @@
-"""
-Unit tests for cray_infra.util.get_config.
-
-Contract under test: docs/configuration.md §1.1 — three-tier override
-system (Pydantic defaults → YAML → SCALARLM_* env vars) with type-preserving
-env coercion.
-"""
-
 import pytest
 
 from cray_infra.util.get_config import get_config
 
 
 def _empty_yaml_path(tmp_path, monkeypatch):
-    """Point SCALARLM_CONFIG_PATH at a non-existent path so only defaults + env apply."""
     path = tmp_path / "does-not-exist.yaml"
     monkeypatch.setenv("SCALARLM_CONFIG_PATH", str(path))
     return path
@@ -40,7 +31,6 @@ def test_config_yaml_overrides_default(tmp_path, monkeypatch):
 
     assert cfg["model"] == "other-model"
     assert cfg["max_model_length"] == 8192
-    # Untouched fields still carry their default.
     assert cfg["api_url"] == "http://localhost:8000"
 
 
@@ -56,8 +46,6 @@ def test_config_env_overrides_yaml(tmp_path, monkeypatch):
 
 
 def test_config_empty_yaml_is_safe(tmp_path, monkeypatch):
-    # yaml.safe_load on an empty document returns None; the loader must not
-    # blow up feeding None into Config(**...).
     yaml_path = tmp_path / "cray-config.yaml"
     yaml_path.write_text("")
     monkeypatch.setenv("SCALARLM_CONFIG_PATH", str(yaml_path))
@@ -118,7 +106,6 @@ def test_config_env_non_field_is_ignored(tmp_path, monkeypatch):
 
     cfg = get_config()
 
-    # Field doesn't exist on the Pydantic model → never surfaces in the dict.
     assert "not_a_real_field" not in cfg
 
 
@@ -134,7 +121,6 @@ def test_config_yaml_extra_key_dropped_by_pydantic(tmp_path, monkeypatch):
 
 
 def test_config_every_get_call_rereads(tmp_path, monkeypatch):
-    # documented in configuration.md §1.1: get_config has no cache.
     yaml_path = tmp_path / "cray-config.yaml"
     yaml_path.write_text("model: first\n")
     monkeypatch.setenv("SCALARLM_CONFIG_PATH", str(yaml_path))

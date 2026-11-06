@@ -16,7 +16,6 @@ def corrupt_canvas(
     t = torch.rand(batch_sz, 1, device=device, generator=generator) * (1.0 - eps) + eps
     supervised = canvas_labels != -100
     if protect_prefix > 0:
-        # Drop the prefix from the supervised (thus corruptible) set.
         supervised = supervised.clone()
         supervised[:, :protect_prefix] = False
     corrupt_mask = (

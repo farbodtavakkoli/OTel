@@ -9,8 +9,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# List of memcpy sizes, in bytes, should be multiples of the page size
-# Go up to the tensor size used in Llama 3 (4096 * 128256 * 4) = 2_101_346_304
 memcpy_sizes = [ 2 ** i for i in range(12, 64) if 2 ** i <= 2_101_346_304 ]
 
 
@@ -26,7 +24,6 @@ def benchmark_memcpy():
 
 
 def run_memcpy_benchmark():
-
     warmup()
 
     results = {}
@@ -42,10 +39,9 @@ def warmup():
 
 
 def run_memcpy(size):
-    a = torch.zeros(size // 4, device=get_device(), dtype=torch.float32) # size is in bytes, so divide by 4 to get number of floats
+    a = torch.zeros(size // 4, device=get_device(), dtype=torch.float32)
     b = torch.zeros(size // 4, device=get_device(), dtype=torch.float32)
 
-    # copy for at least 1 second
     barrier()
 
     start = get_event()
@@ -64,7 +60,7 @@ def run_memcpy(size):
     total_time = start.elapsed_time(end) * 1e-3 / iterations
 
     return {
-        "operational_intensity": 1 / 4,  # 1 FLOP per 4 bytes
+        "operational_intensity": 1 / 4,
         "flop/s": size / 4 / total_time,
         "bytes": size,
         "time": total_time,
@@ -106,7 +102,6 @@ def get_device():
 
 
 def save_results(results):
-    # Save results to a json file
     path = "/app/cray/data/benchmark_memcpy.json"
     directory_path = os.path.dirname(path)
 

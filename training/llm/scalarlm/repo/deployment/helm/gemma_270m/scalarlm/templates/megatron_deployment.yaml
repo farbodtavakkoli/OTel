@@ -34,19 +34,16 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/app/cray/scripts/start_one_server.sh"]
           env:
-            # UCX configuration to use available RDMA devices and TCP fallback
             - name: UCX_TLS
               value: "tcp,rc,ud,rocm"
             - name: UCX_NET_DEVICES
               value: "eth0,rdma-eth0,rdma-eth1,rdma-eth2,rdma-eth3,rdma-eth4,rdma-eth5,rdma-eth6,rdma-eth7"
             - name: UCX_LOG_LEVEL
               value: "info"
-            # Enable RDMA over Ethernet
             - name: UCX_IB_ROCE_VERSION
               value: "2"
             - name: UCX_IB_ENABLE
               value: "yes"
-            # MPI configuration
             - name: OMPI_MCA_pml
               value: "ucx"
             - name: OMPI_MCA_btl
@@ -84,7 +81,6 @@ spec:
             - name: infiniband-class
               mountPath: /sys/class/infiniband
               readOnly: true
-            # Mount host network interfaces
             - name: host-sys-class-net
               mountPath: /host/sys/class/net
               readOnly: true
@@ -110,7 +106,6 @@ spec:
         - name: scalarlm-config
           configMap:
             name: {{ .Release.Name }}-megatron-configmap
-        # Add InfiniBand device volume
         - name: infiniband-dev
           hostPath:
             path: /dev/infiniband
@@ -135,7 +130,6 @@ spec:
           hostPath:
             path: /sys/class/infiniband
             type: Directory
-        # Mount host network information
         - name: host-sys-class-net
           hostPath:
             path: /sys/class/net
@@ -144,7 +138,6 @@ spec:
           hostPath:
             path: /proc/net
             type: Directory
-        # Mount RDMA network devices
         - name: rdma-net-devices
           hostPath:
             path: /sys/class/net

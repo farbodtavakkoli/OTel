@@ -1,27 +1,19 @@
 #!/usr/bin/env python3
-"""
-Integration test for tokenformer support in CPUModelRunner
-This test runs inside the Docker container where vLLM is properly built
-"""
-
 import sys
 
 import pytest
 
-# Add paths for Docker container
 sys.path.insert(0, "/app/cray/vllm")
 sys.path.insert(0, "/app/cray/infra")
 
 
 def test_tokenformer_manager_basic():
-    """Test basic TokenformerModelManager functionality"""
     import torch
     import torch.nn as nn
     from vllm.tokenformer.tokenformer_model_manager import TokenformerModelManager
 
     print("Testing TokenformerModelManager initialization...")
 
-    # Create a simple mock model
     class SimpleModel(nn.Module):
         def __init__(self):
             super().__init__()
@@ -39,24 +31,21 @@ def test_tokenformer_manager_basic():
 
 
 def test_cpu_model_runner_initialization():
-    """Test that tokenformer can be used with model runner mixin"""
     import torch
     import torch.nn as nn
     from vllm.tokenformer.tokenformer_model_manager import TokenformerModelManager
 
     print("Testing TokenformerModelManager with model runner context...")
 
-    # Create a mock model that supports lora/tokenformer
     class MockLLMModel(nn.Module):
         def __init__(self):
             super().__init__()
-            self.lm_head = nn.Linear(768, 50257)  # GPT-2 like dimensions
+            self.lm_head = nn.Linear(768, 50257)
             self.supports_lora = True
 
     model = MockLLMModel()
     device = torch.device("cpu")
 
-    # Initialize TokenformerModelManager as done in LoRAModelRunnerMixin
     manager = TokenformerModelManager(model=model, device=device)
 
     assert manager.model is not None
@@ -66,7 +55,6 @@ def test_cpu_model_runner_initialization():
 
 
 def test_tokenformer_with_lora_config():
-    """Test LoRAModelRunnerMixin with LoRA config uses TokenformerModelManager"""
     import torch
     import torch.nn as nn
     from vllm.config import LoRAConfig, VllmConfig
@@ -84,7 +72,6 @@ def test_tokenformer_with_lora_config():
         max_cpu_loras=2,
     )
 
-    # Create a mock model that supports lora
     class MockModel(nn.Module):
         def __init__(self):
             super().__init__()
@@ -93,7 +80,6 @@ def test_tokenformer_with_lora_config():
     model = MockModel()
     device = torch.device("cpu")
 
-    # Test LoRAModelRunnerMixin
     mixin = LoRAModelRunnerMixin()
 
     with patch(
@@ -109,7 +95,6 @@ def test_tokenformer_with_lora_config():
 
 
 def test_tokenformer_model_manager():
-    """Test TokenformerModelManager is available"""
     try:
         from vllm.tokenformer.tokenformer_model_manager import (
             TokenformerModelManager,
@@ -118,7 +103,6 @@ def test_tokenformer_model_manager():
 
         print("Testing TokenformerModelManager availability...")
 
-        # Check classes are importable
         assert TokenformerModelManager is not None
         assert TokenformerModel is not None
 

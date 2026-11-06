@@ -1,5 +1,3 @@
-"""Pytest hooks for distributed tests launched via torchrun."""
-
 import os
 import subprocess
 import sys
@@ -71,10 +69,6 @@ def pytest_pyfunc_call(pyfuncitem):
         _ARCH_ENV: arch,
     }
 
-    # nodeid is relative to pytest's rootdir, but the child is launched with
-    # cwd=CRAY_ROOT — so a nodeid collected from anywhere else ("file or
-    # directory not found"). Build an absolute file::name selector instead, which
-    # resolves no matter where pytest was invoked from.
     node_selector = f"{pyfuncitem.path}::{pyfuncitem.name}"
 
     cmd = [

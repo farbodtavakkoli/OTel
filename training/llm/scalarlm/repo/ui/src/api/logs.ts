@@ -1,17 +1,3 @@
-/**
- * Service-log tailer + scrollback fetcher.
- *
- * Wire protocol: see service_logs_generator.py. The server reads the log
- * file by byte offset; each record carries its own `byte_offset` and
- * `next_offset`. The client tracks the last-seen `next_offset` and uses
- * it as the resume token on reconnect, which makes tail/resume O(new
- * lines) rather than O(total lines).
- *
- *  - First connect:        ?tail=N                     — jump to end fast.
- *  - Subsequent reconnects ?starting_byte_offset=<last.next_offset>
- *  - Scrollback (one-shot) ?before_byte_offset=B&before_count=C
- */
-
 import { getApiConfig } from "./config";
 import { streamNdjsonLogOnce, type LogLine } from "./training";
 
@@ -28,12 +14,7 @@ export interface ServiceLogTailOptions {
   signal: AbortSignal;
   onLine: (line: LogLine) => void;
   onStatus?: (status: LogStreamStatus) => void;
-  /** Delay between reconnects once the generator hits EOF. Default 2 s. */
   tailReopenDelayMs?: number;
-  /**
-   * Trailing lines the first connect requests via `tail=N`. Subsequent
-   * reconnects resume from the last record's `next_offset`.
-   */
   initialTail?: number;
 }
 
@@ -45,10 +26,6 @@ export async function tailServiceLogs({
   tailReopenDelayMs = 2_000,
   initialTail = 5_000,
 }: ServiceLogTailOptions): Promise<void> {
-  // Resume state. `nextOffset` is authoritative once we've received at
-  // least one record; `lineLabel` is the monotonic label the UI shows
-  // in the gutter — we carry it across reconnects so the count keeps
-  // growing instead of restarting at 0 on every reopen.
   let nextOffset: number | null = null;
   let lineLabel = 0;
   let firstPass = true;
@@ -88,12 +65,6 @@ export async function tailServiceLogs({
   onStatus?.("closed");
 }
 
-/**
- * One-shot backfill. Returns the `count` lines immediately before
- * `beforeByteOffset` (typically an earlier record's byte_offset), in
- * ascending order. Used when the user scrolls near the top of the
- * loaded buffer.
- */
 export async function fetchServiceLogRange(
   service: ServiceName,
   beforeByteOffset: number,

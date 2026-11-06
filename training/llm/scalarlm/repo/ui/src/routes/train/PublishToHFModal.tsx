@@ -1,12 +1,3 @@
-/**
- * Publish-to-HuggingFace modal.
- *
- * Phase 1: submit a SLURM publish job, poll its status.json, render
- * phase progress, allow cancellation. Log tailing comes in Phase 2.
- *
- * See ui/docs/publish-to-hf.md for the full design.
- */
-
 import { useEffect, useId, useRef, useState } from "react";
 
 import type { LogLine } from "@/api/training";
@@ -29,10 +20,6 @@ interface PublishToHFModalProps {
   onClose: () => void;
 }
 
-// Loose client-side guard: must contain exactly one `/`, both halves
-// non-empty, and only word-ish characters. The server forwards to HF
-// which is the authority on naming, so we don't try to reproduce
-// every quirk of org-vs-repo allowed-character lists here.
 const REPO_ID_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 
 export function PublishToHFModal({
@@ -40,8 +27,6 @@ export function PublishToHFModal({
   jobHash,
   onClose,
 }: PublishToHFModalProps) {
-  // Default to adapter — smaller, faster, more commonly useful. Users
-  // who specifically need a self-contained model flip to merged.
   const [mode, setMode] = useState<PublishMode>("adapter");
   const [repoId, setRepoId] = useState("");
   const [isPrivate, setIsPrivate] = useState(false);
@@ -52,8 +37,6 @@ export function PublishToHFModal({
   const [loraAlphaOverride, setLoraAlphaOverride] = useState<string>("");
   const [commitMessage, setCommitMessage] = useState<string>("");
 
-  // True once the user has submitted in *this* modal session. Polling
-  // status.json before submit would 404 (or return a stale prior run).
   const [hasSubmitted, setHasSubmitted] = useState(false);
 
   const submit = useSubmitPublish(jobHash);
@@ -63,7 +46,6 @@ export function PublishToHFModal({
   const { data: checkpoints, isPending: ckptPending, error: ckptError } =
     useCheckpoints(open ? jobHash : undefined);
 
-  // Default to the latest checkpoint once the list arrives.
   useEffect(() => {
     if (!checkpoints || checkpoints.length === 0) return;
     if (selectedCheckpoint === "") {
@@ -71,7 +53,6 @@ export function PublishToHFModal({
     }
   }, [checkpoints, selectedCheckpoint]);
 
-  // Wipe sensitive state and per-session flags when closing.
   useEffect(() => {
     if (!open) {
       setToken("");
@@ -83,14 +64,8 @@ export function PublishToHFModal({
       submit.reset();
       cancel.reset();
     }
-    // submit/cancel intentionally not in deps — calling .reset() inside
-    // a deps array on those would re-fire on every mutation update.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // Esc to close (but only when there's no in-flight job — closing
-  // mid-submit would lose the SSE handle; the user must explicitly
-  // cancel or wait).
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -138,9 +113,6 @@ export function PublishToHFModal({
         private: isPrivate,
         hf_token: token,
         checkpoint: selectedCheckpoint || undefined,
-        // Advanced overrides — only sent when populated. Server defaults
-        // (latest checkpoint metadata for lora_alpha, generated commit
-        // message) apply otherwise.
         lora_alpha:
           parsedLoraAlphaForValidation !== undefined && !loraAlphaIsInvalid
             ? parsedLoraAlphaForValidation
@@ -148,12 +120,9 @@ export function PublishToHFModal({
         commit_message:
           commitMessage.trim() === "" ? undefined : commitMessage,
       });
-      // Once submitted, drop the token from React state so it can't
-      // leak into a console.log of the component tree.
       setToken("");
       setHasSubmitted(true);
     } catch {
-      // Error surfaces via submit.error in the UI.
     }
   };
 
@@ -242,7 +211,7 @@ export function PublishToHFModal({
           />
         )}
 
-        {/* Visually-hidden status for screen readers + e2e selectors. */}
+        {                                                                }
         <span className="sr-only" aria-live="polite">
           {hasSubmitted
             ? `Publish phase ${inFlightPhase ?? "loading"}`
@@ -254,10 +223,6 @@ export function PublishToHFModal({
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Pre-submit form
-// ---------------------------------------------------------------------------
 
 interface PublishFormProps {
   mode: PublishMode;
@@ -441,10 +406,6 @@ function PublishForm(p: PublishFormProps) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Post-submit progress view
-// ---------------------------------------------------------------------------
-
 const PHASE_LABEL: Record<PublishPhase, string> = {
   queued: "Waiting for SLURM…",
   validating: "Reading checkpoint…",
@@ -598,11 +559,6 @@ function PublishProgress({
   );
 }
 
-/**
- * Live tail of the publish job's publish.log. Collapsed by default;
- * the modal opens it automatically on phase=error so the user lands
- * on the actual stderr without an extra click.
- */
 function PublishLogTail({
   jobHash,
   forceOpen,
@@ -613,7 +569,6 @@ function PublishLogTail({
   const [open, setOpen] = useState(false);
   const [lines, setLines] = useState<LogLine[]>([]);
   const scrollRef = useRef<HTMLPreElement>(null);
-  // Auto-open on error.
   useEffect(() => {
     if (forceOpen) setOpen(true);
   }, [forceOpen]);
@@ -636,7 +591,6 @@ function PublishLogTail({
     return () => controller.abort();
   }, [jobHash, open]);
 
-  // Auto-scroll to bottom as new lines arrive.
   useEffect(() => {
     if (!open) return;
     const el = scrollRef.current;
@@ -675,11 +629,6 @@ function PhaseDot({ phase }: { phase: PublishPhase }) {
   return <span className={`h-2 w-2 rounded-full ${cls}`} aria-hidden />;
 }
 
-// ---------------------------------------------------------------------------
-// Mode selector — unchanged from Phase 0 except labels match the new
-// Mode 1 (PEFT adapter, vs the old "raw checkpoint" framing).
-// ---------------------------------------------------------------------------
-
 interface AdvancedOptionsProps {
   mode: PublishMode;
   open: boolean;
@@ -691,13 +640,6 @@ interface AdvancedOptionsProps {
   setCommitMessage: (s: string) => void;
 }
 
-/**
- * Phase 3 advanced-options pane. lora_alpha override is only
- * meaningful for merged mode — adapter-mode publishes the alpha that
- * was actually trained with (encoded in the adapter_config), so an
- * override there would silently be ignored. Hide it when adapter
- * mode is selected to avoid the confusing-no-op.
- */
 function AdvancedOptions({
   mode,
   open,
@@ -863,5 +805,4 @@ function formatAgo(ms: number): string {
   return `${Math.floor(h / 24)}d`;
 }
 
-// Exported only so vitest can verify the regex without a full DOM mount.
 export const __test = { REPO_ID_RE, formatCheckpointLabel };

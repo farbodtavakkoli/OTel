@@ -83,7 +83,6 @@ async def get_request_endpoint(request_id: str):
     return await get_request_detail(request_id)
 
 
-
 @generate_router.get("/endpoints")
 async def list_routes():
     routes = [

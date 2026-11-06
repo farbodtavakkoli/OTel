@@ -1,14 +1,3 @@
-/**
- * BlackHoleCanvas — a raymarched Schwarzschild black hole rendered on a
- * fullscreen quad via plain WebGL1. Shader ported from the reference
- * three.js sketch; we skip three.js here because the only thing it was
- * doing was setting up a quad + ShaderMaterial, which is ~40 lines of
- * GL. No new ~600 KB dependency for the home page.
- *
- * Interaction: drag to orbit, wheel to zoom, idle-spin after 2.5 s of
- * no input.
- */
-
 import { useEffect, useRef } from "react";
 
 const VERT_SRC = `
@@ -150,7 +139,6 @@ void main() {
 
 interface BlackHoleCanvasProps {
   className?: string;
-  /** Internal render scale; 0.5 halves both axes before the browser upsizes. */
   quality?: number;
 }
 
@@ -169,15 +157,12 @@ export function BlackHoleCanvas({
       powerPreference: "high-performance",
     }) as WebGLRenderingContext | null;
     if (!gl) {
-      // Leave the canvas blank — the surrounding gradient keeps the layout
-      // from collapsing, and we don't want to force-error the page.
       return;
     }
 
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")
       .matches;
 
-    // ---- program -------------------------------------------------------
     const program = linkProgram(gl, VERT_SRC, FRAG_SRC);
     if (!program) return;
 
@@ -199,7 +184,6 @@ export function BlackHoleCanvas({
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
-    // ---- camera state --------------------------------------------------
     let theta = 0.7;
     let phi = Math.PI / 2 - 0.16;
     let radius = 13;
@@ -287,7 +271,6 @@ export function BlackHoleCanvas({
     ro.observe(canvas);
     resize();
 
-    // ---- render loop ---------------------------------------------------
     const start = performance.now();
     let raf = 0;
     let running = true;
@@ -308,8 +291,6 @@ export function BlackHoleCanvas({
       if (!running) return;
       const now = performance.now();
 
-      // Idle spin so the page stays alive if the user isn't interacting.
-      // Reduced motion: freeze the camera entirely.
       if (!reduced && !dragging && now - lastInteraction > 2500) {
         theta += 0.0013;
       }
@@ -319,7 +300,6 @@ export function BlackHoleCanvas({
       const cz = radius * Math.sin(phi) * Math.sin(theta);
       gl!.uniform3f(uCamPos, cx, cy, cz);
 
-      // Build look-at basis (right, up, -forward) targeting the origin.
       const fx = -cx,
         fy = -cy,
         fz = -cz;
@@ -327,7 +307,6 @@ export function BlackHoleCanvas({
       const fwX = fx / fl,
         fwY = fy / fl,
         fwZ = fz / fl;
-      // right = fwd x worldUp(0,1,0)
       let rx = fwY * 0 - fwZ * 1;
       let ry = fwZ * 0 - fwX * 0;
       let rz = fwX * 1 - fwY * 0;
@@ -335,12 +314,10 @@ export function BlackHoleCanvas({
       rx /= rl;
       ry /= rl;
       rz /= rl;
-      // up = right x fwd
       const uxv = ry * fwZ - rz * fwY;
       const uyv = rz * fwX - rx * fwZ;
       const uzv = rx * fwY - ry * fwX;
 
-      // Column-major 3x3: columns are right, up, -forward.
       gl!.uniformMatrix3fv(
         uCamRot,
         false,

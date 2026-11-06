@@ -1,13 +1,3 @@
-"""
-Unit tests for get_request_detail.
-
-Contract (see docs/inference-request-browser.md §4.2):
-- 64-char hex ids only — anything else is 400 before any FS call.
-- Missing request file → 404.
-- Missing optional files (response, status) → null in payload, no error.
-- Files larger than the display cap → placeholder, not 500.
-"""
-
 import hashlib
 import json
 import os
@@ -106,8 +96,6 @@ async def test_oversize_request_returns_placeholder(upload_dir, monkeypatch):
     rid = _hex_id("huge")
     path = os.path.join(upload_dir, f"{rid}.json")
 
-    # Write a small file, then lie about its size via a getsize patch
-    # so we don't have to actually allocate 5+ MB on disk in CI.
     with open(path, "w") as f:
         json.dump([{"prompt": "tiny"}], f)
 
@@ -134,7 +122,6 @@ async def test_corrupt_response_returns_unreadable_placeholder(upload_dir):
     rid = _hex_id("corrupt-resp")
     with open(os.path.join(upload_dir, f"{rid}.json"), "w") as f:
         json.dump([{"prompt": "x"}], f)
-    # Truncated response file (mid-write race in production).
     with open(os.path.join(upload_dir, f"{rid}_response.json"), "w") as f:
         f.write('{"current_index": 1, "tot')
 

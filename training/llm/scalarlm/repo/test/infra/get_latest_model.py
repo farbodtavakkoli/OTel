@@ -15,7 +15,6 @@ class TestGetLatestModel(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             get_latest_model()
 
-
     @patch("cray_infra.training.get_latest_model.get_config")
     def test_empty_training_job_directory(self, mock_get_config):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -37,7 +36,7 @@ class TestGetLatestModel(unittest.TestCase):
             model0 = temp_path / "model0"
             model0.mkdir()
             (model0 / "status.json").write_text('{"start_time": 2000, "history":[]}')
-    
+
             latest_model = get_latest_model()
             self.assertEqual(latest_model, "model0")
 
@@ -63,9 +62,3 @@ class TestGetLatestModel(unittest.TestCase):
 
             latest_model = get_latest_model()
             assert latest_model == "model1"
-
-
-
-    
-
-

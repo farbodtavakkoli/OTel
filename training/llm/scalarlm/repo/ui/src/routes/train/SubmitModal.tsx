@@ -23,12 +23,8 @@ import {
 } from "@/lib/trainArgsSchema";
 
 const LAST_ARGS_KEY = "submit.lastTrainArgs";
-const MAX_DATASET_BYTES = 10 * 1024 * 1024 * 1024; // 10 GB, matches config.max_upload_file_size
+const MAX_DATASET_BYTES = 10 * 1024 * 1024 * 1024;
 
-// Tiny canned dataset for the "Paste example" affordance. Ten arithmetic
-// pairs — small enough to overfit on a tiny model in seconds, useful enough
-// to sanity-check the round trip from submit to /chat without staring at a
-// blank textarea wondering what the file format is.
 const EXAMPLE_JSONL = [
   { input: "What is 1 + 1?", output: "2" },
   { input: "What is 2 + 2?", output: "4" },
@@ -60,10 +56,6 @@ export function SubmitModal({ open, onClose }: SubmitModalProps) {
   const [dragging, setDragging] = useState(false);
 
   const [args, setArgs] = useState<TrainArgs>(() => {
-    // First-time defaults: seed llm_name from the running vLLM model rather
-    // than the schema's hardcoded HF id. Saved args from a previous successful
-    // submission win over both, so a user who explicitly picked something else
-    // last time keeps that preference.
     const saved = readJson<unknown>(LAST_ARGS_KEY, null);
     const parsed = trainArgsSchema.safeParse(saved);
     if (parsed.success) return parsed.data;
@@ -79,10 +71,6 @@ export function SubmitModal({ open, onClose }: SubmitModalProps) {
   const [progress, setProgress] = useState<SubmitProgress | null>(null);
   const submit = useSubmitTrainingJob();
 
-  // On CPU-only deployments (gpu_count === 0) the server's validate_gpu_request
-  // rejects gpus≥1 with HTTP 400. Auto-flip the default to 0 once, when we
-  // learn the cluster has no GPUs, but only if the user hasn't customized
-  // gpus themselves. The ref makes the flip a one-shot per modal lifetime.
   const gpuCountQuery = useGpuCount();
   const gpuAutoFlipped = useRef(false);
   useEffect(() => {
@@ -103,7 +91,6 @@ export function SubmitModal({ open, onClose }: SubmitModalProps) {
 
   const validation = useMemo(() => validateTrainArgs(args), [args]);
 
-  // Advanced JSON view takes precedence if edited: parse on commit.
   const commitRaw = () => {
     try {
       const parsed = JSON.parse(rawJson);
@@ -157,7 +144,6 @@ export function SubmitModal({ open, onClose }: SubmitModalProps) {
       onClose();
       if (hash) navigate(`/train/${hash}`);
     } catch {
-      // Error surfaced via submit.error
     } finally {
       setProgress(null);
     }
@@ -437,9 +423,8 @@ function TrainArgsForm({
         onChange={(v) => update("gradient_accumulation_steps", v)}
         error={errors.gradient_accumulation_steps}
       />
-      {/* GPUs is exposed because CPU-only dev clusters need gpus=0 to bypass
-          the server-side validate_gpu_request check; production users with GPU
-          nodes normally leave the default. */}
+      {
+                                              }
       <NumberField
         label={TRAIN_ARGS_FIELD_META.gpus.label}
         hint={TRAIN_ARGS_FIELD_META.gpus.hint}

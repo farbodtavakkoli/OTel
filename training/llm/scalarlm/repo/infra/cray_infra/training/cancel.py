@@ -33,7 +33,6 @@ async def cancel(job_hash: str):
                 detail=f"Training job was not found at {job_directory_path}",
             )
 
-        # Get job config
         job_config = None
 
         config_filepath = os.path.join(job_directory_path, "config.yaml")
@@ -55,7 +54,6 @@ async def cancel(job_hash: str):
         logger.info(f"Job status before cancellation: {job_status}")
 
         try:
-            # Cancel SLURM job
             slurm_job_id = job_status['job_id']
 
             scancel_output = subprocess.check_output(

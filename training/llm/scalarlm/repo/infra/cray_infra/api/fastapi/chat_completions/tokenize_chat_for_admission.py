@@ -1,17 +1,3 @@
-"""Ask the running vLLM server for the authoritative chat prompt length.
-
-ScalarLM's API and vLLM can run in separate pods. In particular, a vLLM-only
-pod can receive ``--chat-template`` through ``SCALARLM_VLLM_ARGS`` while the
-API pod neither sees that argument nor necessarily has the same renderer
-state. Both supported vLLM lines (0.26 and 0.27) expose ``POST /tokenize``;
-that handler uses the same configured template and OnlineRenderer as chat
-inference and returns both the token count and runtime context window.
-
-The payload is deliberately constructed from a small allowlist. A caller can
-influence the validated messages, tools, and two safe template variables, but
-can never supply the endpoint's top-level ``chat_template`` override.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -27,11 +13,6 @@ from cray_infra.util.get_config import get_config
 
 logger = logging.getLogger(__name__)
 
-# The shared aiohttp session otherwise uses its five-minute default. This call
-# runs on every queued chat admission, so a half-open vLLM connection must not
-# hold an API request for minutes. Large prompts can still take several seconds
-# to tokenize; on timeout we deliberately fail open and let the worker/runtime
-# perform the authoritative validation.
 _TOKENIZE_TIMEOUT_SECONDS = 30.0
 
 
@@ -42,8 +23,6 @@ class AdmissionTokenization:
 
 
 class VLLMTokenizeRequestError(Exception):
-    """A deterministic 4xx from vLLM's tokenization endpoint."""
-
     def __init__(self, *, status_code: int, detail: str):
         self.status_code = status_code
         self.detail = detail
@@ -53,14 +32,6 @@ class VLLMTokenizeRequestError(Exception):
 async def tokenize_chat_for_admission(
     *, model: str, chat_request: dict[str, Any]
 ) -> AdmissionTokenization | None:
-    """Return vLLM's rendered prompt count and context window.
-
-    Network errors, 5xx responses, and malformed success payloads fail open:
-    the handler skips its optional pre-admission length check and lets vLLM
-    validate the queued request. A 4xx is deterministic for this request, so
-    it is surfaced to the client instead of enqueuing work that will fail in
-    the same renderer moments later.
-    """
     payload = _build_tokenize_payload(model=model, chat_request=chat_request)
     url = get_config()["vllm_api_url"] + "/tokenize"
 
@@ -105,7 +76,6 @@ async def tokenize_chat_for_admission(
 def _build_tokenize_payload(
     *, model: str, chat_request: dict[str, Any]
 ) -> dict[str, Any]:
-    """Build the safe subset shared by vLLM 0.26/0.27 TokenizeChatRequest."""
     payload: dict[str, Any] = {
         "model": model,
         "messages": chat_request["messages"],

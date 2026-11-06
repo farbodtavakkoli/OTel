@@ -1,14 +1,3 @@
-/**
- * DatasetPanel — paginated, searchable view of a training job's
- * dataset.jsonlines. Fetches GET /v1/megatron/train/{hash}/dataset.
- *
- * Collapsed by default; the underlying query only fires when expanded,
- * so opening the train-detail page costs zero dataset bytes until the
- * user asks for them.
- *
- * See ui/docs/dataset-viewer.md for the design.
- */
-
 import { useEffect, useMemo, useState } from "react";
 
 import { ApiError } from "@/api/client";
@@ -31,11 +20,8 @@ export function DatasetPanel({ jobHash }: DatasetPanelProps) {
   const [searchInput, setSearchInput] = useState("");
   const [q, setQ] = useState("");
   const [offset, setOffset] = useState(0);
-  // Index into the current page's `examples` array (not the global
-  // dataset row index). null = no row open.
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
 
-  // Debounce the search input and reset paging when the query changes.
   useEffect(() => {
     const handle = setTimeout(() => {
       const trimmed = searchInput.trim();
@@ -47,7 +33,6 @@ export function DatasetPanel({ jobHash }: DatasetPanelProps) {
     return () => clearTimeout(handle);
   }, [searchInput, q]);
 
-  // Gate the network call on `open` — passing undefined disables the hook.
   const { data, error, isPending, isFetching, refetch } = useTrainingDataset(
     open ? jobHash : undefined,
     { offset, limit: PAGE_SIZE, q },
@@ -84,11 +69,8 @@ export function DatasetPanel({ jobHash }: DatasetPanelProps) {
       }
       action={
         <div className="flex items-center gap-2">
-          {/* Download is available even while collapsed: the anchor streams
-              through the browser and fetches nothing until clicked, so it
-              doesn't break the panel's "no bytes until Show" promise. Once
-              open with a known row count we show the richer sample/all
-              buttons instead. */}
+          {
+                                 }
           {open && total > 0 ? (
             <DownloadButtons jobHash={jobHash} total={total} />
           ) : !open ? (
@@ -218,12 +200,6 @@ export function DatasetPanel({ jobHash }: DatasetPanelProps) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Download buttons — plain anchor downloads so the file streams through
-// the browser rather than buffering through fetch + Blob (full datasets
-// can be GB-scale; loading them into JS memory would OOM the tab).
-
-/** Build the dataset download URL; with `limit` it downloads a sample. */
 export function datasetDownloadUrl(
   apiBase: string,
   jobHash: string,
@@ -233,8 +209,6 @@ export function datasetDownloadUrl(
   return limit !== undefined ? `${base}?limit=${limit}` : base;
 }
 
-/** Label for the full-dataset download. Generic when the row count is
- *  unknown (collapsed panel), abbreviated K/M otherwise. */
 export function downloadAllLabel(total?: number): string {
   if (total === undefined) return "Download";
   if (total >= 1_000_000) return `Download all (${Math.round(total / 1_000_000)}M rows)`;
@@ -244,8 +218,6 @@ export function downloadAllLabel(total?: number): string {
 
 interface DownloadButtonsProps {
   jobHash: string;
-  /** Row count; undefined when the panel is collapsed (count not yet
-   *  fetched) — we then render only a single generic "Download" link. */
   total?: number;
 }
 
@@ -279,8 +251,6 @@ function DownloadButtons({ jobHash, total }: DownloadButtonsProps) {
   );
 }
 
-// ---------------------------------------------------------------------------
-
 interface ExampleRowProps {
   index: number;
   input?: string;
@@ -298,8 +268,6 @@ function ExampleRow({
   truncatedFields,
   onOpen,
 }: ExampleRowProps) {
-  // If neither `input` nor `output` is present, fall back to dumping raw JSON
-  // so datasets with unusual schemas still render something.
   const hasCanonical =
     typeof input === "string" || typeof output === "string";
 
@@ -314,9 +282,6 @@ function ExampleRow({
   return (
     <li
       role="listitem"
-      // Whole row is the click target — full content lives in the modal,
-      // not inline. Keep <button> semantics for keyboard reachability
-      // (Enter/Space) and a visible focus ring.
       className="cursor-pointer transition-colors hover:bg-bg-hover/60 focus-within:bg-bg-hover/60"
     >
       <button
@@ -389,11 +354,6 @@ function EmptyNotice({ title, body }: { title: string; body: string }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Detail modal — full input/output for one dataset row, with prev/next
-// keyboard nav across rows on the current page.
-// ---------------------------------------------------------------------------
-
 interface DatasetExample {
   index: number;
   input?: string;
@@ -427,8 +387,6 @@ function DatasetExampleModal({
     }
   }, [example.raw]);
 
-  // Esc closes; ←/→ step through neighbors. Listening on document so
-  // the user doesn't have to focus a specific element first.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {

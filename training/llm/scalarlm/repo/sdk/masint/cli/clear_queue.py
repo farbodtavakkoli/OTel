@@ -8,7 +8,6 @@ logger = logging.getLogger(__name__)
 
 
 def clear_queue():
-
     logger.info(f"Clearing inference queue...")
 
     try:

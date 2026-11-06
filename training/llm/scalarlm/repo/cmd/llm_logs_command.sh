@@ -18,12 +18,10 @@ log_command_parts=(
 
 echo $tail
 
-# If tail exists, add it to the command
 if [ -n "$tail" ]; then
     log_command_parts+=("--tail")
 fi
 
-# If follow exists, add it to the command
 if [ -n "$follow" ]; then
     log_command_parts+=("--follow")
 fi
@@ -41,5 +39,4 @@ docker_command_parts+=("cray:latest" "sh" "-c" "'$log_command'")
 docker_command="${docker_command_parts[*]}"
 echo $docker_command
 eval $docker_command
-
 

@@ -1,14 +1,4 @@
 #!/usr/bin/env python3
-"""
-Test observability implementation.
-
-This script verifies that:
-1. FastAPI server exposes /v1/metrics endpoint
-2. Prometheus metrics are being collected
-3. Queue metrics are tracked
-4. Structured logging is working
-"""
-
 import requests
 import time
 import json
@@ -16,7 +6,6 @@ import sys
 
 
 def test_metrics_endpoint(base_url="http://localhost:8000"):
-    """Test that the Prometheus metrics endpoint is available."""
     print("\n=== Testing Metrics Endpoint ===")
 
     try:
@@ -27,7 +16,6 @@ def test_metrics_endpoint(base_url="http://localhost:8000"):
             metrics_text = response.text
             print(f"✓ Metrics content length: {len(metrics_text)} bytes")
 
-            # Check for expected metrics
             expected_metrics = [
                 "scalarlm_queue_depth",
                 "scalarlm_queue_wait_time_seconds",
@@ -58,7 +46,6 @@ def test_metrics_endpoint(base_url="http://localhost:8000"):
 
 
 def test_health_endpoint(base_url="http://localhost:8000"):
-    """Test that the health endpoint is accessible."""
     print("\n=== Testing Health Endpoint ===")
 
     try:
@@ -79,12 +66,10 @@ def test_health_endpoint(base_url="http://localhost:8000"):
 
 
 def test_queue_metrics(base_url="http://localhost:8000"):
-    """Test that queue metrics are being tracked."""
     print("\n=== Testing Queue Metrics ===")
 
     try:
-        # Try to get the actual loaded model
-        model_name = "test-model"  # Default fallback
+        model_name = "test-model"
         try:
             vllm_response = requests.get(f"{base_url.replace('8000', '8001')}/v1/models", timeout=2)
             if vllm_response.status_code == 200:
@@ -93,13 +78,11 @@ def test_queue_metrics(base_url="http://localhost:8000"):
                     model_name = models[0]["id"]
                     print(f"Using detected model: {model_name}")
         except:
-            pass  # Use fallback if detection fails
+            pass
 
-        # Make a test request to generate queue activity
-        # Note: API expects "prompts" (list) not "prompt" (string)
         test_payload = {
             "model": model_name,
-            "prompts": ["Hello, world!"],  # prompts is a list
+            "prompts": ["Hello, world!"],
             "max_tokens": 10
         }
 
@@ -107,14 +90,8 @@ def test_queue_metrics(base_url="http://localhost:8000"):
         response = requests.post(
             f"{base_url}/v1/generate",
             json=test_payload,
-            timeout=10  # Increased timeout for actual inference
+            timeout=10
         )
-
-        # Accept various status codes:
-        # - 200: Success
-        # - 202: Accepted (async processing)
-        # - 404: Model not found (but request was processed by our code)
-        # - 500: Internal error (but request reached our code)
 
         if response.status_code in [200, 202]:
             print(f"✓ Request submitted successfully: {response.status_code}")
@@ -123,23 +100,19 @@ def test_queue_metrics(base_url="http://localhost:8000"):
             print(f"⚠ Request processed but failed: {response.status_code}")
             print(f"   This is OK for metrics test - we just need to verify metrics were updated")
             print(f"   Error: {response.text[:200]}")
-            success = True  # Still test metrics
+            success = True
         else:
             print(f"✗ Unexpected status code: {response.status_code}")
             print(f"   Response: {response.text}")
             return False
 
         if success:
-            # Wait a moment for metrics to update
             time.sleep(0.5)
 
-            # Check metrics again
             metrics_response = requests.get(f"{base_url}/v1/metrics", timeout=5)
             metrics_text = metrics_response.text
 
-            # Look for queue metrics
             if "scalarlm_queue_depth" in metrics_text:
-                # Extract queue depth value
                 for line in metrics_text.split("\n"):
                     if "scalarlm_queue_depth{" in line and not line.startswith("#"):
                         print(f"✓ Queue depth metric found: {line.strip()}")
@@ -157,17 +130,9 @@ def test_queue_metrics(base_url="http://localhost:8000"):
 
 
 def test_prometheus_scraping(prometheus_url="http://localhost:9090"):
-    """
-    Test that Prometheus is scraping ScalarLM metrics.
-
-    Note: This test is OPTIONAL and will be skipped if Prometheus is not running.
-    To run the full observability stack, use:
-        docker-compose -f docker-compose.observability.yaml up -d
-    """
     print("\n=== Testing Prometheus Scraping (Optional) ===")
 
     try:
-        # Query Prometheus for ScalarLM metrics
         query = "up{job='scalarlm-api'}"
         response = requests.get(
             f"{prometheus_url}/api/v1/query",
@@ -198,7 +163,6 @@ def test_prometheus_scraping(prometheus_url="http://localhost:9090"):
 
 
 def main():
-    """Run all observability tests."""
     print("=" * 60)
     print("ScalarLM Observability Test Suite")
     print("=" * 60)
@@ -239,7 +203,6 @@ def main():
 
     print(f"\nTotal: {passed} passed, {failed} failed, {skipped} skipped")
 
-    # Determine if this was a quick or full test
     if skipped > 0:
         print("\n✓ Core instrumentation tests PASSED (Quick Test Mode)")
         print("  Some tests were skipped because observability stack is not running.")

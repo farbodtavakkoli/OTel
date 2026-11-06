@@ -1,4 +1,5 @@
 import ast
+import logging
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,53 @@ import torch
 from cray_megatron.models.training_precision import prepare_training_precision
 
 ROOT = Path(__file__).resolve().parents[2] / "ml/cray_megatron"
+ROOT_CASES = [("repo", ROOT), ("mirror", ROOT.parents[2] / "ml/cray_megatron")]
+ROOTS = [pytest.param(root, id=name) for name, root in ROOT_CASES if root.is_dir()]
+
+
+def _get_optimizer(root, model, config):
+    path = root / "megatron/training_loop.py"
+    tree = ast.parse(path.read_text())
+    env = {
+        "get_job_config": lambda: config,
+        "logger": logging.getLogger(__name__),
+        "AdamW": torch.optim.AdamW,
+        "SGD": torch.optim.SGD,
+        "RMSprop": torch.optim.RMSprop,
+    }
+    nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "get_optimizer"]
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), "exec"), env)
+    return env["get_optimizer"](model)
+
+
+@pytest.mark.parametrize("root", ROOTS)
+@pytest.mark.parametrize("storage_dtype", [torch.float32, torch.bfloat16])
+@pytest.mark.parametrize("optimizer_type,expected", [
+    (None, torch.optim.AdamW),
+    ("adamw", torch.optim.AdamW),
+    ("sgd", torch.optim.SGD),
+    ("rmsprop", torch.optim.RMSprop),
+    ("unknown", torch.optim.AdamW),
+])
+def test_optimizer_dispatch_preserves_trainable_only(root, storage_dtype, optimizer_type, expected):
+    model = torch.nn.Linear(2, 2, dtype=storage_dtype)
+    model.bias.requires_grad_(False)
+    config = {"learning_rate": 0.01}
+    if optimizer_type is not None:
+        config["optimizer_type"] = optimizer_type
+    optimizer = _get_optimizer(root, model, config)
+    assert type(optimizer) is expected
+    assert optimizer.param_groups[0]["lr"] == 0.01
+    assert len(optimizer.param_groups[0]["params"]) == 1
+    assert optimizer.param_groups[0]["params"][0] is model.weight
+
+
+@pytest.mark.parametrize("optimizer_type", ["adamw", "sgd", "rmsprop", "unknown"])
+def test_job_config_preserves_explicit_optimizer(optimizer_type):
+    from cray_infra.util.default_job_config import JobConfig
+    config = JobConfig(job_directory="job", training_data_path="data", dataset_hash="hash", optimizer_type=optimizer_type)
+    assert config.optimizer_type == optimizer_type
+    assert config.training_storage_dtype == "bfloat16"
 
 
 def test_bf16_storage_preserves_frozen_parameters():
@@ -31,7 +79,6 @@ def test_peft_precision_with_promoted_adapters(
 ):
     from peft import LoraConfig, get_peft_model
     from transformers import LlamaConfig, LlamaForCausalLM
-    from cray_megatron.megatron.compensated_adamw import CompensatedAdamW
 
     torch.manual_seed(7)
     base = LlamaForCausalLM(LlamaConfig(
@@ -49,8 +96,8 @@ def test_peft_precision_with_promoted_adapters(
     assert prepare_training_precision(model, storage_dtype) == expected_compute
     assert model._training_compute_dtype == expected_compute
     assert {p.dtype for p in trainable} == {expected_storage}
-    optimizer_cls = CompensatedAdamW if expected_storage == torch.bfloat16 else torch.optim.AdamW
-    optimizer = optimizer_cls(trainable, lr=1e-2)
+    optimizer = _get_optimizer(ROOT, model, {"learning_rate": 1e-2, "optimizer_type": "adamw"})
+    assert type(optimizer) is torch.optim.AdamW
     before = [p.detach().clone() for p in trainable]
     tokens = torch.tensor([[1, 2, 3, 4]])
     with torch.autocast("cpu", dtype=torch.bfloat16, enabled=expected_compute is not None):
@@ -117,11 +164,11 @@ def test_chunked_causal_loss_no_targets_is_finite_zero():
 
 
 @pytest.mark.parametrize("mode", ["language_model", "grpo"])
-def test_default_language_precision_is_compensated_bf16(mode):
+def test_default_language_precision_is_adamw_bf16(mode):
     from cray_infra.util.default_job_config import JobConfig
     config = JobConfig(job_directory="job", training_data_path="data", dataset_hash="hash", training_mode=mode)
     assert config.training_storage_dtype == "bfloat16"
-    assert config.optimizer_type == "compensated_adamw"
+    assert config.optimizer_type == "adamw"
     explicit = JobConfig(job_directory="job", training_data_path="data", dataset_hash="hash", training_mode=mode, training_storage_dtype="float32")
     assert explicit.training_storage_dtype == "float32" and explicit.optimizer_type == "adamw"
 
@@ -132,8 +179,10 @@ def test_non_language_precision_defaults_remain_unchanged():
     assert config.training_storage_dtype == "float32" and config.optimizer_type == "adamw"
 
 
-def test_grpo_and_sft_precision_are_wired():
-    source = (ROOT / "models/load_model.py").read_text()
+@pytest.mark.parametrize("root", ROOTS)
+def test_grpo_and_sft_precision_are_wired(root):
+    source = (root / "models/load_model.py").read_text()
     assert 'in ("language_model", "grpo")' in source
     assert 'prepare_training_precision(model_info["model"], storage_dtype)' in source
-    assert 'BF16 training storage requires compensated_adamw' in source
+    assert 'if job_config.get("training_mode") == "language_model" and job_config.get("training_storage_dtype") == "bfloat16":' in source
+    assert 'model_info["model"].loss_function = chunked_causal_loss' in source

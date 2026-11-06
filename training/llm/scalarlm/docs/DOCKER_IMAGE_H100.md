@@ -85,8 +85,10 @@ Notes:
    the second rank.
 3. Serve fine tuned adapters at tensor parallel size 1. The base model can use
    `SCALARLM_TENSOR_PARALLEL_SIZE`.
-4. Write job output to fast local disk. The final full parameter checkpoint (about 171 GB for
-   Glimmer 30B) must finish inside the 10 minute NCCL barrier timeout.
+4. Write job output to fast local disk. Checkpoint save time must stay below the NCCL timeout
+   configured by `process_group_timeout_seconds` (default 3600 seconds). Historical compensated
+   BF16 Glimmer 30B checkpoints, including optimizer state and rounding residual, were about
+   226.7 GB. The ordinary AdamW checkpoint size has not yet been measured.
 5. LoRA runs under `pytorch_fsdp` save only the trainable weights (about 1.3 GB per step for
    Glimmer 30B). Full parameter runs save the whole model.
 6. `flash_attention_2` is mapped to `sdpa` by the loader.

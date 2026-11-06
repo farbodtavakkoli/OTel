@@ -1,8 +1,3 @@
-/**
- * Unit tests for the regex helper backing the Inference Requests
- * page filter input. See docs/inference-request-browser.md §5.
- */
-
 import { describe, expect, it } from "vitest";
 
 import {

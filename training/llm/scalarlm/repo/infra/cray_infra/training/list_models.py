@@ -23,12 +23,6 @@ async def list_models():
 
     models = []
 
-    # Synology FIRST so it wins on hash collisions in the dedup below
-    # (`if name not in job_dirs`). Synology is the canonical post-COMPLETED
-    # archive written by the post-completion copy; PVC entries are kept
-    # for in-progress runs that haven't been archived yet, so PVC-only
-    # hashes still surface, but a hash present in both shows the archived
-    # copy.
     bases = []
     synology_dir = "/mnt/synology/jobs"
     if os.path.exists(synology_dir):
@@ -42,10 +36,6 @@ async def list_models():
 
     registered_models = set(get_vllm_model_manager().get_registered_models())
 
-    # Filter to entries that look like training job directories. The jobs
-    # folder is often a mount point whose filesystem injects artifacts
-    # (lost+found on ext*, .Trash-* on some NAS setups); `launch_training_job`
-    # writes config.yaml at creation time, so use that as the ground truth.
     job_dirs = {}
     for base in bases:
         if not os.path.isdir(base):
@@ -109,8 +99,6 @@ def get_train_time(status):
     return last_time
 
 def get_loss(status):
-
-    # Compute expontial moving average of loss with alpha=0.9
     history = status.get("history", [])
 
     if len(history) == 0:

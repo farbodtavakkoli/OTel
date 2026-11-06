@@ -1,14 +1,3 @@
-"""
-Unit tests for render_chat_template.
-
-Contract (see docs/openai-chat-completions-queue.md §4):
-- Exactly one of `messages` or `prompt` must be set.
-- `prompt` is a raw passthrough (returned unchanged).
-- `messages` runs through the model's tokenizer chat template.
-- Tokenizer instances are cached per-model — repeated calls on the
-  same model don't reload.
-"""
-
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -18,7 +7,6 @@ from cray_infra.api.fastapi.chat_completions import render_chat_template as rct
 
 @pytest.fixture(autouse=True)
 def _reset_tokenizer_cache():
-    """Each test gets a fresh cache so cross-test ordering doesn't matter."""
     rct._tokenizer_cache.clear()
     rct._source_cache.clear()
     yield
@@ -157,27 +145,16 @@ def test_neither_set_raises_value_error():
 
 
 def test_empty_messages_list_treated_as_unset():
-    """
-    `messages=[]` is meaningless — no turns to render. Treat the same
-    as unset so the caller learns about the bug from the ValueError
-    rather than an opaque tokenizer failure.
-    """
     with pytest.raises(ValueError, match="exactly one"):
         rct.render_chat_template(model="any-model", messages=[], prompt=None)
 
 
 def test_empty_prompt_treated_as_unset():
-    """Same reasoning as the empty-messages case — empty string is suspicious."""
     with pytest.raises(ValueError, match="exactly one"):
         rct.render_chat_template(model="any-model", messages=None, prompt="")
 
 
 def test_tokenizer_cached_per_model():
-    """
-    Repeated calls on the same model name must reuse the same tokenizer
-    instance. Otherwise we'd reload the tokenizer (a multi-MB-disk-read,
-    seconds-long operation) on every chat completion.
-    """
     fake = _fake_tokenizer()
     with patch.object(
         rct, "_load_tokenizer_from_pretrained", return_value=fake
@@ -192,7 +169,6 @@ def test_tokenizer_cached_per_model():
 
 
 def test_tokenizer_loaded_per_distinct_model():
-    """Distinct model names get distinct tokenizers."""
     fake_a = _fake_tokenizer("A")
     fake_b = _fake_tokenizer("B")
     sequence = iter([fake_a, fake_b])
@@ -216,14 +192,6 @@ def test_tokenizer_loaded_per_distinct_model():
 
 
 def test_lora_adapter_dir_falls_back_to_base_tokenizer(tmp_path, monkeypatch):
-    """
-    A trained-model hash that names a LoRA adapter directory (only `.pt`
-    files, no tokenizer config) must load the base model's tokenizer
-    instead of being handed verbatim to AutoTokenizer — otherwise
-    transformers treats the hash as an HF repo id and 401s against the
-    Hub. Regression test for the production trace where
-    `dcb1a490...c5b3bea24411c` resolved that way.
-    """
     base_model = "base/model"
     adapter_hash = "dcb1a490f3a3a055469f7815cb59f5a4a8888adac6d2d320337c5b3bea24411c"
     adapter_dir = tmp_path / adapter_hash
@@ -254,11 +222,6 @@ def test_lora_adapter_dir_falls_back_to_base_tokenizer(tmp_path, monkeypatch):
 
 
 def test_adapter_dir_with_tokenizer_files_uses_local_path(tmp_path, monkeypatch):
-    """
-    Forward-compat: if a future training job saves a full checkpoint
-    (its own tokenizer.json next to the weights), prefer that local
-    path over the base model — the local tokenizer is authoritative.
-    """
     base_model = "base/model"
     adapter_hash = "full-checkpoint-hash"
     adapter_dir = tmp_path / adapter_hash

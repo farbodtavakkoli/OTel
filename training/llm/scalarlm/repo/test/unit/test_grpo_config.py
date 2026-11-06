@@ -7,7 +7,7 @@ import types
 import pytest
 
 
-HERE = Path(__file__).resolve().parents[1]
+HERE = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture
@@ -35,7 +35,7 @@ def cli(monkeypatch, tmp_path):
     return parse
 
 
-@pytest.mark.parametrize("selected", [None, "haiku_reward"])
+@pytest.mark.parametrize("selected", [None, "grpo_judge_api"])
 def test_loop_selects_reward_module_and_records_its_rubric(modules, cli, monkeypatch, selected):
     utils, driver = modules
     args = cli(utils, "--steps", "0", "--warmup-steps", "0")
@@ -47,7 +47,7 @@ def test_loop_selects_reward_module_and_records_its_rubric(modules, cli, monkeyp
     def forbidden(*args, **kwargs):
         pytest.fail("zero-cycle reward selection must not score, roll out, or train")
 
-    for name in ("judge_reward", "haiku_reward"):
+    for name in ("grpo_judge_local", "grpo_judge_api"):
         reward = types.ModuleType(name)
         reward.RUBRIC_VERSION = f"test-{name}"
         reward.score_batch = forbidden
@@ -57,7 +57,7 @@ def test_loop_selects_reward_module_and_records_its_rubric(modules, cli, monkeyp
     output = Path(args.output_dir)
     output.mkdir()
     summary = driver.run_loop(args, [], "", driver.base_train_args(args, "targets"), False, str(output))
-    assert summary["rubric"] == f"test-{selected or 'judge_reward'}"
+    assert summary["rubric"] == f"test-{selected or 'grpo_judge_local'}"
     assert summary["n_cycles"] == 0
     assert summary["models"] == []
     assert json.loads((output / "summary.json").read_text())["rubric"] == summary["rubric"]
@@ -72,14 +72,15 @@ def test_unknown_reward_module_fails_before_rollout(modules, cli, monkeypatch):
     assert not Path(args.output_dir).exists()
 
 
-def test_cli_defaults_select_lora_grpo_and_compensated_bf16(modules, cli):
+def test_cli_defaults_select_lora_grpo_and_adamw_bf16(modules, cli):
     utils, driver = modules
     args = cli(utils)
+    assert args.optimizer_type == "adamw"
     config = driver.base_train_args(args, "targets")
     assert args.objective == "grpo"
     assert config["adapter_type"] == "lora"
     assert config["training_storage_dtype"] == "bfloat16"
-    assert config["optimizer_type"] == "compensated_adamw"
+    assert config["optimizer_type"] == "adamw"
     assert config["lora_config"] == {"r": 16, "lora_alpha": 32, "lora_dropout": 0.0,
                                      "target_modules": "targets", "use_rslora": False}
     assert config["training_mode"] == "grpo"
@@ -87,7 +88,7 @@ def test_cli_defaults_select_lora_grpo_and_compensated_bf16(modules, cli):
     assert config["init_optimizer_from_adapter"] is True
 
 
-@pytest.mark.parametrize("optimizer", ["compensated_adamw", "adamw", "sgd", "rmsprop"])
+@pytest.mark.parametrize("optimizer", ["adamw", "sgd", "rmsprop"])
 @pytest.mark.parametrize("storage", ["float32", "bfloat16"])
 def test_cli_optimizer_and_storage_overrides_round_trip(modules, cli, optimizer, storage):
     utils, driver = modules
@@ -97,9 +98,13 @@ def test_cli_optimizer_and_storage_overrides_round_trip(modules, cli, optimizer,
     assert config["training_storage_dtype"] == storage
 
 
-def test_float32_storage_defaults_to_adamw(modules, cli):
+@pytest.mark.parametrize("storage", ["float32", "bfloat16"])
+def test_storage_defaults_to_adamw(modules, cli, storage):
     utils, driver = modules
-    config = driver.base_train_args(cli(utils, "--training-storage-dtype", "float32"), "targets")
+    args = cli(utils, "--training-storage-dtype", storage)
+    assert args.optimizer_type == "adamw"
+    config = driver.base_train_args(args, "targets")
+    assert config["training_storage_dtype"] == storage
     assert config["optimizer_type"] == "adamw"
 
 

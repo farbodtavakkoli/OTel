@@ -1,23 +1,3 @@
-"""
-Unit tests for chat_completions_via_queue.
-
-The handler ties together the four foundation pieces (renderer,
-admission, router, coalescer) and returns a StreamingResponse backed
-by the heartbeat helper. Tests mock the singletons so the flow can be
-exercised without uvicorn / SQLite / a real model.
-
-Contract (see docs/openai-chat-completions-queue.md §5):
-- Uses vLLM's runtime /tokenize renderer for admission before constructing the
-  old-worker compatibility prompt.
-- 429 with Retry-After when admission threshold is exceeded.
-- Registers a correlation_id with the result router *before*
-  submitting to the coalescer so the worker can never resolve a cid
-  the router doesn't yet know about.
-- Returns a StreamingResponse with media_type=application/json.
-- The streaming generator unregisters the cid on completion or
-  cancellation (verified by the disconnect test).
-"""
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -37,7 +17,6 @@ _UNSET = object()
 
 
 def _request(messages=None, prompt_text=None, stream=False, **overrides):
-    """Build a minimal ChatCompletionRequest-shaped MagicMock."""
     if messages is None and prompt_text is None:
         messages = [{"role": "user", "content": "hi"}]
 
@@ -97,11 +76,6 @@ def fresh_estimator():
 
 @pytest.fixture
 def patched_components(fresh_router, fresh_estimator):
-    """
-    Patch the four singleton accessors the handler reaches through.
-    Returns the mock coalescer and a "queue depth" you can mutate
-    per-test.
-    """
     coalescer = MagicMock()
     coalescer.submit = AsyncMock()
 
@@ -194,10 +168,6 @@ async def test_safe_template_kwargs_are_used_for_accounting_render(
 
 @pytest.mark.asyncio
 async def test_registers_correlation_id_before_submitting(patched_components):
-    """
-    Submission must happen *after* router.register so the worker can
-    never resolve a cid that doesn't exist yet.
-    """
     submit_order: list = []
 
     coalescer = patched_components["coalescer"]
@@ -214,7 +184,6 @@ async def test_registers_correlation_id_before_submitting(patched_components):
 
     assert len(submit_order) == 1
     _, _, in_flight_at_submit = submit_order[0]
-    # The router was incremented before the submit ran.
     assert in_flight_at_submit == 1
 
 
@@ -222,7 +191,6 @@ async def test_registers_correlation_id_before_submitting(patched_components):
 async def test_correlation_id_passed_to_coalescer_matches_request_payload(
     patched_components,
 ):
-    """The correlation_id is in the request dict AND the coalescer sees it as the second arg."""
     coalescer = patched_components["coalescer"]
 
     captured: list = []
@@ -248,12 +216,6 @@ async def test_correlation_id_passed_to_coalescer_matches_request_payload(
 async def test_queue_payload_is_compatible_with_origin_main_worker(
     patched_components,
 ):
-    """Old workers accept only ``generate`` and ignore the new chat payload.
-
-    Keeping a rendered string prompt lets one finish in the legacy completion
-    path during an API-first rolling upgrade instead of failing immediately on
-    an unknown discriminator. Current workers detect ``chat_request`` first.
-    """
     captured = []
 
     async def capture(request, _correlation_id):
@@ -270,7 +232,6 @@ async def test_queue_payload_is_compatible_with_origin_main_worker(
 
 @pytest.mark.asyncio
 async def test_vllm_chat_controls_survive_queue_submission(patched_components):
-    """Reasoning controls, sampling, and tool definitions reach the worker."""
     coalescer = patched_components["coalescer"]
     captured = []
 
@@ -312,22 +273,8 @@ async def test_vllm_chat_controls_survive_queue_submission(patched_components):
     assert chat_request["chat_template_kwargs"] == {"reasoning_strength": "low"}
 
 
-# ---------------------------------------------------------------------------
-# max_tokens default
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_max_tokens_defaults_when_client_omits(patched_components):
-    """
-    The OpenAI SDK lets clients omit max_tokens. vLLM's
-    `request_output_to_completion_response` has a bare
-    `assert request.max_tokens is not None` — passing None all the
-    way through generates the response, then crashes building it
-    with an empty `AssertionError`. The handler must plug in a real
-    number from `default_max_output_tokens` so the worker never sees
-    None.
-    """
     patched_components["config"]["default_max_output_tokens"] = 256
     coalescer = patched_components["coalescer"]
     captured = []
@@ -347,7 +294,6 @@ async def test_max_tokens_defaults_when_client_omits(patched_components):
 async def test_max_tokens_passes_through_when_client_provides(
     patched_components,
 ):
-    """A client-supplied max_tokens wins over the default."""
     patched_components["config"]["default_max_output_tokens"] = 256
     coalescer = patched_components["coalescer"]
     captured = []
@@ -368,7 +314,6 @@ async def test_max_tokens_passes_through_when_client_provides(
 async def test_max_completion_tokens_takes_precedence_without_overwrite(
     patched_components,
 ):
-    """The replacement field wins over max_tokens and reaches vLLM intact."""
     coalescer = patched_components["coalescer"]
     captured = []
 
@@ -391,10 +336,6 @@ async def test_max_completion_tokens_takes_precedence_without_overwrite(
 async def test_max_tokens_default_falls_back_to_128_when_config_missing(
     patched_components,
 ):
-    """If the operator removed `default_max_output_tokens` from the
-    cray-config.yaml, fall back to the in-code default of 128 — the
-    queue must not pass None even on misconfigured pods."""
-    # Fixture's config has no default_max_output_tokens key.
     coalescer = patched_components["coalescer"]
     captured = []
 
@@ -410,7 +351,6 @@ async def test_max_tokens_default_falls_back_to_128_when_config_missing(
 
 @pytest.mark.asyncio
 async def test_429_when_over_high_water(patched_components):
-    """queue_depth > 4 × max_num_seqs (1024) trips the threshold."""
     patched_components["queue_depth"]["value"] = 1025
 
     with pytest.raises(HTTPException) as exc_info:
@@ -424,7 +364,6 @@ async def test_429_when_over_high_water(patched_components):
 
 @pytest.mark.asyncio
 async def test_429_does_not_register_correlation_id(patched_components):
-    """A rejected request must leave no leak in the router."""
     patched_components["queue_depth"]["value"] = 9999
 
     with pytest.raises(HTTPException):
@@ -433,21 +372,10 @@ async def test_429_does_not_register_correlation_id(patched_components):
     assert patched_components["router"].in_flight_count == 0
 
 
-# ---------------------------------------------------------------------------
-# Pre-admission length check
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_400_when_prompt_plus_max_tokens_exceeds_max_model_length(
     patched_components,
 ):
-    """
-    A request whose prompt + max_tokens > max_model_length must be
-    rejected up front with HTTP 400. Without this check vLLM queues
-    it forever — the production stuck-request symptom. Both values come
-    from vLLM's runtime /tokenize renderer, not the cray-config knob.
-    """
     patched_components["tokenize_chat"].return_value = AdmissionTokenization(
         prompt_tokens=80, max_model_length=100
     )
@@ -481,8 +409,6 @@ async def test_length_check_uses_max_completion_tokens_precedence(
 async def test_too_long_request_does_not_register_correlation_id(
     patched_components,
 ):
-    """The 400 path must leak nothing into the router or coalescer —
-    same contract as the 429 over-capacity path."""
     patched_components["tokenize_chat"].return_value = AdmissionTokenization(
         prompt_tokens=200, max_model_length=100
     )
@@ -497,14 +423,12 @@ async def test_too_long_request_does_not_register_correlation_id(
 
 @pytest.mark.asyncio
 async def test_length_check_passes_when_within_threshold(patched_components):
-    """Boundary case: prompt + max_tokens == max_model_length is fine."""
     patched_components["tokenize_chat"].return_value = AdmissionTokenization(
         prompt_tokens=80, max_model_length=100
     )
 
     response = await h.chat_completions_via_queue(_request(max_tokens=20))
 
-    # No exception → got the StreamingResponse back.
     assert response is not None
 
 
@@ -512,11 +436,6 @@ async def test_length_check_passes_when_within_threshold(patched_components):
 async def test_length_check_skipped_when_runtime_tokenize_is_unavailable(
     patched_components,
 ):
-    """
-    Runtime tokenization fails open so transient vLLM unavailability does not
-    make the API reject every request using an inexact local render.
-    """
-    # Default fixture returns None from tokenize_chat_for_admission.
     await h.chat_completions_via_queue(_request())
 
 
@@ -524,18 +443,11 @@ async def test_length_check_skipped_when_runtime_tokenize_is_unavailable(
 async def test_length_check_uses_vllm_tokenize_count_and_cap_not_local_config(
     patched_components,
 ):
-    """
-    The runtime endpoint applies vLLM's configured server template and
-    specialized renderer. Its count and context window are authoritative;
-    neither the API pod's local tokenizer nor a stale config knob may replace
-    them.
-    """
     patched_components["config"]["max_model_length"] = 256
     patched_components["tokenize_chat"].return_value = AdmissionTokenization(
         prompt_tokens=4096, max_model_length=65536
     )
 
-    # 4096 + 1000 = 5096 < 65536 → admit, even though config says 256.
     response = await h.chat_completions_via_queue(_request(max_tokens=1000))
 
     assert response is not None
@@ -582,13 +494,6 @@ async def test_runtime_tokenize_4xx_is_returned_without_enqueue(
 async def test_server_only_template_is_not_preempted_by_local_render(
     patched_components,
 ):
-    """A vLLM-only --chat-template may be absent from the API tokenizer.
-
-    Once the authoritative runtime renderer accepts the request, failure of the
-    local rolling-upgrade render must neither reject nor precede it. Current
-    workers consume the intact structured request; old workers get a plain text
-    fallback with non-text data replaced by a short placeholder.
-    """
     events = []
     captured = []
 
@@ -628,18 +533,7 @@ async def test_server_only_template_is_not_preempted_by_local_render(
     assert "base64" not in captured[0]["prompt"]
 
 
-# ---------------------------------------------------------------------------
-# _resolve_model — None / "latest" / explicit / unknown
-# ---------------------------------------------------------------------------
-
-
 def test_resolve_model_none_falls_back_to_config_default():
-    """
-    None gets the deployment's default. This was the production crash
-    surfaced by the inference browser: a missing-model request used to
-    crash inside `AutoTokenizer.from_pretrained(None)` with a
-    HuggingFace 401 about a non-existent repo named "None".
-    """
     cfg = {"model": "default-m"}
     fake_manager = MagicMock()
     fake_manager.find_model.return_value = "default-m"
@@ -707,21 +601,14 @@ def test_resolve_model_unknown_raises_404():
 
 @pytest.mark.asyncio
 async def test_disconnect_during_stream_unregisters_cid(patched_components):
-    """
-    The streaming generator's `finally` must unregister the cid even
-    if the generator is closed early (client disconnect → FastAPI
-    cancels the body iterator).
-    """
     with patch.object(h, "render_chat_template", return_value="rendered"):
         response = await h.chat_completions_via_queue(_request())
 
     router = patched_components["router"]
     assert router.in_flight_count == 1
 
-    # Drive the generator partially then close it (mimics client
-    # disconnect: FastAPI calls `aclose()` on the iterator).
     gen = response.body_iterator
-    await gen.__anext__()  # consume one heartbeat
+    await gen.__anext__()
     await gen.aclose()
 
     assert router.in_flight_count == 0

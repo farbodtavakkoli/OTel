@@ -1,11 +1,3 @@
-"""Live inference smoke tests.
-
-These tests intentionally assume the harness in ``run_live_server_tests.sh``
-has provisioned a real ScalarLM server. They skip during ordinary pytest runs;
-invoke them through ``./scalarlm test --level live`` so setup, readiness
-checks, diagnostics, and teardown are all handled consistently.
-"""
-
 import json
 import os
 
@@ -78,8 +70,6 @@ def test_queued_sdk_generation_returns_all_results():
     assert all(isinstance(result, str) for result in results)
 
 
-# ``requests`` resets its read timeout whenever a chunk arrives. The pytest
-# timeout is the independent wall-clock deadline for a stream that never ends.
 @pytest.mark.timeout(REQUEST_TIMEOUT)
 def test_streaming_completion_emits_content_finish_reason_and_done():
     with requests.post(

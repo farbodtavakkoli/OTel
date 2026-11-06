@@ -9,7 +9,6 @@ interface StatusDotProps {
   title?: string;
 }
 
-// Glow uses the same token; `rgb(var(--color-xxx) / 0.6)` gives the halo.
 const STATE_STYLES: Record<HealthState, string> = {
   up: "bg-success shadow-[0_0_8px_rgb(var(--color-success)/0.6)]",
   down: "bg-danger shadow-[0_0_8px_rgb(var(--color-danger)/0.6)]",

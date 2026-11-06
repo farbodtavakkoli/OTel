@@ -11,7 +11,6 @@ import { formatNumber } from "@/lib/format";
 import { useRollingBuffer } from "@/lib/useRollingBuffer";
 
 interface ThroughputCardProps {
-  /** Max samples retained for the sparkline. Governed by the page's time-range control. */
   sparklineCapacity: number;
 }
 

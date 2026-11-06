@@ -24,18 +24,12 @@ import torch
 
 from cray_infra.training.training_job_context import training_job_context
 
-# Element counts, kept a multiple of world size so every rank contributes an
-# equal block.
 block_sizes = [2 ** i for i in range(10)]
 
 def allgather_test(block):
     world_size = get_size()
     rank = get_rank()
 
-    # Rank-distinguishable payload: rank r sends (r+1). A no-op collective, or
-    # one that fills a GPU copy and leaves this CPU buffer untouched, cannot
-    # produce the expected pattern. The previous version of this test filled the
-    # output with ones and printed the INPUT, so it passed unconditionally.
     input_tensor = torch.full((block,), float(rank + 1), dtype=torch.float32)
     output_tensor = torch.zeros(world_size * block, dtype=torch.float32)
 
@@ -65,4 +59,3 @@ with training_job_context():
 
 
 main()
-

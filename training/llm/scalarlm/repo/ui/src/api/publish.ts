@@ -1,12 +1,3 @@
-/**
- * Publish-to-HuggingFace API surface.
- *
- * Phase 1 covers: list checkpoints, submit a publish SLURM job, poll
- * its status, cancel it. Log tailing comes in Phase 2.
- *
- * See ui/docs/publish-to-hf.md for the full design.
- */
-
 import {
   useMutation,
   useQuery,
@@ -20,7 +11,6 @@ import { streamNdjsonLogOnce, type LogLine } from "./training";
 export interface CheckpointEntry {
   name: string;
   step: number;
-  /** Float seconds since epoch — same convention as TrainingJobStatus.start_time. */
   mtime: number;
 }
 
@@ -28,9 +18,6 @@ interface CheckpointsResponse {
   checkpoints: CheckpointEntry[];
 }
 
-/**
- * GET /v1/megatron/train/{job_hash}/checkpoints
- */
 export function useCheckpoints(jobHash: string | undefined) {
   return useQuery<CheckpointEntry[]>({
     queryKey: ["checkpoints", jobHash],
@@ -44,10 +31,6 @@ export function useCheckpoints(jobHash: string | undefined) {
     staleTime: 30_000,
   });
 }
-
-// ---------------------------------------------------------------------------
-// Publish lifecycle
-// ---------------------------------------------------------------------------
 
 export type PublishMode = "merged" | "adapter";
 
@@ -98,13 +81,6 @@ export function isTerminalPhase(phase: PublishPhase | undefined): boolean {
   return phase !== undefined && TERMINAL_PHASES.has(phase);
 }
 
-/**
- * POST /v1/megatron/train/{hash}/publish
- *
- * On success the modal should switch to polling /publish/status — the
- * mutation invalidates the status query so the next render starts a
- * poll without waiting for the staleTime.
- */
 export function useSubmitPublish(jobHash: string) {
   const qc = useQueryClient();
   return useMutation<PublishSubmissionResponse, Error, PublishRequestBody>({
@@ -119,14 +95,6 @@ export function useSubmitPublish(jobHash: string) {
   });
 }
 
-/**
- * GET /v1/megatron/train/{hash}/publish/status
- *
- * Polls every 2s while non-terminal, otherwise drops to once a minute
- * so a successfully-pushed publish doesn't keep hammering the API.
- * `enabled` should be false until the user has submitted in this
- * modal session — the modal flips it after `useSubmitPublish` resolves.
- */
 export function usePublishStatus(
   jobHash: string,
   enabled: boolean,
@@ -145,20 +113,12 @@ export function usePublishStatus(
     },
     staleTime: 0,
     retry: (count, err) => {
-      // 404 means no publish has been submitted yet for this job; don't
-      // retry — the modal will flip `enabled` true once submit lands.
       if ((err as { status?: number })?.status === 404) return false;
       return count < 3;
     },
   });
 }
 
-/**
- * Tail the latest publish job's publish.log via the same NDJSON
- * stream protocol as service logs (`tail=N`, then byte-offset
- * resume). Reuses `streamNdjsonLogOnce` for the actual parsing so
- * we don't duplicate the per-line logic.
- */
 export async function tailPublishLog({
   jobHash,
   signal,
@@ -196,8 +156,6 @@ export async function tailPublishLog({
     } catch (err) {
       if (signal.aborted || (err as { name?: string }).name === "AbortError")
         break;
-      // Most common: 404 because the publish.log hasn't been created yet
-      // (SLURM hasn't started the job). Quietly retry after the delay.
     }
     await sleep(reopenDelayMs, signal);
   }
@@ -217,9 +175,6 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-/**
- * POST /v1/megatron/train/{hash}/publish/cancel
- */
 export function useCancelPublish(jobHash: string) {
   const qc = useQueryClient();
   return useMutation<PublishStatus, Error, void>({

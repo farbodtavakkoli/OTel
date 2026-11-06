@@ -20,4 +20,4 @@ def get_model_memory_footprint(model):
     for buffer in model.buffers():
         buffer_size += buffer.numel() * buffer.element_size()
     total_size = param_size + buffer_size
-    return total_size  # in bytes
+    return total_size

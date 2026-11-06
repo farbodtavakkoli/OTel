@@ -1,5 +1,3 @@
-"""Structured chat fields must survive both queue API boundaries."""
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

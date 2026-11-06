@@ -1,19 +1,3 @@
-"""
-Unit tests for cray_infra.training.launch_publish_job.
-
-The launcher is the API pod's entry point into the publish-to-HF SLURM
-flow (ui/docs/publish-to-hf.md). It must:
-
-  - validate inputs and refuse to clobber an in-flight publish,
-  - resolve the right checkpoint (or fall back to the latest one),
-  - build a self-contained job.sh with #SBATCH directives and all CLI
-    args baked in via `set --` so sbatch is called with no positional
-    args (avoids a Slurm bug where args after the script name are
-    silently dropped),
-  - NOT include the HF token anywhere in job.sh — token travels via env,
-  - write a status.json the polling endpoint can find immediately.
-"""
-
 import json
 import os
 import subprocess
@@ -25,9 +9,6 @@ from fastapi import HTTPException
 
 from cray_infra.training import launch_publish_job as mod
 
-# ---------------------------------------------------------------------------
-# Shared fixtures
-# ---------------------------------------------------------------------------
 
 _ENTRYPOINT_TEMPLATE = """\
 #!/bin/bash
@@ -89,13 +70,7 @@ def _fail(stderr="boom"):
     )
 
 
-# ---------------------------------------------------------------------------
-# _build_sbatch_argv — unit tests
-# ---------------------------------------------------------------------------
-
-
 def test_sbatch_cmd_is_script_only(tmp_path, fake_entrypoint, mock_config):
-    """sbatch gets only the script path — no positional args on the command line."""
     publish_dir = tmp_path / "publish_123"
     publish_dir.mkdir()
     cmd = mod._build_sbatch_argv(
@@ -148,15 +123,12 @@ def test_job_sh_quotes_args_with_special_chars(tmp_path, fake_entrypoint, mock_c
         cli_args=["--commit-message", "has spaces & special chars"],
     )
     script = (publish_dir / "job.sh").read_text()
-    # shlex.quote wraps args with spaces in single quotes.
     assert "'has spaces & special chars'" in script
 
 
 def test_job_sh_token_never_written_to_script(tmp_path, fake_entrypoint, mock_config):
-    """The HF token must not appear anywhere in job.sh — it travels via env."""
     publish_dir = tmp_path / "publish_123"
     publish_dir.mkdir()
-    # Token is not in cli_args by design, but let's ensure nothing leaks.
     mod._build_sbatch_argv(
         publish_dir=publish_dir,
         log_path=publish_dir / "publish.log",
@@ -164,13 +136,12 @@ def test_job_sh_token_never_written_to_script(tmp_path, fake_entrypoint, mock_co
     )
     script = (publish_dir / "job.sh").read_text()
     assert "hf_secret" not in script
-    assert "HF_TOKEN=" not in script  # no literal assignment
+    assert "HF_TOKEN=" not in script
 
 
 def test_job_sh_local_directory_is_statically_resolved(
     tmp_path, fake_entrypoint, mock_config
 ):
-    """LOCAL_DIRECTORY must be the resolved repo root, not a BASH_SOURCE runtime expression."""
     publish_dir = tmp_path / "publish_123"
     publish_dir.mkdir()
     mod._build_sbatch_argv(
@@ -179,15 +150,12 @@ def test_job_sh_local_directory_is_statically_resolved(
         cli_args=[],
     )
     script = (publish_dir / "job.sh").read_text()
-    # The dynamic detection must be replaced.
     assert "BASH_SOURCE" not in script
-    # The resolved parent-of-scripts dir must be present.
     expected = str(fake_entrypoint.resolve().parent.parent)
     assert expected in script
 
 
 def test_job_sh_preserves_entrypoint_body(tmp_path, fake_entrypoint, mock_config):
-    """The entrypoint's logic (PYTHONPATH export, python invocation) must survive."""
     publish_dir = tmp_path / "publish_123"
     publish_dir.mkdir()
     mod._build_sbatch_argv(
@@ -227,11 +195,6 @@ def test_missing_entrypoint_raises_500(tmp_path):
     assert exc.value.status_code == 500
 
 
-# ---------------------------------------------------------------------------
-# launch_publish_job — integration tests
-# ---------------------------------------------------------------------------
-
-
 def test_submits_with_latest_checkpoint(job_dir, resolve_dir, mock_config):
     captured = {}
 
@@ -254,29 +217,24 @@ def test_submits_with_latest_checkpoint(job_dir, resolve_dir, mock_config):
     assert publish_dir.parent == job_dir
     assert publish_dir.name.startswith("publish_")
 
-    # Initial status.json was written before sbatch was called.
     status = json.loads((publish_dir / "status.json").read_text())
     assert status["mode"] == "merged"
     assert status["repo_id"] == "myorg/my-model"
     assert status["phase"] == "queued"
     assert status["publish_job_id"] == "4242"
 
-    # sbatch is called with just the script path — no positional args.
     cmd = captured["cmd"]
     assert cmd[0] == "sbatch"
     assert cmd[1] == str(publish_dir / "job.sh")
     assert len(cmd) == 2
 
-    # Token is NOT on argv and NOT in job.sh.
     job_sh = (publish_dir / "job.sh").read_text()
     assert "hf_secret_xyz" not in " ".join(cmd)
     assert "hf_secret_xyz" not in job_sh
 
-    # Token IS in the env passed to sbatch.
     assert captured["env"]["HF_TOKEN"] == "hf_secret_xyz"
     assert captured["env"]["HUGGING_FACE_HUB_TOKEN"] == "hf_secret_xyz"
 
-    # The export directive and checkpoint are baked into job.sh.
     assert "#SBATCH --export=ALL,HF_TOKEN,HUGGING_FACE_HUB_TOKEN" in job_sh
     assert "--checkpoint" in job_sh
     assert "checkpoint_100.pt" in job_sh
@@ -314,9 +272,6 @@ def test_passes_through_optional_flags(job_dir, resolve_dir, mock_config):
     assert "64" in job_sh
     assert "--commit-message" in job_sh
     assert "release v1" in job_sh
-
-
-# ---- guard rails ---------------------------------------------------------
 
 
 def test_rejects_unknown_mode(job_dir, resolve_dir):
@@ -410,9 +365,6 @@ def test_sbatch_failure_writes_error_and_raises(job_dir, resolve_dir, mock_confi
     state = json.loads((publish_dirs[0] / "status.json").read_text())
     assert state["phase"] == "error"
     assert "queue is full" in state["error"]
-
-
-# ---- get_publish_status -------------------------------------------------
 
 
 def test_get_publish_status_returns_latest(job_dir, resolve_dir):

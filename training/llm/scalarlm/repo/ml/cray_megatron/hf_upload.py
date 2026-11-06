@@ -3,7 +3,6 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# Offline switches a deployment may set so boot cannot stall on tokenizer downloads.
 OFFLINE_VARS = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE")
 
 
@@ -47,7 +46,6 @@ def upload_to_hf_if_enabled():
 
 
 def do_upload(hf_repo_id, hf_token, checkpoint_path):
-    # Clear the offline flags for the upload only, then restore them.
     saved_offline = {k: os.environ.get(k) for k in OFFLINE_VARS}
     overridden = [k for k, v in saved_offline.items() if v not in (None, "0")]
     for key in OFFLINE_VARS:
@@ -58,7 +56,6 @@ def do_upload(hf_repo_id, hf_token, checkpoint_path):
             ", ".join(overridden),
         )
 
-    # huggingface_hub caches HF_HUB_OFFLINE at import time, so clearing the env is not enough.
     saved_constant = None
     try:
         from huggingface_hub import constants as _hf_constants
@@ -70,7 +67,7 @@ def do_upload(hf_repo_id, hf_token, checkpoint_path):
                 "upload_to_hf: suspending huggingface_hub offline mode "
                 "(constants.HF_HUB_OFFLINE True -> False) for the upload"
             )
-    except Exception as e:  # pragma: no cover - defensive
+    except Exception as e:
         logger.warning("Could not suspend huggingface_hub offline mode: %s", e)
 
     try:
@@ -89,7 +86,6 @@ def do_upload(hf_repo_id, hf_token, checkpoint_path):
         logger.info("Uploaded checkpoint to %s", hf_repo_id)
         record_hf_upload_result(repo_id=hf_repo_id)
     except Exception as e:
-        # Non-fatal: the job stays COMPLETED and the failure is surfaced through status.json.
         logger.error("Failed to upload to HuggingFace: %s", e)
         record_hf_upload_result(repo_id=hf_repo_id, error=str(e))
     finally:
@@ -101,7 +97,7 @@ def do_upload(hf_repo_id, hf_token, checkpoint_path):
                 from huggingface_hub import constants as _hf_constants
 
                 _hf_constants.HF_HUB_OFFLINE = saved_constant
-            except Exception:  # pragma: no cover - defensive
+            except Exception:
                 pass
 
 

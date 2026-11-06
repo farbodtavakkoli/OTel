@@ -1,19 +1,4 @@
 #!/usr/bin/env python3
-"""Apply ScalarLM's vLLM-fork patches in-place.
-
-Invoked from both:
-  - scripts/build-copy-vllm.sh at Docker build time (production path)
-  - Kubernetes pod `command:` at startup (dev/bench iteration)
-
-Adds new patches here. Each patch is a function that takes the vLLM tree
-root, reads the target file, asserts the exact anchor it expects, and
-writes the transformed file back. The assertions are load-bearing — they
-fail loudly when a fork rebase drifts the source rather than silently
-producing a mis-patched image.
-
-Usage: apply_patches.py <path/to/vllm/root>
-"""
-
 from __future__ import annotations
 
 import sys
@@ -21,18 +6,9 @@ from pathlib import Path
 
 
 def patch_output_handler_metrics_offload(vllm_root: Path) -> None:
-    """Phase 6.5: move `logger_ref[0].record(...)` out of async_llm's output
-    loop onto a background consumer coroutine fed by a bounded asyncio.Queue.
-
-    Follows the TODO vLLM itself left on `vllm/v1/engine/async_llm.py:700`.
-    Profile: the synchronous record call was 20.3 %% of main-thread time at
-    N=100 and the consumer-offload pattern recovered +15 %% throughput in
-    the pilot A/B. See enhance-openai-api.md § "Phase 6.5".
-    """
     target = vllm_root / "vllm" / "v1" / "engine" / "async_llm.py"
     src = target.read_text()
 
-    # --- Anchor 1: the inline record call we're replacing. ---
     anchor_record = (
         "                    # 4) Logging.\n"
         "                    # TODO(rob): make into a coroutine and launch it in\n"
@@ -53,11 +29,6 @@ def patch_output_handler_metrics_offload(vllm_root: Path) -> None:
     )
 
     replacement_record = (
-        "                    # 4) Logging — offloaded to background consumer.\n"
-        "                    #    ScalarLM patch (Phase 6.5). vLLM's own TODO\n"
-        "                    #    on this spot suggested a background thread;\n"
-        "                    #    an asyncio task + bounded queue yields the\n"
-        "                    #    same shape with less machinery.\n"
         "                    if logger_ref[0] is not None:\n"
         "                        try:\n"
         "                            metrics_queue_ref[0].put_nowait((\n"
@@ -67,9 +38,6 @@ def patch_output_handler_metrics_offload(vllm_root: Path) -> None:
         "                                renderer.stat_mm_cache(),\n"
         "                            ))\n"
         "                        except asyncio.QueueFull:\n"
-        "                            # Metrics are statistical — drop the\n"
-        "                            # oldest rather than block the output\n"
-        "                            # loop. The engine must keep pulling.\n"
         "                            try:\n"
         "                                metrics_queue_ref[0].get_nowait()\n"
         "                                metrics_queue_ref[0].put_nowait((\n"
@@ -82,9 +50,6 @@ def patch_output_handler_metrics_offload(vllm_root: Path) -> None:
         "                                pass\n"
     )
 
-    # --- Anchor 2: the ``async def output_handler()`` signature — we hang
-    #     the metrics queue + consumer task off this spot, one level up
-    #     from the handler body, so they share closure state. ---
     anchor_handler_def = "        async def output_handler():\n"
     assert src.count(anchor_handler_def) == 1, (
         "async_llm.py anchor missing: expected exactly one "
@@ -93,11 +58,6 @@ def patch_output_handler_metrics_offload(vllm_root: Path) -> None:
     )
 
     consumer_preamble = (
-        "        # ScalarLM Phase 6.5: bounded queue + consumer task that\n"
-        "        # drains the record() calls off the output_handler hot\n"
-        "        # path. 1024 items is ~seconds of engine iterations at our\n"
-        "        # scale; metric samples that overflow are dropped (see\n"
-        "        # output_handler for the drop-oldest path).\n"
         "        metrics_queue_ref: list = [asyncio.Queue(maxsize=1024)]\n"
         "\n"
         "        async def _metrics_consumer():\n"
@@ -123,9 +83,6 @@ def patch_output_handler_metrics_offload(vllm_root: Path) -> None:
         "        async def output_handler():\n"
     )
 
-    # --- Anchor 3: the ``self.output_handler = asyncio.create_task(...)``
-    #     line where the handler task is actually scheduled. We schedule
-    #     the consumer next to it so the two have matching lifecycles. ---
     anchor_schedule = (
         "        self.output_handler = asyncio.create_task(output_handler())\n"
     )
@@ -138,7 +95,6 @@ def patch_output_handler_metrics_offload(vllm_root: Path) -> None:
         "        self._metrics_consumer_task = asyncio.create_task(_metrics_consumer())\n"
     )
 
-    # Apply in order; each assertion above already guaranteed uniqueness.
     patched = (
         src
         .replace(anchor_record, replacement_record)
@@ -146,9 +102,8 @@ def patch_output_handler_metrics_offload(vllm_root: Path) -> None:
         .replace(anchor_schedule, replacement_schedule)
     )
 
-    # Sanity: the patch should change the file.
     assert patched != src, "patch produced identical output — something's wrong"
-    # And it should still parse.
+
     compile(patched, str(target), "exec")
 
     target.write_text(patched)
@@ -157,21 +112,6 @@ def patch_output_handler_metrics_offload(vllm_root: Path) -> None:
 TOKENFORMER_KEY_RESOLVER_SRC = '''
 
 def _scalarlm_nearest_live_keys(key, model_state_dict, limit=3):
-    """Live parameter names that sit near an unmatched checkpoint key.
-
-    A drop warning that only names the missing key says nothing about WHY
-    it missed. The live neighbours do: `...qkv_proj.base_layer.weight`
-    next to a dropped `...q_proj.weight` shows both that vLLM fused the
-    projection and that a LoRA wrapper nested it -- two separate naming
-    problems, visible in one line, without reading fork source.
-
-    Tries every contiguous run of path components, longest first, and
-    returns the matches for the most specific one that hits anything.
-    Trailing components have to be droppable too, not just leading ones:
-    a fused `qkv_proj` means the name `q_proj` appears nowhere at all, so
-    only backing off to the parent module (`layers.0.self_attn`) shows
-    what the layer actually holds.
-    """
     parts = key.split(".")
     candidates = {
         ".".join(parts[i:j])
@@ -186,40 +126,6 @@ def _scalarlm_nearest_live_keys(key, model_state_dict, limit=3):
 
 
 def _scalarlm_resolve_adapter_keys(model, tokenformers, model_state_dict):
-    """Map trainer-side checkpoint keys onto the live vLLM namespace.
-
-    ScalarLM's Tokenformer checkpoints are not pure adapters: the trainer
-    unfreezes attention projections, norms and embeddings alongside the
-    tokenformer_{k,v,p} tensors, so the .pt carries base weights named the
-    way the HuggingFace module tree names them. `activate_adapter` merges
-    every one of those keys into the model's state dict and calls
-    `load_weights`, which requires the names to line up with vLLM's own
-    parameter layout.
-
-    For plain decoder-only models the two namespaces already agree, which
-    is why this went unnoticed. Multimodal wrappers rearrange them (HF
-    `model.language_model.layers.*` vs vLLM `language_model.model.layers.*`)
-    and expose some modules not at all, so unmapped keys reach
-    `load_weights` and raise KeyError, killing EngineCore.
-
-    Resolution order:
-      1. Key already present in the model's state dict: keep it unchanged.
-         This is the backward-compatibility guarantee — every key of an
-         existing checkpoint takes this path, so nothing is renamed or
-         dropped and behavior is identical to before the patch.
-      2. The model's own `hf_to_vllm_mapper` rewrites it to a key that is
-         present: keep it under the rewritten name. This reuses the exact
-         mapping vLLM applies when loading a checkpoint, so it stays
-         correct per model family instead of hardcoding prefixes here.
-      3. Otherwise: drop it, loudly. These are weights vLLM has no home
-         for; injecting them is what crashes the engine. Dropping means
-         they are not applied at inference — the warning exists so that
-         shows up in the logs rather than as unexplained quality loss.
-    """
-    # Instance lookup, not `type(model)`: most models declare the mapper as a
-    # class attribute, but several (mimo_mtp, ernie_mtp, the transformers
-    # backend) build it in __init__, and a class-only lookup silently misses
-    # those — every key would fall through to the drop path.
     mapper = getattr(model, "hf_to_vllm_mapper", None)
     resolved = {}
     renamed = 0
@@ -234,7 +140,7 @@ def _scalarlm_resolve_adapter_keys(model, tokenformers, model_state_dict):
         if mapper is not None:
             try:
                 mapped = mapper._map_name(key)
-            except Exception:  # mapper API drift must not break serving
+            except Exception:
                 mapped = None
 
         if mapped is not None and mapped in model_state_dict:
@@ -261,11 +167,6 @@ def _scalarlm_resolve_adapter_keys(model, tokenformers, model_state_dict):
             len(tokenformers),
             dropped[:5],
         )
-        # Name the live parameters nearest each drop. Without this the
-        # warning says only that a name was missing, and diagnosing why
-        # means reading fork source and guessing -- which is how the
-        # `.base_layer.` nesting and the fused `qkv_proj` each cost a
-        # 30-minute rebuild to discover.
         for key in dropped[:3]:
             logger.warning(
                 "Tokenformer adapter:   %s -> no match; live names nearby: %s",
@@ -278,21 +179,6 @@ def _scalarlm_resolve_adapter_keys(model, tokenformers, model_state_dict):
 
 
 def patch_tokenformer_adapter_key_resolution(vllm_root: Path) -> None:
-    """Resolve adapter checkpoint keys against the live model before use.
-
-    Without this, serving a ScalarLM Tokenformer checkpoint on a
-    multimodal model (diffusion-gemma / gemma4) dies with
-    `KeyError: 'layers.0.self_attn.q_proj.weight'` inside
-    `gemma4.load_weights`, taking EngineCore down with it.
-
-    Resolution happens once in `add_adapter`, so both `activate_adapter`
-    and `deactivate_adapter` see keys that exist in the model — patching
-    only the activate path would leave deactivate to raise on the same
-    keys.
-
-    See `_scalarlm_resolve_adapter_keys` for the rules and why existing
-    checkpoints are unaffected.
-    """
     target = (
         vllm_root / "vllm" / "tokenformer" / "tokenformer_model_manager.py"
     )
@@ -347,27 +233,6 @@ def patch_tokenformer_adapter_key_resolution(vllm_root: Path) -> None:
 
 
 STATE_DICT_EXPORT_SRC = '''    def state_dict(self, destination=None, prefix="", keep_vars=False):
-        # ScalarLM trainer contract: expose packed projections under their
-        # unpacked HF names. qwen2, qwen3, qwen3_moe and gemma3 implement
-        # this; Gemma4 was missed, so `qkv_proj` stayed fused and the
-        # Tokenformer manager found no q/k/v to match a ScalarLM
-        # checkpoint against. Every trained attention projection was then
-        # dropped at adapter-activation time and the served model ran
-        # random-init attention -- training converges, the checkpoint is
-        # correct, and generation is still garbage.
-        #
-        # Unlike gemma3, qkv cannot be delegated to
-        # `unpack_packed_modules_state_dict`: it derives one split size
-        # from the model config, while Gemma4 alternates head_dim per
-        # layer (32 on some, 64 on others). That mismatch raises
-        # "split_with_sizes expects split_sizes to sum exactly to 1024".
-        # Each attention module knows its own TP-local q_size/kv_size,
-        # which is what the packed tensor here actually holds, so read
-        # the geometry off the module instead of the config.
-        #
-        # Scoped to `prefix` so recursion from the multimodal wrapper
-        # (Gemma4ForConditionalGeneration) can't rewrite sibling modules'
-        # keys in the shared destination dict.
         state_dict = super().state_dict(
             destination=destination,
             prefix=prefix,
@@ -378,7 +243,6 @@ STATE_DICT_EXPORT_SRC = '''    def state_dict(self, destination=None, prefix="",
 
         layers = getattr(getattr(self, "model", None), "layers", None) or []
         for index, layer in enumerate(layers):
-            # PPMissingLayer placeholders have no attention module.
             attn = getattr(layer, "self_attn", None)
             if attn is None or not hasattr(attn, "q_size"):
                 continue
@@ -390,9 +254,6 @@ STATE_DICT_EXPORT_SRC = '''    def state_dict(self, destination=None, prefix="",
                 if packed is None:
                     continue
                 if packed.shape[0] != q_size + 2 * kv_size:
-                    # Geometry we don't model. Leaving it packed loses the
-                    # tensor for adapter matching, which is recoverable;
-                    # splitting it wrongly corrupts weights silently.
                     continue
                 del state_dict[packed_key]
                 state_dict[f"{base}.q_proj.{suffix}"] = packed[:q_size]
@@ -401,9 +262,6 @@ STATE_DICT_EXPORT_SRC = '''    def state_dict(self, destination=None, prefix="",
                 ]
                 state_dict[f"{base}.v_proj.{suffix}"] = packed[q_size + kv_size :]
 
-        # qkv is handled above; the shared helper still unpacks
-        # gate_up_proj and drops fused-expert / scale keys that have no HF
-        # counterpart.
         return unpack_packed_modules_state_dict(
             state_dict,
             prefix=prefix,
@@ -444,21 +302,6 @@ def _add_state_dict_export_imports(src: str, filename: str) -> str:
 LATEST_CHECKPOINT_SRC = '''
 
 def _scalarlm_latest_checkpoint(files):
-    """Pick the highest-step checkpoint, not the alphabetically first.
-
-    Both call sites used `sorted(...)[0]`, which orders lexically:
-    checkpoint_1000.pt sorts before checkpoint_1999.pt, and
-    checkpoint_500.pt sorts after both. A job that saved more than one
-    checkpoint therefore serves an arbitrary earlier one -- an
-    undertrained model that loads cleanly, reports every tensor matched,
-    and answers with garbage. Observed on a 2000-step run whose final
-    checkpoint was correct under HuggingFace while vLLM served an
-    earlier one.
-
-    `max` over the already-sorted list keeps ties deterministic, so the
-    loader and the adapter_format classifier still agree on the same
-    file -- which the comments at both sites require.
-    """
 
     def step_of(path):
         stem = path.name.rsplit(".", 1)[0]
@@ -470,22 +313,6 @@ def _scalarlm_latest_checkpoint(files):
 
 
 def patch_diffusion_gemma_sc_embeds_dtype(vllm_root: Path) -> None:
-    """Cast the self-conditioning soft embeds to the buffer's dtype.
-
-    `sc_embeds` is float32; `soft_embeds` inherits embed_weight's dtype
-    (bf16), and index_put_ refuses to cast, so DiffusionGemma dies during
-    warmup on B200:
-
-        RuntimeError: Index put requires the source and destination dtypes
-        match, got Float for the destination and BFloat16 for the source.
-
-    The consumer already does `soft.to(inputs_embeds.dtype)` on read, so
-    casting on write matches the existing convention. bf16 -> fp32 is
-    lossless.
-
-    Belongs upstream in vllm-fork; carried here so DiffusionGemma can be
-    exercised without waiting on that.
-    """
     target = (
         vllm_root / "vllm" / "model_executor" / "models" / "diffusion_gemma.py"
     )
@@ -517,8 +344,6 @@ def patch_diffusion_gemma_sc_embeds_dtype(vllm_root: Path) -> None:
 
     patched = src.replace(
         anchor,
-        "    # ScalarLM patch: sc_embeds is fp32, soft_embeds is bf16, and\n"
-        "    # index_put_ will not cast. The consumer casts on read too.\n"
         "    sc_embeds[decode_slots] = (soft_embeds * sc_keep).to(sc_embeds.dtype)\n",
         1,
     )
@@ -531,13 +356,6 @@ def patch_diffusion_gemma_sc_embeds_dtype(vllm_root: Path) -> None:
 
 
 def patch_latest_checkpoint_selection(vllm_root: Path) -> None:
-    """Select adapter checkpoints by step number rather than filename.
-
-    Applies to both places that resolve a job directory to a single
-    `.pt`: the Tokenformer loader and the adapter_format classifier.
-    They are commented as needing to agree, so they are patched together
-    or not at all.
-    """
     manager = vllm_root / "vllm" / "tokenformer" / "tokenformer_model_manager.py"
     fmt = vllm_root / "vllm" / "tokenformer" / "adapter_format.py"
 
@@ -619,13 +437,6 @@ def patch_latest_checkpoint_selection(vllm_root: Path) -> None:
 
 
 def patch_llama_scalarlm_state_dict_export(vllm_root: Path) -> None:
-    """Give LlamaForCausalLM the ScalarLM `state_dict` export override.
-
-    Same defect as gemma4 had: llama fuses q/k/v into `qkv_proj` and never
-    exposes the unpacked names, so every trained attention projection is
-    dropped when a Tokenformer adapter is applied. Simpler fix than
-    gemma4's because llama's head_dim does not vary per layer.
-    """
     target = vllm_root / "vllm" / "model_executor" / "models" / "llama.py"
     if not target.exists():
         print(f"[vllm_patches] {target} not found; skipping llama state_dict patch")
@@ -667,19 +478,6 @@ def patch_llama_scalarlm_state_dict_export(vllm_root: Path) -> None:
 
 
 def patch_gemma4_scalarlm_state_dict_export(vllm_root: Path) -> None:
-    """Give Gemma4ForCausalLM the ScalarLM `state_dict` export override.
-
-    Five model files implement it (qwen2, qwen3, qwen3_moe, gemma3, plus
-    the helper in utils.py); gemma4 does not. The consequence is specific
-    and quiet: serving a ScalarLM Tokenformer checkpoint on Gemma4 drops
-    every `q_proj`/`k_proj`/`v_proj` tensor the trainer produced, because
-    vLLM only exposes them fused as `qkv_proj`. Training converges, the
-    checkpoint is correct, and the served model still answers with
-    garbage because its attention is at initialization.
-
-    Verified with tiny-random/gemma-4-dense: 10 of 52 checkpoint tensors
-    unmatched without this, all of them attention projections.
-    """
     target = vllm_root / "vllm" / "model_executor" / "models" / "gemma4.py"
     if not target.exists():
         print(f"[vllm_patches] {target} not found; skipping gemma4 state_dict patch")

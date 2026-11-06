@@ -41,7 +41,6 @@ def main():
 
 
 def discover_clusters():
-
     clean_old_node_info()
 
     node_info = get_node_info()
@@ -101,7 +100,6 @@ def get_machine_id():
     try:
         return get_board_serial()
     except FileNotFoundError:
-        # dmidecode not installed — common in minimal containers.
         return None
     except Exception as e:
         logger.debug(f"Error reading machine ID: {e}")
@@ -125,17 +123,6 @@ def get_cpu_count() -> int | None:
 
 
 def get_memory_mb() -> int | None:
-    """Return the effective memory capacity visible to this container, in MiB.
-
-    ``/proc/meminfo`` commonly reports host-wide memory in containers. Bound
-    it by the active cgroup v2 or v1 memory limit so each ScalarLM replica
-    does not register capacity that its container cannot use. Missing memory
-    controllers leave ``MemTotal`` as the finite bound for a bare-host process.
-    An explicit unlimited container value is not a per-replica allocation:
-    colocated replicas would each advertise the same host total, so omit
-    ``RealMemory``. Unreadable or malformed controller state is likewise
-    indeterminate and omitted.
-    """
     total_bytes = _read_memtotal_bytes()
     if total_bytes is None:
         return None
@@ -171,13 +158,6 @@ def _read_memtotal_bytes() -> int | None:
 
 
 def _read_cgroup_memory_limit_bytes() -> tuple[bool, int | None]:
-    """Return ``(is_known, finite_limit)`` for the active memory controller.
-
-    ``finite_limit=None`` with ``is_known=True`` means no controller is mounted
-    at the standard paths, as for a bare-host process. ``is_known=False`` means
-    a controller was present but did not provide a safe per-node allocation,
-    whether because it was unreadable/malformed or explicitly unlimited.
-    """
     try:
         with open(cgroup_v2_memory_limit_path) as f:
             value = f.read().strip()
@@ -188,9 +168,6 @@ def _read_cgroup_memory_limit_bytes() -> tuple[bool, int | None]:
         return False, None
     else:
         if value == "max":
-            # This is host-wide availability, not an allocation unique to a
-            # container/SLURM node. Multiple unlimited replicas can coexist,
-            # so advertising MemTotal from each would multiply capacity.
             return False, None
         return _parse_cgroup_limit(value, "v2")
 
@@ -205,8 +182,6 @@ def _read_cgroup_memory_limit_bytes() -> tuple[bool, int | None]:
 
     parsed, limit_bytes = _parse_cgroup_limit(value, "v1")
     if parsed and limit_bytes is not None:
-        # Linux cgroup v1 represents "unlimited" as a page-aligned value near
-        # LONG_MAX (usually 9223372036854771712 on 64-bit hosts).
         if limit_bytes >= _cgroup_v1_unlimited_threshold:
             return False, None
     return parsed, limit_bytes
@@ -265,7 +240,6 @@ def save_node_info(node_info):
 
 
 def get_cluster_info(node_info):
-
     all_nodes = load_all_nodes()
 
     controller_info = elect_controller(all_nodes)
@@ -289,17 +263,11 @@ def load_all_nodes():
 
 
 def elect_controller(all_nodes):
-    """
-    Elects the controller node based on the lowest GPU count.
-    If multiple nodes have the same CPU count, alphabetical order of hostname is used.
-    """
     if not all_nodes:
         raise ValueError("No nodes found in the cluster.")
 
-    # Sort nodes by GPU count (ascending) and hostname (alphabetical)
     all_nodes.sort(key=lambda x: (x["gpu_count"], x["hostname"]))
 
-    # The first node in the sorted list is the controller
     controller_node = all_nodes[0]
 
     logger.info(
@@ -376,11 +344,9 @@ def load_slurm_conf_values():
     slurm_conf_values = {}
     with open(slurm_config_path, "r") as f:
         for line in f:
-            # Skip comments
             if line.strip().startswith("#"):
                 continue
 
-            # Skip lines without "="
             if "=" not in line:
                 continue
 
@@ -411,16 +377,6 @@ def save_slurm_conf_values(slurm_conf_values):
 
 
 def write_node_config(node: dict) -> str:
-    """Render one ``NodeName=...`` line for ``slurm.conf``.
-
-    Example output::
-
-        NodeName=hostname CPUs=64 RealMemory=257723 Gres=gpu:6 State=UNKNOWN
-
-    ``RealMemory`` is omitted when ``node["memory_mb"]`` is missing or is
-    not a positive, in-range integer, matching how ``Gres`` is already
-    omitted for GPU-less nodes rather than writing a misleading value.
-    """
     max_gpus_per_node = get_config()["max_gpus_per_node"]
     gres_string = (
         f"Gres=gpu:{min(max_gpus_per_node, node['gpu_count'])}"
@@ -446,10 +402,6 @@ def write_node_config(node: dict) -> str:
 
 
 def write_partition_config(partition):
-    """
-    PartitionName=short Nodes=node1,node2,node3 Default=YES MaxTime=INFINITE State=UP
-    """
-
     config = get_config()
 
     max_training_time = (
@@ -463,12 +415,6 @@ def write_partition_config(partition):
 
 
 def write_gres_config(cluster_info):
-    """
-    NodeName=41ad10a2cba0 Name=gpu File=/dev/nvidia0
-    """
-    # The File= entries must agree with the Gres=gpu:N count written into
-    # slurm.conf by write_node_config, or slurmd refuses to register the node
-    # ("Gres count mismatch"). Apply the same max_gpus_per_node cap here.
     max_gpus_per_node = get_config()["max_gpus_per_node"]
 
     gres_config = ""
@@ -479,8 +425,6 @@ def write_gres_config(cluster_info):
             continue
         for index in gpu_indexes:
             if node["gpu_type"] == "amd":
-                # renderD*, not card* — ROCm drives the render node (see
-                # get_amd_render_node_indexes).
                 gres_config += (
                     f"NodeName={node['hostname']} Name=gpu File=/dev/dri/renderD{index}\n"
                 )
@@ -500,20 +444,6 @@ def write_cgroup_config(cluster_info):
 
 
 def get_amd_render_node_indexes():
-    """Render-node minor numbers of the REAL GPUs on a ROCm host.
-
-    Two things make the naive `/dev/dri/card*` scan wrong on MI300/MI355:
-
-    1. HIP/ROCm drives a GPU through its **render** node (`/dev/dri/renderD*`)
-       plus `/dev/kfd` — never the `card*` (KMS/display) node. Handing Slurm a
-       `card*` path means `ConstrainDevices=yes` admits a device ROCm cannot use.
-    2. Each physical GPU also publishes seven `amdgpu_xcp_*` compute-partition
-       nodes, so an 8-GPU box exposes 64 render nodes and 65 card nodes. Only the
-       nodes whose sysfs `device` link resolves to a real PCI BDF (`0000:0b:00.0`)
-       are whole GPUs; the `amdgpu_xcp_N` ones are partitions of one.
-
-    Returns the sorted minor numbers, e.g. [128, 136, 144, ...] for 8x MI355X.
-    """
     indexes = []
     drm_root = "/sys/class/drm"
 
@@ -534,14 +464,9 @@ def get_amd_render_node_indexes():
         except OSError:
             continue
 
-        # A PCI BDF has two colons ("0000:0b:00.0"); a partition does not
-        # ("amdgpu_xcp_3").
         if target.count(":") < 2:
             continue
 
-        # /sys/class/drm is the HOST's view, so a container given a GPU subset
-        # would advertise render nodes it cannot open and slurmd exits 1. Gate on
-        # the device node existing; no-op on a whole-box deployment.
         if not os.path.exists(os.path.join("/dev/dri", entry)):
             logger.debug(
                 "Skipping %s: present in sysfs but /dev/dri/%s is not accessible "
@@ -555,7 +480,6 @@ def get_amd_render_node_indexes():
 
 
 def get_gpu_indexes():
-    # handle the case where the card is an arbtirary number
     if torch.version.hip:
         return get_amd_render_node_indexes()
     elif not torch.cuda.is_available() and get_neuron_devices():
@@ -599,7 +523,6 @@ def write_cluster_info_file(cluster_info):
 
 
 def reload_slurm_configs():
-    # Check if slurmctld is reachable before attempting reconfigure
     try:
         result = subprocess.run(["scontrol", "ping"], capture_output=True, timeout=5)
         if result.returncode != 0:

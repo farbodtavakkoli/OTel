@@ -37,7 +37,6 @@ def main():
 
 
 def run_server_with_autoreload():
-
     os.chdir("/app/cray/infra")
     os.environ["SCALARLM_SERVER_PID"] = str(os.getpid())
 
@@ -78,10 +77,8 @@ async def run_all_servers_async():
             return_when=asyncio.FIRST_COMPLETED,
         )
 
-        # Check for exceptions in completed tasks
         for task in done:
             try:
-                # This will raise the exception if the task failed
                 result = task.result()
             except Exception as e:
                 logger.error(f"Task {task.get_name()} failed with exception:")

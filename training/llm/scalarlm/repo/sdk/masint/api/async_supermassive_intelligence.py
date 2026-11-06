@@ -26,7 +26,6 @@ class AsyncSupermassiveIntelligence:
     async def submit_slurm_job(self, code, train_args=None):
         return await self.engine.submit_slurm_job(code=code, train_args=train_args)
 
-
     async def learn_classes(self, classes):
         assert False, "Not implemented yet."
 
@@ -62,7 +61,7 @@ class AsyncSupermassiveIntelligence:
 
     async def cancel(self, model_name):
         return await self.engine.cancel(model_name=model_name)
-    
+
     async def delete(self, model_name):
         return await self.engine.delete(model_name=model_name)
 

@@ -1,8 +1,3 @@
-"""CPU tests for the grpo dataset (load_grpo_dataset.py) and init_adapter_from (adapters/).
-
-No job config / tokenizer download: the dataset class is exercised directly with a stub
-tokenizer, and the strict adapter-state loader with a tiny nn.Module wrapped like PEFT.
-"""
 import math
 
 import pytest
@@ -14,8 +9,6 @@ from cray_megatron.megatron.dataset.load_grpo_dataset import GrpoDataset
 
 
 class StubTokenizer:
-    """Whitespace tokenizer: token id = 100 + word length; the SFT-style prefix rule applies."""
-
     pad_token_id = 0
     eos_token_id = 1
 
@@ -41,10 +34,9 @@ def test_token_ids_used_verbatim_and_aligned_with_old_logprobs():
 def test_text_fallback_masks_prompt_prefix():
     row = {"prompt": "aa bbb", "completion": " cccc d", "advantage": -1.0, "old_logprobs": None}
     item = _ds([row]).encode(row)
-    # prompt tokens: 102, 103 ; completion tokens: 104, 101
     assert item["input_ids"].tolist() == [102, 103, 104, 101]
     assert item["completion_mask"].tolist() == [0, 0, 1, 1]
-    assert all(math.isnan(x) for x in item["old_logprobs"].tolist()[2:])  # on-policy marker
+    assert all(math.isnan(x) for x in item["old_logprobs"].tolist()[2:])
 
 
 def test_misaligned_old_logprobs_raise():
@@ -74,15 +66,12 @@ def test_collate_right_pads_and_sharding():
     assert batch["input_ids"].shape == (4, 5)
     assert batch["attention_mask"].sum(1).tolist() == [2, 3, 4, 5]
     assert batch["completion_mask"].sum(1).tolist() == [1, 2, 3, 4]
-    assert batch["input_ids"][0].tolist() == [2, 5, 0, 0, 0]  # pad id 0
-    # Two ranks split the shuffled rows disjointly and completely.
+    assert batch["input_ids"][0].tolist() == [2, 5, 0, 0, 0]
     seen = []
     for rank in range(2):
         seen += [int(it["advantage"]) for it in _ds(rows, world=2, rank=rank)]
     assert sorted(seen) == [0, 1, 2, 3]
 
-
-# --- init_adapter_from ------------------------------------------------------------------
 
 class Inner(nn.Module):
     def __init__(self):
@@ -92,7 +81,7 @@ class Inner(nn.Module):
         self.lora_B = nn.Linear(2, 4, bias=False)
 
 
-class Wrapper(nn.Module):  # PEFT-like: wrapper.model is the module the checkpoint keys refer to
+class Wrapper(nn.Module):
     def __init__(self):
         super().__init__()
         self.model = Inner()
@@ -105,7 +94,7 @@ def test_strict_load_into_descendant_and_count():
     n, target = load_adapter_state_into(dst, sd)
     assert n == 2 and target == "Inner"
     assert torch.equal(dst.model.lora_B.weight, src.model.lora_B.weight)
-    assert not torch.equal(dst.model.lin.weight, src.model.lin.weight)  # untouched frozen base
+    assert not torch.equal(dst.model.lin.weight, src.model.lin.weight)
 
 
 def test_unknown_checkpoint_key_fails_loudly():

@@ -34,7 +34,6 @@ def inject_and_load(model, ckpt_path):
 
     sd = torch.load(ckpt_path, map_location="cpu")["model_state_dict"]
     lora_keys = [k for k in sd if ".lora_A" in k]
-    # backbone-relative module paths -> outer-model paths (outer.model.<path>)
     mod_paths = sorted({k.rsplit(".lora_A", 1)[0] for k in lora_keys})
     outer_targets = ["model." + p for p in mod_paths]
     r = sd[lora_keys[0]].shape[0]
@@ -43,13 +42,10 @@ def inject_and_load(model, ckpt_path):
     cfg = NaRAConfig(r=r, lora_alpha=2 * r, lora_dropout=0.0, c_scale=0.1)
     inject_nara(model, outer_targets, cfg)
 
-    # checkpoint keys are backbone-relative => load into the backbone (model.model)
     missing, unexpected = model.model.load_state_dict(sd, strict=False)
-    # inject_nara builds params on CPU/fp32 while the base is on GPU/bf16; move them to match.
     base_p = next(model.parameters())
     model.model.to(device=base_p.device, dtype=base_p.dtype)
     loaded_lora = [k for k in sd if ".lora_" in k]
-    # sanity: adapter B must be non-zero after load (trained), mapper present+loaded
     some_B = [model.model.state_dict()[k] for k in sd if k.endswith(".lora_B")][:50]
     b_nonzero = sum(float(b.abs().sum() > 0) for b in some_B)
     report = {
@@ -184,7 +180,6 @@ def probe_variant(model, enc, clean_canvas, canvas_labels, corruptible, ks, voca
             dec = clean_t.clone()
             for p in chosen:
                 dec[0, p] = r.randrange(vocab)
-            # t = empirical corrupted fraction = training's per-example noise level.
             t = max(k / n, eps) if n else eps
             if ctx is not None:
                 ctx.set_noise_level(torch.tensor([t], dtype=torch.float32))
@@ -230,7 +225,6 @@ def run_probe(args, model, tok):
     nara = _run(ctx, 2)
     print(f"[probe LORA_ONLY+NARA] done ({time.time()-t0:.1f}s)", flush=True)
 
-    # Reconstruction accuracy at corrupted positions vs corruption level.
     print("\n=== TEACHER-FORCED RECONSTRUCTION PROBE (golden=%s, %d tokens) ===" % (
         args.golden, n), flush=True)
     print("recover@corrupted-positions vs t (fraction of canvas corrupted)", flush=True)
@@ -240,7 +234,6 @@ def run_probe(args, model, tok):
         print(f"  {name:10s}" + "  ".join(f"{res[k]:5.3f}" for k in ks), flush=True)
         results[name] = {str(k): res[k] for k in ks}
 
-    # Compare a near-clean context (small k) against full corruption (k=n).
     k_easy = ks[1] if len(ks) > 1 else ks[0]
     best_easy = max(lora[k_easy], nara[k_easy])
     best_hard = max(lora[ks[-1]], nara[ks[-1]])
@@ -278,28 +271,24 @@ def run_decode(args, model, tok):
 
     results = {}
 
-    # 1) BASE (no adapter)
     t0 = time.time()
     base_txt = decode(model, tok, args.prompt, args.seed, gen_kwargs)
     lo, to = block_scores(base_txt, args.golden, args.prompt)
     results["BASE"] = {"block": lo, "total": to, "sample": base_txt[:80]}
     print(f"[BASE] block={lo}/{len(args.golden)} total={to} ({time.time()-t0:.1f}s) :: {base_txt[:80]!r}", flush=True)
 
-    # inject adapter
     ctx, rep = inject_and_load(model, args.checkpoint)
     print("[adapter] " + json.dumps(rep), flush=True)
     assert ctx is not None, "no NaRAContext after injection"
     assert rep["mapper_tensors"] > 0, "checkpoint has no mapper — persistence fix missing?"
 
-    # 2) LORA_ONLY (mapper forced to identity)
-    ctx.set_training_stage(1)   # Ceff = I every step => plain B·A
+    ctx.set_training_stage(1)
     t0 = time.time()
     lora_txt = decode(model, tok, args.prompt, args.seed, gen_kwargs)
     lo, to = block_scores(lora_txt, args.golden, args.prompt)
     results["LORA_ONLY"] = {"block": lo, "total": to, "sample": lora_txt[:80]}
     print(f"[LORA_ONLY] block={lo}/{len(args.golden)} total={to} ({time.time()-t0:.1f}s) :: {lora_txt[:80]!r}", flush=True)
 
-    # 3) NARA (mapper active per denoising step)
     ctx.set_training_stage(2)
     seen = make_mapper_hook(model, ctx, args.eps)
     t0 = time.time()
@@ -329,7 +318,6 @@ def run_sweep(args, model, tok):
         gcfg.max_denoising_steps = steps if steps > 0 else default_steps
         return decode(model, tok, args.prompt, args.seed, dict(generation_config=gcfg))
 
-    # BASE once (no adapter), at default steps, as a floor.
     t0 = time.time()
     base_txt = decode_at(0)
     b_lo, b_to = block_scores(base_txt, args.golden, args.prompt)
@@ -339,7 +327,6 @@ def run_sweep(args, model, tok):
     ctx, rep = inject_and_load(model, args.checkpoint)
     print("[adapter] " + json.dumps(rep), flush=True)
     assert ctx is not None, "no NaRAContext after injection"
-    # Install the noise-level hook ONCE; harmless in stage 1, where Ceff=I ignores it.
     make_mapper_hook(model, ctx, args.eps)
 
     rows = []
@@ -385,10 +372,10 @@ def patch_greedy_full_commit():
 
     def greedy_accept(self, current_canvas, denoiser_canvas, logits, cur_step):
         self.accepted_token_mask = torch.ones_like(current_canvas, dtype=torch.bool)
-        return torch.argmax(logits, dim=-1)  # full argmax commit, not the sampled canvas
+        return torch.argmax(logits, dim=-1)
 
     def noop_renoise(self, accepted_canvas, cur_step):
-        return accepted_canvas  # everything accepted => nothing to re-noise
+        return accepted_canvas
 
     EBS.accept_canvas, EBS.renoise_canvas = greedy_accept, noop_renoise
 
@@ -416,7 +403,7 @@ def decode_greedy(model, tok, prompt, seed, gcfg, anchor, canvas_length, bos_id,
 
 def build_padtail_canvas(tok, golden, canvas_length, bos_id, vocab, seed):
     pad_id = tok.pad_token_id if tok.pad_token_id is not None else 0
-    ans = tok(" " + golden, add_special_tokens=False)["input_ids"]  # training tokenized " "+output
+    ans = tok(" " + golden, add_special_tokens=False)["input_ids"]
     n = len(ans)
     g = torch.Generator().manual_seed(seed)
     canvas = torch.full((1, canvas_length), pad_id, dtype=torch.long)
@@ -455,7 +442,6 @@ def run_greedy(args, model, tok):
 
     restore = patch_greedy_full_commit()
     try:
-        # BASE (no adapter), anchor on, as a floor.
         bt = decode_greedy(model, tok, args.prompt, args.seed, gcfg, True, canvas_length, bos_id, vocab)
         b_lo, b_to = block_scores(bt, args.golden, args.prompt)
         print(f"[BASE greedy+anchor] block={b_lo}/{G} total={b_to} :: {bt[len(args.prompt):][:64]!r}", flush=True)
@@ -549,9 +535,9 @@ def run_tail_probe(args, model, tok):
         for d in range(args.probe_draws):
             r = random.Random((args.seed * 1000003) ^ (d * 7) ^ (int(tail_random) * 131))
             dec = clean_t.clone()
-            for p in answer_pos:                 # fully corrupt the answer (t=1.0)
+            for p in answer_pos:
                 dec[0, p] = r.randrange(vocab)
-            if tail_random:                      # serve-like random tail
+            if tail_random:
                 for p in tail_pos:
                     dec[0, p] = r.randrange(vocab)
             logits = forward_canvas_logits(model, enc, dec, needs_mm)
@@ -566,7 +552,6 @@ def run_tail_probe(args, model, tok):
         return (sum(recs) / len(recs), max(blocks), max(totals), sample)
 
     rows = []
-    # BASE (no adapter): clean vs random tail
     for tr, label in ((False, "clean-tail"), (True, "random-tail")):
         rec, blk, tot, s = eval_condition(None, None, tr)
         rows.append(("BASE", label, rec, blk, tot, s))
@@ -597,10 +582,10 @@ def run_gen_vs_tf(args, model, tok):
     ctx, rep = inject_and_load(model, args.checkpoint)
     print("[adapter] " + json.dumps(rep), flush=True)
     assert ctx is not None
-    ctx.set_training_stage(1)  # LORA_ONLY (Ceff=I)
+    ctx.set_training_stage(1)
 
     cap = {}
-    orig_step = model._denoising_step.__func__  # unbound
+    orig_step = model._denoising_step.__func__
 
     def patched(self, *a, **k):
         if "canvas" not in cap:
@@ -610,7 +595,7 @@ def run_gen_vs_tf(args, model, tok):
             cap["sc"] = k.get("self_conditioning_logits")
         ret = orig_step(self, *a, **k)
         if "gen_argmax" not in cap:
-            cap["gen_argmax"] = ret[1].clone()  # new_argmax_canvas
+            cap["gen_argmax"] = ret[1].clone()
         return ret
 
     import types
@@ -628,12 +613,10 @@ def run_gen_vs_tf(args, model, tok):
           f"dec_pos={'None' if cap['dec_pos'] is None else cap['dec_pos'][0,:6].tolist()} "
           f"sc={'None' if cap['sc'] is None else tuple(cap['sc'].shape)}", flush=True)
 
-    # Teacher-forced model.forward() on the IDENTICAL canvas generate() used.
     tf_logits = forward_canvas_logits(model, enc, canvas, needs_mm)
     tf_argmax = tf_logits[0].argmax(-1)
     gen_argmax = cap["gen_argmax"][0]
 
-    # Isolate position_ids: teacher-forced with generate()'s decoder_position_ids.
     tf2_argmax = None
     if cap["dec_pos"] is not None:
         kw = dict(input_ids=enc.input_ids, attention_mask=enc.attention_mask,
@@ -685,7 +668,7 @@ def run_decode_recompute(args, model, tok):
     ctx, rep = inject_and_load(model, args.checkpoint)
     print("[adapter] " + json.dumps(rep), flush=True)
     assert ctx is not None
-    ctx.set_training_stage(1)  # LORA_ONLY (Ceff=I)
+    ctx.set_training_stage(1)
 
     gl = len(args.golden)
     step_counts = [int(s) for s in args.sweep_steps.split(",") if s.strip()]
@@ -700,7 +683,7 @@ def run_decode_recompute(args, model, tok):
         sc = None
         for _ in range(n_steps):
             logits = forward_canvas_logits(model, enc, canvas, needs_mm, sc if use_sc else None)
-            canvas = logits[0].argmax(-1).unsqueeze(0)   # greedy full-commit
+            canvas = logits[0].argmax(-1).unsqueeze(0)
             if anchor_id is not None:
                 canvas[0, 0] = anchor_id
             sc = logits

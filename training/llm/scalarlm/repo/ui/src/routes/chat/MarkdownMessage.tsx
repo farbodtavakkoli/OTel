@@ -6,14 +6,6 @@ interface MarkdownMessageProps {
   content: string;
 }
 
-/**
- * Minimal markdown renderer for chat bubbles. No runtime syntax highlighting
- * (adds multi-MB for the highlighter); code blocks are rendered as `<pre>`
- * with neutral styling — readable enough for v1. See docs/ui-design.md §6.5.
- *
- * Memoised because react-markdown re-parses on every prop change and assistant
- * messages update many times per second during streaming.
- */
 export const MarkdownMessage = memo(function MarkdownMessage({
   content,
 }: MarkdownMessageProps) {

@@ -1,24 +1,3 @@
-"""Run a trained checkpoint through HuggingFace instead of vLLM.
-
-"Trained model answers with garbage" has two causes that look identical
-from outside: a bad checkpoint, or a serving path that loses weights.
-Same weights through a second inference stack tells them apart in a
-minute, with no rebuild:
-
-  - HF correct, vLLM garbage -> serving is losing weights
-  - both garbage             -> the checkpoint is bad, serving is innocent
-
-That distinction is what ended a long debugging session where training,
-checkpointing and adapter loading all reported success.
-
-Mirrors the trainer: same model class, same Tokenformer surgery, same
-prompt construction (input + output concatenated, no chat template).
-
-    docker compose exec cray-nvidia \
-        python /app/cray/test/deployment/verify_checkpoint_hf.py \
-            [--job-dir /app/cray/jobs/<hash>] [--prompt "What is 3 + 3?"]
-"""
-
 import argparse
 import glob
 import os
@@ -41,8 +20,6 @@ def latest_job_dir(jobs_root):
 
 
 def latest_checkpoint(job_dir):
-    # Match the serving side: sorted() so a directory with several
-    # checkpoints picks deterministically, then prefer the highest step.
     checkpoints = sorted(glob.glob(os.path.join(job_dir, "*.pt")))
     if not checkpoints:
         raise SystemExit(f"No .pt checkpoint in {job_dir}")
@@ -56,13 +33,6 @@ def latest_checkpoint(job_dir):
 
 
 def build_model(model_name):
-    """Load the base model the way the trainer does, then apply the surgeon.
-
-    The surgery matters: the checkpoint contains tokenformer_{k,v,p}
-    tensors that only exist as parameters after the MLP layers are
-    wrapped. Loading into an unsurgered model would report all of them
-    as unexpected keys.
-    """
     config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
     multimodal = getattr(config, "vision_config", None) is not None
     loader = AutoModelForImageTextToText if multimodal else AutoModelForCausalLM
@@ -99,8 +69,6 @@ def main():
     state_dict = checkpoint["model_state_dict"]
     print(f"\nCheckpoint holds {len(state_dict)} tensors (step {checkpoint.get('step')})")
 
-    # strict=False plus an explicit report: a silent mismatch here would
-    # invalidate the whole comparison, so name what didn't land.
     result = model.load_state_dict(state_dict, strict=False)
     unexpected = list(result.unexpected_keys)
     print(f"Unexpected keys (in checkpoint, not in model): {len(unexpected)}")

@@ -1,17 +1,3 @@
-"""
-Unit tests for render_generate_entry.
-
-Each `prompts` entry in a /v1/generate request can be:
-  - a bare string (legacy raw passthrough)
-  - a dict with `prompt: str` (raw passthrough, equivalent form)
-  - a dict with `messages: list[ChatMessage]` (rendered through chat template)
-
-See docs/openai-chat-completions-queue.md §10. This is the single
-function that owns the dispatch between those forms; both /v1/generate
-and (potentially) other batch entrypoints route through it so the
-rendering rules don't drift across paths.
-"""
-
 from unittest.mock import patch
 
 import pytest
@@ -49,7 +35,6 @@ def test_dict_with_messages_renders_via_template():
 
 
 def test_dict_with_both_prompt_and_messages_raises_400():
-    """Reuse the renderer's validation; surface as HTTP 400."""
     with pytest.raises(HTTPException) as exc_info:
         render_generate_entry(
             {"prompt": "x", "messages": [{"role": "user", "content": "y"}]},
@@ -65,7 +50,6 @@ def test_dict_with_neither_prompt_nor_messages_raises_400():
 
 
 def test_unsupported_type_raises_400():
-    """Lists, ints, None — all rejected with 400 not 500."""
     for bogus in [[1, 2], 42, None]:
         with pytest.raises(HTTPException) as exc_info:
             render_generate_entry(bogus, model="any")

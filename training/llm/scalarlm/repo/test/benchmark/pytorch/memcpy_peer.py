@@ -8,8 +8,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# List of memcpy sizes, in bytes, should be multiples of the page size
-# Go up to the tensor size used in Llama 3 (4096 * 128256 * 4) = 2_101_346_304
 memcpy_sizes = [2 ** i  for i in range(12, 64) if 2 ** i <= 2_101_346_304]
 
 
@@ -25,7 +23,6 @@ def benchmark_memcpy_peer():
 
 
 def run_memcpy_peer_benchmark():
-
     warmup()
 
     results = {}
@@ -62,7 +59,7 @@ def run_memcpy_peer(size):
     total_time = start.elapsed_time(end) * 1e-3 / iterations
 
     return {
-        "operational_intensity": 1 / 4,  # 1 FLOP per 4 bytes
+        "operational_intensity": 1 / 4,
         "flops/s" : size / 4 / total_time,
         "bytes": size,
         "time": total_time,
@@ -106,7 +103,6 @@ def barrier():
 
 
 def save_results(results):
-    # Save results to a json file
     path = "/app/cray/data/benchmark_memcpy_peer.json"
 
     with open(path, "w") as f:

@@ -5,7 +5,6 @@ import torch
 
 def grpo_token_loss(logp_new, logp_old, advantages, clip_eps=0.2):
     if logp_old is None:
-        # On-policy single pass: r == 1 with d r / d logp_new == r, i.e. REINFORCE with A.
         logp_old = logp_new.detach()
     log_ratio = logp_new - logp_old
     ratio = torch.exp(log_ratio)
@@ -13,8 +12,6 @@ def grpo_token_loss(logp_new, logp_old, advantages, clip_eps=0.2):
     unclipped = ratio * adv
     clipped = torch.clamp(ratio, 1.0 - clip_eps, 1.0 + clip_eps) * adv
     per_token = -torch.min(unclipped, clipped)
-    # A token is "clipped" when the clamp is what limits the objective: the ratio left the window
-    # on the side where moving further would have increased r*A (TRL's low/high clip definition).
     is_clipped = ((ratio < 1.0 - clip_eps) & (adv < 0)) | ((ratio > 1.0 + clip_eps) & (adv > 0))
     return per_token, ratio, is_clipped
 

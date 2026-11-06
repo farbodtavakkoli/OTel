@@ -1,17 +1,3 @@
-/**
- * Theme store. Three user-facing modes:
- *
- *   "auto"  — follow the OS preference (prefers-color-scheme)
- *   "light" — force light
- *   "dark"  — force dark
- *
- * The resolved theme (light|dark) is applied by toggling the `.dark` class
- * on <html>. CSS variables in styles.css flip accordingly. The store
- * persists the user's chosen mode (not the resolved value) in localStorage,
- * so the OS switching on its own re-resolves `auto` without overwriting the
- * user's explicit pick.
- */
-
 import { readJson, writeJson } from "@/lib/preferences";
 
 const KEY = "theme.mode";
@@ -28,7 +14,6 @@ function notify() {
     try {
       l();
     } catch {
-      // continue
     }
   }
 }
@@ -65,10 +50,6 @@ export function subscribeTheme(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-/**
- * Call once at boot. Applies the saved mode and starts listening for OS-level
- * prefers-color-scheme changes so `auto` remains live.
- */
 export function initTheme(): void {
   applyTheme(current);
   if (typeof window !== "undefined" && window.matchMedia) {
@@ -79,8 +60,6 @@ export function initTheme(): void {
         notify();
       }
     };
-    // addEventListener is supported in all evergreen browsers; the legacy
-    // addListener fallback was dropped by MDN in 2020.
     mediaQuery.addEventListener("change", onChange);
   }
 }

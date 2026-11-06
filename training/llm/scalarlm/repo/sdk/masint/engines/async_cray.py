@@ -27,7 +27,6 @@ class AsyncCray:
         return await submit_slurm_job(code, train_args, api_url=self.api_url)
 
     async def generate(self, prompts, model_name, max_tokens):
-
         upload_threshold = 128
 
         if len(prompts) > upload_threshold:
@@ -50,7 +49,6 @@ class AsyncCray:
     async def submit_generate(self, prompts, model_name, max_tokens):
         api_url = make_api_url("v1/generate", api_url=self.api_url)
 
-        # Create connector with proper cleanup settings
         async with get_session() as session:
             params = {"prompts": prompts}
 
@@ -132,7 +130,7 @@ class AsyncCray:
         async with get_session() as session:
             async with session.post(api_url) as resp:
                 return await resp.json()
-    
+
     async def clear_queue(self):
         api_url = make_api_url("v1/generate/clear_queue", api_url=self.api_url)
 
@@ -142,7 +140,6 @@ class AsyncCray:
 
 
 def handle_error(result):
-
     if "error" in result and result["error"] is not None:
         msg = f"API returned an error: {result['error']!r}"
         logger.error(msg)

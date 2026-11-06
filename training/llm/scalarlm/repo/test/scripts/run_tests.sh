@@ -1,13 +1,6 @@
 #!/bin/bash
-#
-# ScalarLM Master Test Runner - Unified interface for all test types
-# Many tests (integration) require running in the Docker instance.
-# For example, To run a single test in the container:
-#  % docker exec scalarlm-cray-1 python -m pytest /app/cray/test/integration/test_end_to_end_pipeline.py::test_quick_pipeline -v -s
-#
 set -e
 
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -16,18 +9,15 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-# Script location
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR/../../"
 
-# Configuration
 DOCKER_IMAGE="${SCALARLM_DOCKER_IMAGE:-scalarlm-cray:latest}"
-TEST_ENV="local"  # local, docker, or auto
+TEST_ENV="local"
 HEALTH_MODE=false
 SERVER_CHECK=true
 SHOW_HELP=false
 
-# Test selection flags
 RUN_DEPLOYMENT=false
 RUN_UNIT=false
 RUN_INTEGRATION=false
@@ -76,7 +66,6 @@ usage() {
     echo "  • For integration tests: Docker image built (docker-compose build cray)"
 }
 
-# Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
         deployment)
@@ -130,7 +119,6 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         *)
-            # Check if it's a test file path
             if [ -f "$1" ] || [[ "$1" == test/* ]]; then
                 TEST_FILES="$TEST_FILES $1"
                 shift
@@ -148,23 +136,19 @@ if [ "$SHOW_HELP" = true ]; then
     exit 0
 fi
 
-# Print welcome
 print_header
 echo "Environment: $TEST_ENV"
 echo "Docker Image: $DOCKER_IMAGE"
 echo "Project Root: $PROJECT_ROOT"
 echo ""
 
-# Environment detection and setup
 detect_environment() {
     echo -e "${CYAN}🔍 Detecting environment...${NC}"
-    
-    # Check if Docker is available
+
     if command -v docker &> /dev/null && docker info &> /dev/null; then
         echo -e "${GREEN}✓ Docker available${NC}"
         DOCKER_AVAILABLE=true
-        
-        # Check if ScalarLM container is running
+
         if docker ps --format "table {{.Names}}" | grep -q "scalarlm-cray"; then
             echo -e "${GREEN}✓ ScalarLM container running${NC}"
             CONTAINER_RUNNING=true
@@ -172,8 +156,7 @@ detect_environment() {
             echo -e "${YELLOW}⚠ ScalarLM container not running${NC}"
             CONTAINER_RUNNING=false
         fi
-        
-        # Check if Docker image exists
+
         if docker image inspect "$DOCKER_IMAGE" &>/dev/null; then
             echo -e "${GREEN}✓ Docker image '$DOCKER_IMAGE' found${NC}"
             DOCKER_IMAGE_AVAILABLE=true
@@ -187,8 +170,7 @@ detect_environment() {
         DOCKER_IMAGE_AVAILABLE=false
         CONTAINER_RUNNING=false
     fi
-    
-    # Check if ScalarLM server is running
+
     if [ "$SERVER_CHECK" = true ]; then
         if curl -s http://localhost:8000/health &>/dev/null; then
             echo -e "${GREEN}✓ ScalarLM server running (http://localhost:8000)${NC}"
@@ -204,13 +186,11 @@ detect_environment() {
     echo ""
 }
 
-# Test execution functions
 run_deployment_tests() {
     echo -e "${BOLD}${CYAN}🚀 DEPLOYMENT TESTS${NC}"
     echo "Running essential tests for fast feedback..."
     echo ""
-    
-    # Health check if server is running
+
     if [ "$SERVER_RUNNING" = true ]; then
         echo -e "${BLUE}▶ Health Check${NC}"
         python "$PROJECT_ROOT/test/deployment/health.py"
@@ -227,21 +207,16 @@ run_deployment_tests() {
 
 run_integration_tests() {
     echo -e "${BOLD}${CYAN}🔗 INTEGRATION TESTS${NC}"
-    
-    # Check if ScalarLM container is running
+
     if docker ps --format "table {{.Names}}" | grep -q "scalarlm-cray"; then
         echo "Running integration tests against live ScalarLM container..."
-        
-        # Ensure test dependencies are installed in the container
+
         echo "Installing test dependencies in container..."
         docker exec scalarlm-cray-1 pip install -q -r /app/cray/test/requirements-pytest.txt
-        
-        # Set environment for tests to run against running container
+
         export PYTHONPATH="$PROJECT_ROOT/infra:$PROJECT_ROOT/sdk:${PYTHONPATH:-}"
-        
-        # Determine what tests to run
+
         if [ -n "$TEST_FILES" ]; then
-            # Run specific test files inside container
             echo "Running specific test files in container: $TEST_FILES"
             if [ "${VERBOSE:-false}" = true ]; then
                 docker exec scalarlm-cray-1 python -m pytest $TEST_FILES -v
@@ -249,7 +224,6 @@ run_integration_tests() {
                 docker exec scalarlm-cray-1 python -m pytest $TEST_FILES
             fi
         else
-            # Run all integration tests inside container
             if [ "${VERBOSE:-false}" = true ]; then
                 docker exec scalarlm-cray-1 python -m pytest /app/cray/test/integration/ -v
             else
@@ -265,12 +239,8 @@ run_integration_tests() {
     fi
 }
 
-
-
-# Main execution
 detect_environment
 
-# Track results
 TOTAL_SUITES=0
 PASSED_SUITES=0
 FAILED_SUITES=0
@@ -302,7 +272,6 @@ run_test_suite() {
     fi
 }
 
-# Execute selected test suites
 if [ "$RUN_ALL" = true ]; then
     run_test_suite "Deployment Tests" run_deployment_tests
     run_test_suite "Integration Tests" run_integration_tests
@@ -312,7 +281,6 @@ elif [ "$RUN_INTEGRATION" = true ]; then
     run_test_suite "Integration Tests" run_integration_tests
 fi
 
-# Final summary
 echo ""
 echo -e "${BOLD}${BLUE}$(printf '=%.0s' $(seq 1 60))${NC}"
 echo -e "${BOLD}${BLUE}                    📊 FINAL SUMMARY${NC}"

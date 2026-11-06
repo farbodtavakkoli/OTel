@@ -1,14 +1,5 @@
 import type { Config } from "tailwindcss";
 
-/**
- * Every semantic color resolves to a CSS custom property so the same Tailwind
- * class ("bg-bg-card", "text-fg-muted", …) renders differently in light vs.
- * dark. The variables themselves live in styles.css under :root and
- * html.dark — see ui/src/stores/theme.ts for when the dark class is applied.
- *
- * The `<alpha-value>` placeholder is Tailwind's standard way to forward the
- * opacity modifier (e.g. "bg-accent/15") through a var(--color-foo) lookup.
- */
 const rgbVar = (name: string) => `rgb(var(${name}) / <alpha-value>)`;
 
 export default {

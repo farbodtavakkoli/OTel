@@ -6,9 +6,6 @@
     <meta name="color-scheme" content="light dark" />
     <title>ScalarLM</title>
     <script>
-      // Resolve theme before first paint to avoid a light->dark flash when
-      // the saved preference is "dark" or OS prefers-color-scheme is dark.
-      // Mirrors ui/src/stores/theme.ts::resolveTheme.
       (function () {
         try {
           var raw = localStorage.getItem("scalarlm:theme.mode");
@@ -25,9 +22,7 @@
           if (resolved === "dark") {
             document.documentElement.classList.add("dark");
           }
-        } catch (e) {
-          /* ignore */
-        }
+        } catch (e) {}
       })();
     </script>
   </head>

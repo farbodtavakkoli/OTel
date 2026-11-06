@@ -1,9 +1,5 @@
 import { getApiConfig } from "./config";
 
-/**
- * Error type thrown by apiFetch so callers (and TanStack Query) can distinguish
- * HTTP failures from network failures and branch on status codes.
- */
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -17,22 +13,11 @@ export class ApiError extends Error {
 }
 
 interface ApiFetchOptions extends Omit<RequestInit, "body"> {
-  /** Parsed JSON body; pass FormData / Blob / string on `rawBody` instead. */
   json?: unknown;
   rawBody?: BodyInit | null;
-  /** Abort the request when this signal fires. */
   signal?: AbortSignal;
 }
 
-/**
- * Thin wrapper around fetch that:
- *  - prepends the resolved api_base from api-config.json
- *  - handles JSON bodies
- *  - throws ApiError on non-2xx responses with structured info
- *
- * Streaming endpoints (chat completions, training logs) bypass this helper
- * and use fetch / EventSource directly so they can stream without buffering.
- */
 export async function apiFetch<T = unknown>(
   path: string,
   options: ApiFetchOptions = {},

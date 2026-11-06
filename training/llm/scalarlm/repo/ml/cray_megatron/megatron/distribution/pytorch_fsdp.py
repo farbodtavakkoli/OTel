@@ -10,7 +10,6 @@ from cray_infra.util.get_job_config import get_job_config
 
 logger = logging.getLogger(__name__)
 
-# Minimum children for a ModuleList to be treated as the transformer stack.
 _MIN_TRANSFORMER_BLOCKS = 4
 
 
@@ -80,7 +79,6 @@ class PyTorchFSDP(nn.Module):
         mesh, replicate_size, shard_size = build_hsdp_mesh()
         job_config = get_job_config()
 
-        # Trades peak memory against a re-all-gather in backward.
         self._fully_shard_kwargs = {
             "reshard_after_forward": bool(
                 job_config.get("reshard_after_forward", False)
@@ -103,15 +101,10 @@ class PyTorchFSDP(nn.Module):
                 shard_size,
             )
 
-        # No activation checkpointing here: load_model.py owns gradient_checkpointing.
-
-        # Bottom-up: shard the transformer blocks first, then the root module.
         self._apply_fsdp(model)
         fully_shard(model, **self._fully_shard_kwargs)
 
         self.model = model
-
-    # Construction helpers
 
     def _transformer_stacks(self, model):
         stacks = []
@@ -135,8 +128,6 @@ class PyTorchFSDP(nn.Module):
             for layer in stack:
                 fully_shard(layer, **self._fully_shard_kwargs)
             logger.info("Applied fully_shard to %d transformer blocks in %s", len(stack), name)
-
-    # Distribution strategy interface
 
     def forward(self, *args, **kwargs):
         return self.model(*args, **kwargs)
@@ -204,7 +195,6 @@ class PyTorchFSDP(nn.Module):
         )
 
     def __getattr__(self, name):
-        # Fall through to the wrapped model so callers can reach its attributes.
         try:
             return super().__getattr__(name)
         except AttributeError:

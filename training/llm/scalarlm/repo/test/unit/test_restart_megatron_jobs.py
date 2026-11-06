@@ -1,5 +1,3 @@
-"""Regression tests for scanning persisted training-job status files."""
-
 import asyncio
 import json
 import logging

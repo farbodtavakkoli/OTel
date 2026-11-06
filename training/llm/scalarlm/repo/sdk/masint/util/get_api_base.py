@@ -17,4 +17,3 @@ def get_api_base():
         return os.environ["MASINT_API_URL"]
 
     return "http://localhost:8000"
-

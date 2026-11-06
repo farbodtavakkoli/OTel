@@ -38,8 +38,6 @@ def parse_args():
     parser.add_argument('--sample_fraction', default=1.0, type=float,
                         help='Fraction of the dataset to use (0.0-1.0), useful for testing')
 
-    # Training hyperparameters. Every numeric argument needs an explicit `type=`:
-    # without it a passed flag stays a str and the server fails comparing it.
     parser.add_argument('--max_steps', default = 11, type=int)
     parser.add_argument('--learning_rate', default = 0.0005, type=float)
     parser.add_argument('--warmup_steps', default=0, type=int)
@@ -48,7 +46,6 @@ def parse_args():
     parser.add_argument('--batch_size', default = 2, type=int)
     parser.add_argument('--max_token_block_size', default = 1762, type=int)
 
-    # LoRA configuration
     parser.add_argument('--r', default = 8, type=int)
     parser.add_argument('--lora_alpha', default = 16, type=int)
     parser.add_argument('--lora_dropout', default = 0.05, type=float)
@@ -66,8 +63,8 @@ def parse_args():
                              'changes; none: full parameter training')
     parser.add_argument('--training_storage_dtype', default=None, choices=['bfloat16', 'float32'],
                         help='Default: bfloat16 for language_model, float32 for other modes')
-    parser.add_argument('--optimizer_type', default=None, choices=['compensated_adamw', 'adamw', 'sgd', 'rmsprop'],
-                        help='Default: compensated_adamw for bfloat16 storage, adamw for float32')
+    parser.add_argument('--optimizer_type', default='adamw', choices=['adamw', 'sgd', 'rmsprop'],
+                        help='Default: adamw for all training storage dtypes')
     parser.add_argument('--gradient_accumulation_steps', default=4, type=int)
     parser.add_argument('--gradient_checkpointing', default=True, type=_str2bool)
     parser.add_argument('--distribution_strategy', default='fsdp',
@@ -76,27 +73,20 @@ def parse_args():
                              'ddp: full model per GPU, data sharded (faster for small models); '
                              'pytorch_fsdp: PyTorch FSDP2 (fully_shard) — buckets and overlaps '
                              'collectives, so it scales better than fsdp at larger world sizes')
-    # sdpa, not flash_attention_2: FA2 is unsupported for training on MI355X and
-    # the server downgrades it to sdpa anyway.
     parser.add_argument('--attn_implementation', default='sdpa',
                         choices=['flash_attention_2', 'sdpa', 'eager'])
     parser.add_argument('--freeze_layer_keywords',
                         default="vision_model, vision_tower, multi_modal_projector, visual",
                         help='Comma-separated keywords of layers to freeze (e.g. vision encoders)')
 
-    # Classification-specific settings
     parser.add_argument('--num_labels', default=None, type=int)
     parser.add_argument('--classification_dropout', default=0.1, type=float)
     parser.add_argument('--label_smoothing', default=0.1, type=float)
 
-    # HuggingFace Hub upload settings
     parser.add_argument('--upload_to_hf', default=False, type=_str2bool)
     parser.add_argument('--hf_repo_id', default='farbodtavakkoli/scalarlm-test')
     parser.add_argument('--hf_upload_token', default=os.getenv('HF_TOKEN', ''))
 
-    # gpus is GPUs per node. On a bare-metal 8-GPU box (MI355X) pass --gpus 8
-    # --nodes 1; the server also needs SCALARLM_MAX_GPUS_PER_NODE=8, whose
-    # default of 1 otherwise silently caps the job to a single GPU.
     parser.add_argument('--gpus', default = 1, type=int)
     parser.add_argument('--nodes', default = 2, type=int)
     parser.add_argument('--llm_name', default=None)
@@ -104,7 +94,6 @@ def parse_args():
 
     return parser.parse_args()
 
-# Special tokens formatting for different model types
 def format_conversation(example, model_type):
     prompt = str(example.get('prompt', '')) 
     completion = str(example.get('completion', '')) 
@@ -148,7 +137,6 @@ def format_conversation(example, model_type):
     else:
         return f"User: {prompt}\nAssistant: {completion}"
 
-# Format example for training
 def format_for_scalarlm(example, config):
     if config.gradient_calculation == 'output_tokens':
         prompt = str(example.get('prompt', '')) or ""
@@ -164,7 +152,6 @@ def format_for_scalarlm(example, config):
         return {'input': input_text, 'output': output_text}
     elif config.gradient_calculation == 'entire_sequence':
         full_text = format_conversation(example, model_type=config.model_type)
-        # Full sequence gradient: everything in 'output'
         return {'input': '', 'output': full_text}
 
 def get_dataset(config):
@@ -179,7 +166,6 @@ def get_dataset(config):
         with open(config.data_path, 'r+') as f:
             data = [json.loads(row) for row in f]
 
-    # Subsample dataset if sample_fraction < 1.0
     if config.sample_fraction < 1.0:
         sample_size = int(len(data) * config.sample_fraction)
         print(f"Subsampling dataset to {config.sample_fraction:.2%} ({sample_size} samples)")
@@ -196,18 +182,15 @@ def get_dataset(config):
                     'score': example['score']
                 })
             else:
-                # If data doesn't have correct format, skip
                 print(f"Warning: Skipping example without sentence1/sentence2/score format: {example.keys()}")
 
     elif config.training_mode == 'classification':
-        # Build label mapping from unique labels
         unique_labels = sorted(list(set(example.get('label', example.get('answer', '')) for example in data)))
         config.label2id = {label: i for i, label in enumerate(unique_labels)}
         config.id2label = {v: k for k, v in config.label2id.items()}
         config.num_labels = len(config.label2id)
-        
+
         for example in data:
-            # Support both 'text'/'label' and 'question'/'answer' column names
             text = example.get('text', example.get('question', ''))
             label = example.get('label', example.get('answer', ''))
             dataset.append({
@@ -216,19 +199,16 @@ def get_dataset(config):
             })
 
     elif config.training_mode == 'language_model':
-        # For language model training
         for example in data:
             dataset.append(format_for_scalarlm(example, config))
-    
+
     return dataset
 
 def build_train_args(config):
     training_storage_dtype = getattr(config, 'training_storage_dtype', None) or (
         'bfloat16' if config.training_mode == 'language_model' else 'float32')
-    optimizer_type = getattr(config, 'optimizer_type', None) or (
-        'compensated_adamw' if training_storage_dtype == 'bfloat16' else 'adamw')
+    optimizer_type = getattr(config, 'optimizer_type', None) or 'adamw'
     return {
-        # Scheduling / shape
         "max_steps": config.max_steps,
         "learning_rate": config.learning_rate,
         "warmup_steps": getattr(config, "warmup_steps", 0),
@@ -240,11 +220,9 @@ def build_train_args(config):
         "max_token_block_size": config.max_token_block_size,
         "steps_per_checkpoint": config.steps_per_checkpoint,
 
-        # Mode / adapter
         "training_mode": config.training_mode,
         "adapter_type": config.adapter_type,
 
-        # Must be nested: the server reads job_config["lora_config"][...].
         "lora_config": {
             "r": config.r,
             "lora_alpha": config.lora_alpha,
@@ -268,7 +246,6 @@ def build_train_args(config):
         "hf_upload_token": config.hf_upload_token,
         "custom_data_path": config.custom_data_path,
 
-        # Must be nested; --classification_dropout maps to classification.dropout.
         "classification": {
             "num_labels": config.num_labels,
             "dropout": config.classification_dropout,
@@ -292,7 +269,7 @@ def main():
         train_args["llm_name"] = config.llm_name
     if config.reshard_after_forward:
         train_args["reshard_after_forward"] = True
-    
+
     status = llm.train(
         dataset,
         train_args=train_args
@@ -300,7 +277,6 @@ def main():
 
     print(status)
 
-    # `now` has one-second resolution, so disambiguate same-second submissions.
     save_dir = f'scalarlm_training/runs/{now}'
     suffix = 1
     while os.path.exists(save_dir):

@@ -1,12 +1,3 @@
-"""
-NDJSON tail of the latest publish job's `publish.log`.
-
-Same wire shape as `/v1/health/logs/{service}` so the client can
-share its NDJSON stream consumer (`streamNdjsonLogOnce`). Resolves
-the freshest `publish_*/publish.log` under the training-job
-directory, then delegates to the shared `tail_log_file` helper.
-"""
-
 from __future__ import annotations
 
 import logging

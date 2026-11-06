@@ -32,4 +32,3 @@ async def clear_in_memory_results(group_request_id):
     async with lock:
         if group_request_id in in_memory_results:
             del in_memory_results[group_request_id]
-

@@ -35,7 +35,6 @@ async def delete(job_hash: str):
                 detail=f"Training job was not found at {job_directory_path}",
             )
 
-        # Get job config
         job_config = None
 
         config_filepath = os.path.join(job_directory_path, "config.yaml")
@@ -57,7 +56,6 @@ async def delete(job_hash: str):
         logger.info(f"Job status before deletion: {job_status}")
 
         try:
-            # Cancel SLURM job first if it's still running
             slurm_job_id = job_status['job_id']
 
             scancel_output = subprocess.check_output(
@@ -71,13 +69,11 @@ async def delete(job_hash: str):
             logger.error(f"scancel command failed for job id {slurm_job_id}")
 
         logger.info(f"Job status after cancellation: {job_status}")
-        
-        # Delete the entire job directory (model + all artifacts)
+
         if os.path.isdir(job_directory_path):
             shutil.rmtree(job_directory_path)
 
         get_vllm_model_manager().unregister_model(job_hash)
-        
 
         return TrainResponse(
             job_status=job_status,

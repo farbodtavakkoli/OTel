@@ -11,21 +11,10 @@ import { useConversations } from "@/stores/useConversationStore";
 
 interface ConversationListProps {
   onNew: () => void;
-  /** Mobile drawer state. Ignored at md+ where the sidebar is always visible. */
   open?: boolean;
-  /** Mobile-only: close the drawer after picking / creating / importing. */
   onClose?: () => void;
 }
 
-/**
- * Sidebar: groups existing conversations by recency bucket, highlights the
- * currently-viewed one, and offers delete with no confirmation — the design
- * has no server-side record so restoring requires the JSON export (future
- * feature). Matches the pattern in docs/ui-design.md §6.1.
- *
- * On mobile (<md) the sidebar becomes a slide-in drawer driven by `open`.
- * At md+ it is always visible as a 256px column.
- */
 export function ConversationList({ onNew, open = false, onClose }: ConversationListProps) {
   const { conversationId } = useParams<{ conversationId: string }>();
   const navigate = useNavigate();

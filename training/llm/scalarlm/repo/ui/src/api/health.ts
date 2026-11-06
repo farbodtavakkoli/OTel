@@ -2,13 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 
 import { apiFetch } from "./client";
 
-/**
- * GET /v1/health shape today:
- *   { api: "up", vllm: "up" | {status: "down", reason: string}, all: "up"|"down"|"mixed" }
- *
- * The UI renders one dot per component it knows about. If the backend later
- * adds slurm / training / queue sub-components, they'll surface automatically.
- */
 interface HealthResponseRaw {
   api?: string;
   vllm?: string | { status: string; reason?: string };

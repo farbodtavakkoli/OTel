@@ -6,7 +6,6 @@ interface ModalProps {
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
-  /** Tailwind max-width class; defaults to max-w-2xl. */
   maxWidth?: string;
 }
 

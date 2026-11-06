@@ -1,4 +1,3 @@
-
 from cray_megatron.models.get_latest_checkpoint_path import get_latest_checkpoint_path
 from cray_megatron.models.does_any_checkpoint_exist import does_any_checkpoint_exist
 
@@ -14,4 +13,3 @@ class ModelManagerBase(ABC):
 
     def get_latest_checkpoint_path(self):
         return get_latest_checkpoint_path()
-

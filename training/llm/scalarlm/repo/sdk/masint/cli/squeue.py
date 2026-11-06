@@ -33,4 +33,3 @@ async def squeue_async():
                 raise Exception("Failed to get squeue")
 
             print(data["squeue_output"])
-

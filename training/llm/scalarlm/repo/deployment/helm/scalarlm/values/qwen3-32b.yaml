@@ -1,6 +1,3 @@
-# Qwen3-32B training cluster. emptyDir tmpfs for /dev/shm (isolates
-# SHM across pods), hostPort on API for LoadBalancer-less access.
-
 image:
   tag: v1.05
 

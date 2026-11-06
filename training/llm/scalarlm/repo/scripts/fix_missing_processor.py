@@ -1,21 +1,3 @@
-"""
-Fix a published HuggingFace model repo that is missing the multimodal processor
-files (preprocessor_config.json / processor_config.json).
-
-This patches the gap left by merge_lora_and_push.py before the AutoProcessor
-save was added.  The fix:
-  1. Reads the published model's config.json to find the base model name
-     (via _name_or_path or a --base-model override).
-  2. Loads AutoProcessor from the base model.
-  3. Saves it to a temp dir.
-  4. Uploads only the new files to the target repo (non-destructive).
-
-Usage:
-    python fix_missing_processor.py --repo-id gdiamos/relm-3-e2b-it [--token $HF_TOKEN]
-    python fix_missing_processor.py --repo-id gdiamos/relm-3-e2b-it \
-        --base-model google/gemma-4-2b-it --token $HF_TOKEN
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -165,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.dry_run:
             logger.info("Dry run — skipping upload. Files are at %s", tmp_dir)
-            cleanup = False  # keep for inspection
+            cleanup = False
             return 0
 
         from huggingface_hub import HfApi

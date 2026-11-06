@@ -1,13 +1,3 @@
-"""Sampling params must match what the served model accepts.
-
-Diffusion models (dLLMs) reject temperature, min_p, seed, min_tokens,
-logit_bias, bad_words and allowed_token_ids. ScalarLM always sent
-temperature, so every request to a diffusion model failed:
-
-    ValueError: The temperature, min_p, seed, ... sampling parameters are
-    not yet supported with diffusion models.
-"""
-
 from __future__ import annotations
 
 import types
@@ -37,8 +27,6 @@ def test_diffusion_model_gets_no_temperature():
 
 
 def test_missing_model_config_falls_back_to_autoregressive():
-    """A model_config without is_diffusion (older vLLM) must keep the
-    previous behavior rather than silently dropping temperature."""
     engine_client = types.SimpleNamespace(model_config=types.SimpleNamespace())
     app = types.SimpleNamespace(
         state=types.SimpleNamespace(engine_client=engine_client)

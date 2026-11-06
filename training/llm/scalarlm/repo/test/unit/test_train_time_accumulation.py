@@ -1,19 +1,3 @@
-"""
-Regression test: displayed train time must survive checkpoint resumes.
-
-Bug under test: the history entry's ``time`` field was written as the
-*current slice's* elapsed (``time.time() - start_time``), but ``start_time``
-resets at every slice's ``on_train_begin``. Both the UI elapsed clock
-(routes/train/TrainDetail.tsx) and the models-list ``train_time``
-(training.list_models.get_train_time) read ``history[-1].time`` directly, so
-they reset to ~0 on every resume — a 48h job showed ~13h.
-
-``update_history`` must fold in ``accumulated_seconds_at_slice_start`` (the
-wall time carried forward from prior slices, loaded by
-``_load_accumulated_seconds`` and persisted by ``_finalize_slice``) so the
-recorded time is cumulative across slices.
-"""
-
 import json
 
 import pytest
@@ -69,8 +53,6 @@ def test_history_time_includes_prior_slice_seconds(job_config_env, monkeypatch):
 
     loop = _make_loop(job_config_env)
 
-    # Slice started "now"; 10s of in-slice wall clock have elapsed; 48h of
-    # prior slices were carried forward from status.json.
     prior_seconds = 48 * 60 * 60
     loop.training_state.start_time = 1_000.0
     loop.training_state.accumulated_seconds_at_slice_start = prior_seconds
@@ -82,13 +64,10 @@ def test_history_time_includes_prior_slice_seconds(job_config_env, monkeypatch):
     loop.update_history(loss=0.5)
 
     entry = loop.training_state.history[-1]
-    # 48h + 10s, not just 10s.
     assert entry["time"] == pytest.approx(prior_seconds + 10.0)
 
 
 def test_first_slice_time_is_just_in_slice_elapsed(job_config_env, monkeypatch):
-    """With no prior slices (accumulated == 0) the behavior is unchanged:
-    the recorded time is the current slice's elapsed."""
     import cray_megatron.megatron.training_loop as tl
 
     loop = _make_loop(job_config_env)
@@ -104,8 +83,6 @@ def test_first_slice_time_is_just_in_slice_elapsed(job_config_env, monkeypatch):
 
 
 def test_get_train_time_reads_accumulated_value(job_config_env, monkeypatch):
-    """The backend list_models.get_train_time reads history[-1].time, so the
-    fix at the source flows through to the models-list train_time too."""
     import cray_megatron.megatron.training_loop as tl
     from cray_infra.training.list_models import get_train_time
 
@@ -116,6 +93,5 @@ def test_get_train_time_reads_accumulated_value(job_config_env, monkeypatch):
     monkeypatch.setattr(tl.time, "time", lambda: 1.0)
     loop.update_history(loss=0.1)
 
-    # Reconstruct the status.json shape get_train_time consumes.
     status = json.loads((job_config_env / "status.json").read_text())
     assert get_train_time(status) == pytest.approx(100_001.0)

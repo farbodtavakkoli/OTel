@@ -31,7 +31,6 @@ def parse_args():
     return parser.parse_args()
 
 
-# Special tokens formatting for different model types
 def format_conversation_inference(example, model_type):
     prompt = str(example.get('prompt', '')) 
 
@@ -40,7 +39,7 @@ def format_conversation_inference(example, model_type):
 
     elif model_type.lower() == "llama3":
         return f"<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
- 
+
     elif model_type.lower() == "gemma3":
         return f"<start_of_turn>user\n{prompt}<end_of_turn>\n\n\n<start_of_turn>model"
 
@@ -75,32 +74,29 @@ def get_dataset(config):
     dataset = []
     with open(config.test_data_path, 'r+') as f:
         test_data = json.load(f)
-    
+
     count = len(test_data)
 
     if config.inference_mode == 'embedding':
-        # For embedding models, pass raw text without special tokens
         for i in range(count):
             if 'anchor' in test_data[i]:
                 dataset.append(test_data[i]['anchor'])
             else:
-                # Fallback: try to find any text field
                 print(f"Warning: Unexpected data format at index {i}: {test_data[i].keys()}")
 
     elif config.inference_mode == 'language_model':
-        # For language model inference, use configurable chat template
         for i in range(count):
             if 'prompt' in test_data[i]:
                 prompt_text = test_data[i]['prompt']
             else:
                 print(f"Warning: No prompt field found at index {i}: {test_data[i].keys()}")
                 continue
-            
+
             example = {
                 'prompt': prompt_text,
                 'reasoning': test_data[i].get('reasoning', '')
             }
-            
+
             dataset.append(
                 format_conversation_inference(example, model_type=config.model_type)
             )
@@ -117,7 +113,7 @@ def main():
     results = []
     processed_indices = []
     batch_size = int(config.batch_size)
-    
+
     for i in range(0, len(dataset), batch_size):
         batch = dataset[i: i+batch_size]
         try:
@@ -136,7 +132,7 @@ def main():
             traceback.print_exc()
             print('batch ', i, ' failed')
             continue
-    
+
     output = []
     for idx, result_idx in enumerate(processed_indices):
         gt_answer = test_data[result_idx].get('completion', '')
@@ -147,16 +143,15 @@ def main():
         })
 
     now = datetime.datetime.now().strftime("%Y_%m_%d__%H_%M_%S")
- 
+
     save_dir = f'scalarlm_inference/runs/{now}'
     os.makedirs(save_dir, exist_ok = False)
 
     print(f"Saving inference results to {save_dir}/inference_results.json")
-    
+
     with open(os.path.join(save_dir, 'inference_results.json'), 'w+') as f:
         json.dump(output, f, indent = 4)
 
 
 if __name__ == '__main__':
     main()
-

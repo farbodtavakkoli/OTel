@@ -12,29 +12,20 @@ import { readJson, writeJson } from "@/lib/preferences";
 
 interface LossChartProps {
   history: TrainingHistoryPoint[];
-  /**
-   * Hash of the primary job. Used as the dedup key when adding compare
-   * series, and as the default legend label when no alias is set.
-   */
   jobHash?: string;
   maxSteps?: number;
 }
 
-// TensorBoard-style EMA: smooth[i] = w * smooth[i-1] + (1 - w) * raw[i]
-// with debiasing for the warmup. w=0 returns the raw series.
 const SMOOTH_KEY = "loss-chart.smoothing";
 const SMOOTH_MAX = 0.99;
 
-// Distinct colors for compare series. Picked to be legible in both light
-// and dark mode without relying on the theme accent (which is reserved
-// for the primary series). Index 0 = first compared job, mod-wraps.
 const COMPARE_PALETTE = [
-  "#22c55e", // green
-  "#f59e0b", // amber
-  "#a855f7", // purple
-  "#ec4899", // pink
-  "#06b6d4", // cyan
-  "#ef4444", // red — last so the primary accent (usually blue) doesn't clash
+  "#22c55e",
+  "#f59e0b",
+  "#a855f7",
+  "#ec4899",
+  "#06b6d4",
+  "#ef4444",
 ];
 
 const HASH_RE = /^[0-9a-f]+$/i;
@@ -49,12 +40,6 @@ interface Series {
   isPrimary: boolean;
 }
 
-/**
- * View domain in raw data space (step values, raw loss). When set, overrides
- * the auto-fit domain so the chart zooms to the user-selected region. Stored
- * in raw loss space (not log-transformed) so toggling logY does not
- * reinterpret the selection.
- */
 interface ViewDomain {
   xMin: number;
   xMax: number;
@@ -62,7 +47,6 @@ interface ViewDomain {
   yMax: number;
 }
 
-/** Active rubber-band selection, all in viewBox-unit coordinates. */
 interface DragRect {
   startX: number;
   startY: number;
@@ -72,13 +56,6 @@ interface DragRect {
 
 const MIN_DRAG_PX = 6;
 
-/**
- * Step-vs-loss chart for one or more training jobs. Hand-rolled SVG so we
- * don't pull a charting library into the bundle just for this. Supports
- * linear / log-y toggle, per-epoch dividers on the primary series, hover
- * crosshair with a per-series tooltip, fullscreen toggle, and overlaying
- * additional jobs by hash via a search box.
- */
 export function LossChart({ history, jobHash, maxSteps }: LossChartProps) {
   const [logY, setLogY] = useState(false);
   const [hoverFrac, setHoverFrac] = useState<number | null>(null);
@@ -97,8 +74,6 @@ export function LossChart({ history, jobHash, maxSteps }: LossChartProps) {
     writeJson(SMOOTH_KEY, smoothing);
   }, [smoothing]);
 
-  // Escape exits fullscreen. Registered only when actually in fullscreen so
-  // the global handler doesn't intercept Escape elsewhere on the page.
   useEffect(() => {
     if (!fullscreen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -108,14 +83,8 @@ export function LossChart({ history, jobHash, maxSteps }: LossChartProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [fullscreen]);
 
-  // Model list is used to resolve typed prefixes to full hashes. It's a
-  // cheap query — already polled by /train so this is a cache hit in the
-  // common case where the user came from /train.
   const modelList = useModelList();
 
-  // Each compared hash gets its own query, keyed identically to useTrainingJob
-  // so the cache is shared with /train/{hash} navigation. We don't poll as
-  // aggressively as the primary view — the user is comparing, not running.
   const compareQueries = useQueries({
     queries: compareHashes.map((hash) => ({
       queryKey: ["training-job", hash],
@@ -157,9 +126,6 @@ export function LossChart({ history, jobHash, maxSteps }: LossChartProps) {
     return [primary, ...compares];
   }, [history, jobHash, compareHashes, compareQueries]);
 
-  // Geometry — bigger plot area when fullscreen so labels and gridlines
-  // have room to breathe. Tracked in viewBox units; the SVG itself scales
-  // via CSS to whatever container size it lands in.
   const dims = fullscreen
     ? { width: 1600, height: 800, padL: 60, padR: 24, padT: 16, padB: 40 }
     : { width: 800, height: 240, padL: 40, padR: 8, padT: 8, padB: 24 };
@@ -186,9 +152,6 @@ export function LossChart({ history, jobHash, maxSteps }: LossChartProps) {
     dims.padL +
     (xMax === xMin ? 0 : ((step - xMin) / (xMax - xMin)) * plotW);
 
-  // Pixel/viewbox <-> data conversions, needed for drag-to-zoom. Y goes via
-  // the same transform the chart uses (log10 if logY), so a y-range selected
-  // on a log axis stays meaningful when toggling back to linear.
   const xFromViewbox = (vx: number) =>
     xMin + clamp((vx - dims.padL) / plotW, 0, 1) * (xMax - xMin);
   const yFromViewbox = (vy: number) => {
@@ -225,9 +188,6 @@ export function LossChart({ history, jobHash, maxSteps }: LossChartProps) {
     setDrag(null);
   };
 
-  // Resolve a typed prefix to a full hash. Returns null if ambiguous or
-  // not found. 64-char hex inputs are accepted as-is (the server will
-  // 404 if the directory doesn't exist).
   const resolveHash = (raw: string): string | null => {
     const cleaned = raw.trim().toLowerCase();
     if (!cleaned) return null;
@@ -274,8 +234,6 @@ export function LossChart({ history, jobHash, maxSteps }: LossChartProps) {
     setCompareHashes((prev) => prev.filter((h) => h !== hash));
   };
 
-  // Empty state when the *primary* has nothing yet — but if there are
-  // compare series with data we still want to render those.
   const totalSamples = series.reduce((n, s) => n + s.history.length, 0);
   if (history.length < 2 && compareHashes.length === 0) {
     return (
@@ -315,9 +273,6 @@ export function LossChart({ history, jobHash, maxSteps }: LossChartProps) {
       ? Math.round(xMin + hoverFrac * (xMax - xMin))
       : null;
 
-  // Per-series value at the hovered step — picks the closest history point
-  // by step distance (no interpolation; the dataset is dense enough that
-  // step gaps under the cursor look natural).
   const hoverReadout =
     hoveredStep !== null
       ? series
@@ -385,21 +340,13 @@ export function LossChart({ history, jobHash, maxSteps }: LossChartProps) {
           )}
           preserveAspectRatio={fullscreen ? "none" : "xMidYMid meet"}
           onPointerDown={(e) => {
-            // Left button only (mouse) / primary contact (touch+pen). Right
-            // button has e.button=2; touch/pen report 0 for the primary
-            // contact too, so this still works there.
             if (e.button !== 0) return;
             const { vx, vy } = eventToViewbox(e);
             if (!insidePlot(vx, vy)) return;
             e.preventDefault();
-            // Capture the pointer so move/up keep firing on the SVG even
-            // when the cursor leaves it. Without this the drag aborts as
-            // soon as the mouse crosses the chart border.
             try {
               e.currentTarget.setPointerCapture(e.pointerId);
             } catch {
-              // Capture can fail on browsers that don't grant it (rare);
-              // drag still works in-bounds, just not outside the SVG.
             }
             setDrag({ startX: vx, startY: vy, curX: vx, curY: vy });
             setHoverFrac(null);
@@ -421,12 +368,9 @@ export function LossChart({ history, jobHash, maxSteps }: LossChartProps) {
             try {
               e.currentTarget.releasePointerCapture(e.pointerId);
             } catch {
-              // Releasing a non-captured pointer throws; ignore.
             }
             if (!drag) return;
             const { vx, vy } = eventToViewbox(e);
-            // Clamp to the plot rect — releasing outside still applies the
-            // zoom to the in-bounds portion.
             const cvx = clamp(vx, dims.padL, dims.padL + plotW);
             const cvy = clamp(vy, dims.padT, dims.padT + plotH);
             const dx = Math.abs(cvx - drag.startX);
@@ -437,8 +381,6 @@ export function LossChart({ history, jobHash, maxSteps }: LossChartProps) {
             }
             const x1 = xFromViewbox(Math.min(drag.startX, cvx));
             const x2 = xFromViewbox(Math.max(drag.startX, cvx));
-            // y in viewbox grows DOWNWARD; loss grows upward in the plot, so
-            // the "top" pixel of the drag rect is the higher loss value.
             const yTop = yFromViewbox(Math.min(drag.startY, cvy));
             const yBot = yFromViewbox(Math.max(drag.startY, cvy));
             setViewDomain({
@@ -451,9 +393,6 @@ export function LossChart({ history, jobHash, maxSteps }: LossChartProps) {
           }}
           onPointerCancel={() => setDrag(null)}
           onPointerLeave={() => {
-            // Clear hover when the cursor leaves the SVG, but DO NOT cancel
-            // an in-flight drag — pointer capture keeps move/up flowing so
-            // the user can drag arbitrarily far outside the border.
             if (!drag) setHoverFrac(null);
           }}
           onDoubleClick={handleResetZoom}
@@ -476,7 +415,7 @@ export function LossChart({ history, jobHash, maxSteps }: LossChartProps) {
             fill="transparent"
           />
           <g clipPath={`url(#${clipId})`}>
-            {/* Epoch dividers, primary series only. */}
+            {                                          }
             {epochMarkers.map(({ step, epoch }) => (
               <line
                 key={`ep-${step}`}
@@ -491,8 +430,8 @@ export function LossChart({ history, jobHash, maxSteps }: LossChartProps) {
                 <title>epoch {epoch}</title>
               </line>
             ))}
-            {/* Raw paths. Dimmed when smoothing is on so the smoothed line
-                reads as primary; bold when smoothing=0. */}
+            {
+                                                           }
             {perSeriesPaths.map((paths, sIdx) =>
               paths.map((d, segIdx) => (
                 <path
@@ -521,7 +460,7 @@ export function LossChart({ history, jobHash, maxSteps }: LossChartProps) {
                   />
                 )),
               )}
-            {/* Hover crosshair — suppressed while a drag is in flight. */}
+            {                                                             }
             {!drag && hoveredStep !== null && (
               <line
                 x1={xForStep(hoveredStep)}
@@ -532,7 +471,7 @@ export function LossChart({ history, jobHash, maxSteps }: LossChartProps) {
                 strokeWidth={1}
               />
             )}
-            {/* Drag rectangle */}
+            {                    }
             {drag && (
               <rect
                 x={Math.min(drag.startX, drag.curX)}
@@ -548,7 +487,7 @@ export function LossChart({ history, jobHash, maxSteps }: LossChartProps) {
               />
             )}
           </g>
-          {/* Y axis labels */}
+          {                   }
           <text
             x={dims.padL - 4}
             y={dims.padT + 10}
@@ -569,7 +508,7 @@ export function LossChart({ history, jobHash, maxSteps }: LossChartProps) {
           >
             {formatLoss(loMin)}
           </text>
-          {/* X axis labels */}
+          {                   }
           <text
             x={dims.padL}
             y={dims.height - 6}
@@ -637,10 +576,6 @@ export function LossChart({ history, jobHash, maxSteps }: LossChartProps) {
 
   return <div className="flex flex-col gap-2">{chartBody}</div>;
 }
-
-// ---------------------------------------------------------------------------
-// Toolbar — single source of truth for the controls strip above the plot.
-// ---------------------------------------------------------------------------
 
 interface ToolbarProps {
   fullscreen: boolean;
@@ -715,9 +650,8 @@ function Toolbar({
             Add
           </button>
         </div>
-        {/* Right-side controls live in their own wrap group so when the row
-            is narrow (or "Reset zoom" appears, lengthening the strip) they
-            wrap together as a unit and Fullscreen stays visible. */}
+        {
+                                                                    }
         <div className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-2">
           <label
             className="flex items-center gap-2 text-xs text-fg-muted"
@@ -777,10 +711,6 @@ function Toolbar({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Legend — color swatches + removable chips for added compare series.
-// ---------------------------------------------------------------------------
-
 function Legend({
   series,
   onRemove,
@@ -825,10 +755,6 @@ function Legend({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Chart math.
-// ---------------------------------------------------------------------------
-
 interface ChartComputation {
   perSeriesPaths: string[][];
   perSeriesSmoothedPaths: string[][];
@@ -872,12 +798,9 @@ function computeChart(
   const plotW = dims.width - dims.padL - dims.padR;
   const plotH = dims.height - dims.padT - dims.padB;
 
-  // The y-axis uses log10 in log mode; non-positive losses drop out and
-  // become path gaps, matching the previous single-series behavior.
   const transform = (loss: number) =>
     logY ? (loss > 0 ? Math.log10(loss) : null) : loss;
 
-  // Compute smoothed series per primary/compare (independent EMA each).
   const perSeriesSmoothed: (number | null)[][] = series.map((s) =>
     applyEma(
       s.history.map((h) => h.loss),
@@ -885,8 +808,6 @@ function computeChart(
     ),
   );
 
-  // Auto-fit bounds (used when viewDomain is null, and as a fallback when a
-  // viewDomain is unusable — e.g. log-y with non-positive endpoints).
   const ys: number[] = [];
   series.forEach((s, idx) => {
     s.history.forEach((h) => {
@@ -907,8 +828,6 @@ function computeChart(
   const autoXMin = Math.min(...steps);
   const autoXMax = Math.max(...steps);
 
-  // Apply viewDomain override. xMin/xMax are in step space (raw); y bounds
-  // are in raw loss space and get transformed for the path math here.
   let xMin = autoXMin;
   let xMax = autoXMax;
   let loMinT = autoLoMinT;
@@ -918,8 +837,6 @@ function computeChart(
     xMax = viewDomain.xMax;
     const yMinT = transform(viewDomain.yMin);
     const yMaxT = transform(viewDomain.yMax);
-    // Fall back to auto bounds if the user selected a y range that becomes
-    // undefined under log (e.g. crossing zero). Better than NaN-ing the plot.
     if (yMinT !== null && yMaxT !== null && Number.isFinite(yMinT) && Number.isFinite(yMaxT)) {
       loMinT = Math.min(yMinT, yMaxT);
       loMaxT = Math.max(yMinT, yMaxT);
@@ -979,8 +896,6 @@ function computeChart(
         )
       : [];
 
-  // Epoch markers come from the primary series only. With multiple series
-  // they'd be ambiguous, and the primary is what the user is studying.
   const epochMarkers: { step: number; epoch: number }[] = [];
   const primary = series[0];
   let lastEpoch: number | undefined;
@@ -1007,18 +922,6 @@ function computeChart(
   };
 }
 
-/**
- * TensorBoard-style EMA with debiasing.
- *
- *   smoothed[i] = w * smoothed[i-1] + (1 - w) * raw[i]
- *
- * The naive recurrence is biased toward zero for the first few
- * samples (the seed is 0). TensorBoard divides by `1 - w^(i+1)` to
- * correct this — without it, smoothing=0.95 makes the curve start
- * visibly below the raw values. Non-finite samples produce a `null`
- * in the output but don't reset the state — same convention as the
- * raw-line gap handling.
- */
 export function applyEma(
   values: number[],
   weight: number,
@@ -1074,7 +977,6 @@ function formatLoss(v: number): string {
   return v.toFixed(4);
 }
 
-/** Step axis labels: round to integer; zoomed ranges produce fractional bounds. */
 function formatStep(v: number): string {
   if (!Number.isFinite(v)) return "—";
   return String(Math.round(v));

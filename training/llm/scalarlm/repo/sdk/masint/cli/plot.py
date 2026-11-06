@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 
 
 def plot(models, smooth, y_limit=None):
-
     if len(models) == 0:
         models = ["latest"]
 
@@ -24,8 +23,6 @@ def plot(models, smooth, y_limit=None):
     try:
         asyncio.run(plot_async(models=models, smooth=smooth, y_limit=y_limit))
     except Exception as e:
-        # `model_name` is scoped to plot_async's loop, not this frame; naming it
-        # here raised NameError and masked the underlying failure.
         logger.error(f"Failed to plot models {models}")
         logger.error(e)
         logger.error(traceback.format_exc())
@@ -36,7 +33,6 @@ async def plot_async(models, smooth, y_limit):
     model_names = []
 
     for model_name in models:
-
         status = await get_status(model_name)
 
         history = status["job_status"]["history"]
@@ -47,12 +43,10 @@ async def plot_async(models, smooth, y_limit):
         histories.append(history)
         model_names.append(model_name)
 
-    # Plot loss against step
     plot_loss(histories, model_names, smooth, y_limit)
 
 
 def plot_loss(histories, model_names, smooth, y_limit):
-
     for history, model_name in zip(histories, model_names):
         steps = [int(entry["step"]) for entry in history]
         losses = [float(entry["loss"]) for entry in history]
@@ -61,8 +55,6 @@ def plot_loss(histories, model_names, smooth, y_limit):
 
     model_name = model_names[0]
 
-    # The loop above already plotted every history with a label; re-plotting the
-    # last one here drew a duplicate, unlabeled line over it.
     plt.legend()
     plt.xlabel("Step")
     plt.ylabel("Loss")
@@ -84,7 +76,6 @@ def plot_loss(histories, model_names, smooth, y_limit):
 
 
 def apply_smoothing(data, smooth):
-    # Number of steps to smooth over
     smooth_steps = smooth
 
     smoothed_data = []

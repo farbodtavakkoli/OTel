@@ -144,11 +144,6 @@ export function TrainIndex() {
   );
 }
 
-/**
- * Always-on context strip showing what the user is submitting against.
- * Pulls from the same hooks as the Metrics page; on a fresh deployment it
- * tells you "0 GPUs / 0 nodes" loudly enough to investigate before submitting.
- */
 function ClusterStrip() {
   const gpuCount = useGpuCount();
   const nodeCount = useNodeCount();
@@ -297,8 +292,6 @@ function EmptyState({ hasAny }: { hasAny: boolean }) {
       </div>
     );
   }
-  // First-run state: explanation + copy-paste SDK snippet, side-by-side on
-  // wide screens so the wasted vertical space gets put to work.
   const externalUrl = computeExternalUrl();
   const snippet = sdkSnippet(externalUrl);
   return (

@@ -11,10 +11,9 @@ logger = logging.getLogger(__name__)
 
 
 def backfill_missing_weights(output_dir: Path, base_model_name: str) -> None:
-    # Read the canonical key list from HF (just the header, no weight download).
     try:
         hf_meta = get_safetensors_metadata(base_model_name)
-        hf_weight_map: dict[str, str] = hf_meta.weight_map  # key -> shard filename
+        hf_weight_map: dict[str, str] = hf_meta.weight_map
     except Exception as e:
         logger.warning(
             "Could not fetch safetensors metadata for %s: %s. "
@@ -24,7 +23,6 @@ def backfill_missing_weights(output_dir: Path, base_model_name: str) -> None:
         )
         return
 
-    # Read the keys already present in output_dir.
     saved_files = sorted(output_dir.glob("*.safetensors"))
     if not saved_files:
         logger.warning("No safetensors files found in %s; skipping backfill.", output_dir)
@@ -49,7 +47,6 @@ def backfill_missing_weights(output_dir: Path, base_model_name: str) -> None:
         missing_keys[:3],
     )
 
-    # Collect the missing tensors from the base model shards.
     needed_shards: dict[str, list[str]] = {}
     for key in missing_keys:
         shard = hf_weight_map[key]
@@ -63,7 +60,6 @@ def backfill_missing_weights(output_dir: Path, base_model_name: str) -> None:
                 missing_tensors[key] = f.get_tensor(key)
         logger.info("Loaded %d missing tensor(s) from %s", len(keys), shard_filename)
 
-    # Append to the first output shard; the index is not rebuilt (shard imbalance is fine).
     target_shard = saved_files[0]
     all_tensors: dict[str, "torch.Tensor"] = {}
     with safe_open(str(target_shard), framework="pt", device="cpu") as f:

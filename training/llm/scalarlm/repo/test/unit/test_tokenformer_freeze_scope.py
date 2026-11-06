@@ -1,15 +1,3 @@
-"""The trainer's unfreeze pass must stay inside the language model.
-
-`create_tokenformer_model` matches substrings like "q_proj" against the
-full parameter path. On a multimodal model that also fires inside the
-vision/audio towers, so their weights get trained and written into the
-checkpoint — where vLLM has no matching parameter and adapter activation
-fails.
-
-`is_non_language_path` is the shared definition of "not the language
-model"; the surgeon already used it to decide where to insert adapters.
-"""
-
 from __future__ import annotations
 
 import sys
@@ -17,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "ml"))
 
-from tokenformer.tokenformer_surgeon import is_non_language_path  # noqa: E402
+from tokenformer.tokenformer_surgeon import is_non_language_path
 
 
 def test_language_model_paths_are_trainable():
@@ -37,15 +25,10 @@ def test_vision_and_audio_towers_are_excluded():
 
 
 def test_matching_is_by_path_component_not_substring():
-    """A parameter whose name merely contains a tower name as part of a
-    longer component is still language-model state."""
     assert not is_non_language_path("model.layers.0.vision_tower_gate.weight")
 
 
 def test_unfreeze_list_would_otherwise_catch_the_vision_tower():
-    """Guards the reason this exists: the substring list in
-    create_tokenformer_model matches vision-tower parameters, so without
-    the path check they would be trained."""
     unfreeze_substrings = [
         "tokenformer", "q_proj", "k_proj", "v_proj", "norm", "rotary_emb",
         "embed_tokens", "input_layernorm", "post_attention_layernorm", "o_proj",

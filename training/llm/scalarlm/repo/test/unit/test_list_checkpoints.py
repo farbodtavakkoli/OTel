@@ -1,10 +1,3 @@
-"""
-Unit tests for cray_infra.training.list_checkpoints.
-
-Powers the checkpoint dropdown on the Publish-to-HF modal — every
-`checkpoint_<step>.pt` in the job directory, newest first.
-"""
-
 import os
 from unittest.mock import patch
 
@@ -53,7 +46,7 @@ def test_skips_non_checkpoint_files(job_dir, resolve):
     _touch(job_dir / "checkpoint_3.pt", 1_000_000.0)
     _touch(job_dir / "config.yaml", 1_000_000.0)
     _touch(job_dir / "checkpoint_3.txt", 1_000_000.0)
-    _touch(job_dir / "checkpoint_x.pt", 1_000_000.0)  # bad step
+    _touch(job_dir / "checkpoint_x.pt", 1_000_000.0)
     out = mod.list_checkpoints("deadbeef")
     assert [c["name"] for c in out["checkpoints"]] == ["checkpoint_3.pt"]
 

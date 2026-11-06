@@ -1,30 +1,13 @@
-
-/*
- * This file is a cgroup plugin for Slurm that can be used inside Docker containers.
- *
- * The plugin is replaces the cgroup plugin provided by Slurm. It allows running
- * inside Docker containers without privileged mode.
- *
- * The plugin is used to create cgroups for Slurm jobs and tasks, and to set resource limits
- * for them. The plugin is used to track resource usage of the tasks and jobs.
- * The plugin is used to track the OOM events and to kill the tasks that consume too much memory.
- *
- * Given that the plugin is used inside Docker containers, it is not possible to use the cgroup
- * filesystem to create cgroups. So most of the functionality is currently a no-op.
- */
-
 #ifndef CGROUP_DOCKER_C
 #define CGROUP_DOCKER_C
 
 #include <slurm/slurm.h>
 #include <slurm/slurm_errno.h>
 
-// Includes for pid_t
 #include <sys/types.h>
 
 #define USEC_IN_SEC 1000000
 
-/* Current supported cgroup controller types */
 typedef enum {
 	CG_TRACK,
 	CG_CPUS,
@@ -62,18 +45,14 @@ typedef struct {
 } gres_device_id_t;
 
 typedef struct {
-	/* extra info */
 	stepd_step_rec_t *step;
 	uint32_t taskid;
-	/* task cpuset */
 	char *allow_cores;
 	char *allow_mems;
 	size_t cores_size;
 	size_t mems_size;
-	/* task devices */
 	bool allow_device;
 	gres_device_id_t device;
-	/* jobacct memory */
 	uint64_t limit_in_bytes;
 	uint64_t soft_limit_in_bytes;
 	uint64_t memsw_limit_in_bytes;
@@ -189,7 +168,6 @@ extern cgroup_limits_t *cgroup_p_constrain_get(cgroup_ctl_type_t ctl,
 
 extern int cgroup_p_step_start_oom_mgr(void)
 {
-	/* Just return, no need to start anything. */
 	return SLURM_SUCCESS;
 }
 
@@ -204,7 +182,6 @@ extern int cgroup_p_task_addto(cgroup_ctl_type_t ctl, stepd_step_rec_t *step,
     return SLURM_SUCCESS;
 }
 
-
 extern cgroup_acct_t *cgroup_p_task_get_acct_data(uint32_t task_id)
 {
     return NULL;
@@ -212,7 +189,6 @@ extern cgroup_acct_t *cgroup_p_task_get_acct_data(uint32_t task_id)
 
 extern long int cgroup_p_get_acct_units(void)
 {
-	/* usec and ssec from cpuacct.stat are provided in micro-seconds. */
 	return (long int)USEC_IN_SEC;
 }
 

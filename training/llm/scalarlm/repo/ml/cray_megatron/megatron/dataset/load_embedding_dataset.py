@@ -1,4 +1,3 @@
-# The causal loader's generator is schema-agnostic, so it is reused here.
 from cray_megatron.megatron.dataset.load_language_model_dataset import (
     split_dataset_by_node,
     make_dataset_generator,
@@ -101,4 +100,3 @@ def get_tokenize_function_embedding(model, tokenizer):
         return tokens
 
     return tokenize
-

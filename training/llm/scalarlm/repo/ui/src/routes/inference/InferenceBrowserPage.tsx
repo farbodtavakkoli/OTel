@@ -2,13 +2,6 @@ import { PageHeader } from "@/components/PageHeader";
 
 import { InferenceRequestList } from "./InferenceRequestList";
 
-/**
- * Read-only browser over `upload_base_path/*.json` — see
- * docs/inference-request-browser.md.
- *
- * Live in-flight queue items are intentionally excluded from this
- * view; everything here is sourced from files already on disk.
- */
 export function InferenceBrowserPage() {
   return (
     <>

@@ -32,13 +32,11 @@ def load_distribution_strategy():
             logger.info("Using DDP distribution strategy.")
             strategy["strategy"] = DDP
         elif distribution_strategy == "pytorch_fsdp":
-            # Imported lazily: fully_shard needs torch >= 2.4, and this module must load on older torch.
             from cray_megatron.megatron.distribution.pytorch_fsdp import PyTorchFSDP
 
             logger.info("Using PyTorch FSDP2 distribution strategy.")
             strategy["strategy"] = PyTorchFSDP
         elif distribution_strategy == "fsdp":
-            # "fsdp" is JobConfig's default, so it must not be reported as unknown below.
             logger.info("Using SimpleFSDP distribution strategy.")
             strategy["strategy"] = SimpleFSDP
         else:
@@ -56,10 +54,8 @@ def load_distribution_strategy():
 
 def get_device():
     if torch.cuda.is_available():
-
         gpu_count = torch.cuda.device_count()
 
-        # Honour torchrun's LOCAL_RANK: it must match the device distributed.init() selected, or NCCL hangs.
         local_rank_env = os.environ.get("LOCAL_RANK")
         if local_rank_env is not None:
             try:
@@ -87,7 +83,6 @@ def apply_distribution_strategy(model_info):
 
 def get_local_rank_and_size():
     for rank_var, size_var in (
-        # torchrun first: it is authoritative, and OMPI_* may describe launcher processes, not workers.
         ("LOCAL_RANK", "LOCAL_WORLD_SIZE"),
         ("OMPI_COMM_WORLD_LOCAL_RANK", "OMPI_COMM_WORLD_LOCAL_SIZE"),
         ("SLURM_LOCALID", "SLURM_NTASKS_PER_NODE"),
@@ -97,7 +92,6 @@ def get_local_rank_and_size():
         if raw_rank is None or raw_size is None:
             continue
         try:
-            # SLURM_NTASKS_PER_NODE can be "2(x3)" on heterogeneous allocations.
             return int(raw_rank), int(str(raw_size).split("(")[0])
         except ValueError:
             continue
@@ -109,7 +103,6 @@ def select_gpu():
     rank = get_rank()
     gpu_count = torch.cuda.device_count()
 
-    # Single-node multi-GPU: ranks share a hostname, so the hostname-position scheme cannot separate them.
     local_rank, local_size = get_local_rank_and_size()
     if local_size > 1 and gpu_count > 0:
         gpu_index = local_rank % gpu_count
