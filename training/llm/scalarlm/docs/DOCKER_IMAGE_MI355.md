@@ -8,9 +8,7 @@ endpoint, with this folder's `ml/` recipe baked in. Client usage is in
 
 ## Image
 
-| Tag | Hardware |
-|---|---|
-| `farbodatdocker/scalarlm:mi355-v1.8` | AMD MI355X, gfx950 / ROCm 7.2.4, includes GRPO |
+See the [canonical hardware image table](../readme_scalarlm.md#server-image).
 
 58.9 GB on disk, ~15 GB compressed over the wire.
 

@@ -8,7 +8,7 @@ Training modes include `language_model`, `embedding` and `classification`, with
 LoRA, tokenformer or full parameter training on FSDP or DDP.
 
 > **The client and the server image must come from the same revision.** ScalarLM ships the
-> training code,this folder's `ml/` tree,from the client with every job, and that code
+> training code (this folder's `ml/` tree) from the client with every job, and that code
 > calls into the server's `cray_infra`. A client checkout newer or older than the running
 > image fails on the server (e.g. `ModuleNotFoundError: No module named
 > 'cray_infra.huggingface'`), after the job has already been accepted and given a
@@ -119,7 +119,9 @@ batches are logged with a traceback and skipped; results contain only successful
 
 GRPO needs the sibling folder `training/llm/grpo_common` from this repo; override its path with `GRPO_COMMON_DIR` (see `utils.py`). Copy `../grpo_common/.env.example` to `.env`, fill it in and `source` it first; it defines `REPO_ROOT`, `GRPO_SHARED_DIR`, `HF_CACHE_DIR`, `GRPO_ENV_DIR` and `HF_TOKEN`.
 
-The image must carry the GRPO mode (`mi355-v1.8`, `h100-v1.8` or newer). Check for `/app/cray/ml/cray_megatron/megatron/grpo_loss.py` inside it before trusting a tag.
+Use the [current hardware image](#server-image) and check for
+`/app/cray/ml/cray_megatron/megatron/grpo_loss.py` inside it.
+H100 GRPO optimizer updates remain unverified on the current image.
 
 ```bash
 python3 -m venv $GRPO_ENV_DIR/env_scalarlm
@@ -141,7 +143,7 @@ $GRPO_ENV_DIR/env_scalarlm/bin/python train_llm_grpo_scalarlm.py \
   --model $GRPO_SHARED_DIR/models/<org>--<name> --data ../grpo_common/data/grpo_prompts.jsonl \
   --output-dir <run> --steps 2 --warmup-steps 0 --prompt-batch-size 8 --group-size 4 --max-tokens 256 \
   --keep-zero-spread --start-server --render-nodes 0 1 \
-  --image farbodatdocker/scalarlm:h100-v2.3 --verify
+  --image farbodatdocker/scalarlm:h100-v2.5 --verify
 ```
 
 Use `--help` on each launcher for the complete argument reference. `--objective rft`
@@ -158,40 +160,41 @@ Notes:
 
 ## Server image
 
-One source tree and one `ml/` recipe. AMD and NVIDIA use `repo/Dockerfile`;
-H100 v2.4 uses `repo/Dockerfile.h100-v2.4`, and Trainium2 uses `repo/Dockerfile.trainium`.
-Runbooks: [AMD](docs/DOCKER_IMAGE_MI355.md), [NVIDIA](docs/DOCKER_IMAGE_H100.md)
-and [Trainium2](docs/DOCKER_IMAGE_TRAINIUM2.md).
+One source tree and one `ml/` recipe. Current local targets and preserved upstream references:
+Upstream hardware names and tags are reproduced from the original repository table,
+not independently verified architecture mappings or current release claims.
 
-| Tag | Hardware | Evidence |
+| Hardware | Image | Availability and evidence |
 |---|---|---|
-| `farbodatdocker/scalarlm:mi355-v1.8` | AMD MI355X, gfx950 / ROCm 7.2.4 | Documented in AMD runbook; not installed locally |
-| `farbodatdocker/scalarlm:h100-v2.2` | NVIDIA H100, sm_90 / CUDA 12.9 | Local image; older version |
-| `farbodatdocker/scalarlm:h100-v2.3` | NVIDIA H100, sm_90 / CUDA 12.9 | Local image and NVIDIA runbook |
-| `farbodatdocker/scalarlm:h100-v2.4` | NVIDIA H100, sm_90 / CUDA 12.9 | Local image and overlay recipe; existence is not runtime validation |
-| `farbodatdocker/scalarlm:trainium2-v1.0` | AWS Trainium2, Neuron | Build target only; no local image; awaiting Trainium agent validation |
+| AMD MI355X, gfx950 / ROCm 7.2.4 | `farbodatdocker/scalarlm:mi355-v1.8` | Documented in AMD runbook; not installed locally; registry availability not checked |
+| NVIDIA H100, sm_90 / CUDA 12.9 | `farbodatdocker/scalarlm:h100-v2.5` | Local only, not pushed; revision `f5fb130`. Seven GPU SFT completed 20 updates at 1024 context; checkpoints, full export and serving mechanics verified. GRPO has zero updates; endurance not run |
+| AWS Trainium2, Neuron | `farbodatdocker/scalarlm:trainium2-v1.0` | Build target only, not an available image; build and hardware validation pending |
+| NVIDIA BLACKWELL | `gdiamos/scalarlm-nvidia-12.0:v1.0` | Upstream reference `gdiamos/scalarlm-nvidia-12.0:latest`; availability and hardware validation not checked here |
+| NVIDIA HOPPER | `gdiamos/scalarlm-nvidia-8.0:v1.0` | Upstream reference `gdiamos/scalarlm-nvidia-8.0:latest`; availability and hardware validation not checked here |
+| NVIDIA HOPPER | `gdiamos/scalarlm-nvidia-8.6:v1.0` | Upstream reference `gdiamos/scalarlm-nvidia-8.6:latest`; availability and hardware validation not checked here |
+| NVIDIA ADA | `gdiamos/scalarlm-nvidia-7.5:1.0` | Upstream reference `gdiamos/scalarlm-nvidia-7.5:latest`; availability and hardware validation not checked here |
+| ARM | `gdiamos/scalarlm-arm:v1.0` | Upstream reference `gdiamos/scalarlm-arm:latest`; availability and hardware validation not checked here |
+| AMD MI300 | `gdiamos/scalarlm-amd-mi300:v1.0` | Upstream reference `gdiamos/scalarlm-amd-mi300:latest`; availability and hardware validation not checked here |
+| x86 CPU | `gdiamos/scalarlm-cpu:v1.0` | Upstream reference `gdiamos/scalarlm-cpu:latest`; availability and hardware validation not checked here |
 
-Registry availability was not checked. Inspect the source revision before submitting jobs.
-
-```bash
-docker pull farbodatdocker/scalarlm:mi355-v1.8     # AMD MI355X
-docker pull farbodatdocker/scalarlm:h100-v2.3      # NVIDIA H100
-```
-
-Build the GPU images from source with an explicit vendor and tag:
+Runbooks: [AMD](docs/DOCKER_IMAGE_MI355.md), [H100](docs/DOCKER_IMAGE_H100.md)
+and [Trainium2](docs/DOCKER_IMAGE_TRAINIUM2.md).
+H100 uses the exact overlay recipe `repo/Dockerfile.h100-v2.5`; follow its runbook,
+not the generic build helper, to reproduce this image. AMD uses `repo/Dockerfile`
+and Trainium2 uses `repo/Dockerfile.trainium`.
 
 ```bash
 cd docs
-TARGET=amd    IMAGE_TAG=mi355-v1.8 ./build_image.sh
-TARGET=nvidia IMAGE_TAG=h100-v2.3  ./build_image.sh
+TARGET=amd IMAGE_TAG=mi355-v1.8 ./build_image.sh
+TARGET=nvidia IMAGE_TAG=h100-custom ./build_image.sh
 ```
 
-`h100-v2.3` adds over `h100-v2.2`: `hf_xet` pinned in the trainer requirements, no false `Error loading job status`
-line when a new job starts, and a clean `Using device cuda:N` log line.
+The generic NVIDIA build uses `repo/Dockerfile`, not the verified v2.5 overlay.
+Give it its own tag and acceptance results; see the H100 runbook for build variants.
 
-Read an image's source revision from its `org.opencontainers.image.revision` label with
-`docker inspect`; do not infer it from the tag. GPU images start the server by default;
-passing a script overrides startup.
+Read the source revision with `docker inspect`; do not infer it from the tag.
+H100 must be built locally or published by the owner before a remote deployment can use it.
+GPU images start the server by default; passing a script overrides startup.
 
 **NVIDIA H100:**
 
@@ -201,7 +204,7 @@ docker run -d --name scalarlm --gpus '"device=0"' --ipc host --shm-size=64g \
   -e SCALARLM_MAX_GPUS_PER_NODE=8 \
   --cap-add SYS_PTRACE -p 8000:8000 -p 8001:8001 \
   -v /path/to/hf-cache:/root/.cache/huggingface \
-  farbodatdocker/scalarlm:h100-v2.3
+  farbodatdocker/scalarlm:h100-v2.5
 # curl http://localhost:8000/v1/health -> {"api":"up","vllm":"up","all":"up"}
 ```
 

@@ -4,6 +4,7 @@ Status: recipe documentation only. No Trainium image was found in the local Dock
 Registry availability, build success and all runtime behavior remain unverified, awaiting
 the Trainium agent. The earlier README's Gemma4 test claim is not acceptance evidence.
 Client setup and GPU workflows remain in [the client README](../readme_scalarlm.md).
+See the [canonical hardware image table](../readme_scalarlm.md#server-image).
 
 ## Recipe
 

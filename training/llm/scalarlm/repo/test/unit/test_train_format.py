@@ -17,6 +17,8 @@ def train(tmp_path_factory, monkeypatch_module):
     dotenv.load_dotenv = lambda *a, **k: None
     monkeypatch_module.setitem(sys.modules, "dotenv", dotenv)
     path = pathlib.Path(__file__).resolve().parents[3] / "train.py"
+    if not path.is_file():
+        pytest.skip("Client train.py is not shipped in the server image")
     spec = importlib.util.spec_from_file_location("scalarlm_train_under_test", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
