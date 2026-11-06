@@ -26,11 +26,13 @@ made contiguous here — callers that used to hand in CPU tensors keep working.
 import os
 import sys
 import time
+from datetime import timedelta
 
 import torch
 import torch.distributed as dist
 
 from cray_infra.training.train_debug import is_train_debug_enabled
+from cray_infra.util.get_job_config import get_job_config
 
 
 def _trace(msg: str) -> None:
@@ -101,7 +103,11 @@ def init():
     local_rank = _local_rank()
     torch.cuda.set_device(local_rank)
 
-    dist.init_process_group(backend="nccl")
+    job_config = get_job_config()
+    dist.init_process_group(
+        backend="nccl",
+        timeout=timedelta(seconds=job_config["process_group_timeout_seconds"]),
+    )
     _trace(
         f"init_process_group complete rank={dist.get_rank()} "
         f"world_size={dist.get_world_size()} backend={dist.get_backend()} "

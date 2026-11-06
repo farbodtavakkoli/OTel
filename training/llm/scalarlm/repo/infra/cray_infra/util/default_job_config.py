@@ -169,6 +169,7 @@ class JobConfig(BaseModel):
 
     # Distribution strategy
     distribution_strategy: str = "fsdp"
+    process_group_timeout_seconds: int = Field(default=3600, gt=0)
 
     # PyTorch FSDP2 (`distribution_strategy: pytorch_fsdp`) knobs. Every key MUST
     # be declared here or pydantic's extra="ignore" silently drops it.
