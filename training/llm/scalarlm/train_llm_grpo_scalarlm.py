@@ -16,19 +16,21 @@ TIMED = ("rollout_s", "judge_s", "train_step_s", "sync_s", "cycle_s", "tokens_pe
 def base_train_args(args, lora_regex: str) -> dict:
     common = {
         "gpus": args.trainer_gpus, "nodes": 1, "max_token_block_size": args.block_size,
-        "steps_per_checkpoint": 100000, "adapter_type": "lora",
-        "lora_config": {"r": args.lora_r, "lora_alpha": args.lora_alpha, "lora_dropout": 0.0,
-                        "target_modules": lora_regex, "use_rslora": False},
-        "seed": args.seed, "optimizer_type": "adamw", "gradient_checkpointing": True,
+        "steps_per_checkpoint": 100000, "adapter_type": args.adapter_type,
+        "training_storage_dtype": args.training_storage_dtype,
+        "seed": args.seed, "optimizer_type": args.optimizer_type, "gradient_checkpointing": True,
         "distribution_strategy": "pytorch_fsdp", "attn_implementation": "sdpa",
         "freeze_layer_keywords": utils.FROZEN_TOWERS,
         "cuda_memory_log_interval": 1, "timeout": 3600,
         "upload_to_hf": False, "hf_repo_id": "", "hf_upload_token": "", "custom_data_path": None,
     }
+    if args.adapter_type == "lora":
+        common["lora_config"] = {"r": args.lora_r, "lora_alpha": args.lora_alpha, "lora_dropout": 0.0,
+                                 "target_modules": lora_regex, "use_rslora": False}
     if args.objective == "grpo":
         return dict(common, training_mode="grpo", grpo={"clip_eps": args.clip_eps, "kl_beta": 0.0},
                     max_steps=args.ppo_epochs, learning_rate=args.learning_rate, batch_size=args.micro_batch,
-                    init_optimizer_from_adapter=not args.no_carry_optimizer)
+                    init_optimizer_from_adapter=args.adapter_type == "lora" and not args.no_carry_optimizer)
     return dict(common, training_mode="language_model", max_steps=args.rft_max_steps,
                 learning_rate=args.rft_learning_rate, batch_size=args.rft_batch_size,
                 gradient_accumulation_steps=args.rft_grad_accum)
@@ -97,8 +99,16 @@ def persistent_cycle(persistent, cyc, dataset, train_args, previous_job, t_submi
     return result["model_name"], train_step_s
 
 
+def validate_loop_adapter(args):
+    if args.adapter_type != "lora":
+        raise SystemExit(f"Full-parameter {args.objective.upper()} policy synchronization is unsupported in this loop; "
+                         "use --adapter-type lora or the standalone SFT driver for full-parameter SFT. "
+                         "--dry-run only prints the training configuration.")
+
+
 def run_loop(args, rows: list, turn_end: str, train_args_base: dict, want_lp: bool, run_dir: str,
              persistent=None) -> dict:
+    validate_loop_adapter(args)
     from judge_reward import RUBRIC_VERSION, score_batch
 
     G, n_cycles = args.group_size, args.warmup_steps + args.steps
@@ -250,9 +260,13 @@ def run_loop(args, rows: list, turn_end: str, train_args_base: dict, want_lp: bo
 
 def main():
     args = utils.parse_args()
+    if not args.dry_run:
+        validate_loop_adapter(args)
     run_dir = os.path.abspath(args.output_dir)
-    cfg = utils.load_model_config(args.model)
-    lora_regex = args.lora_regex or utils.default_lora_regex(cfg)
+    lora_regex = None
+    if args.adapter_type == "lora":
+        cfg = utils.load_model_config(args.model)
+        lora_regex = args.lora_regex or utils.default_lora_regex(cfg)
     train_args_base = base_train_args(args, lora_regex)
     need = (args.warmup_steps + args.steps) * args.prompt_batch_size
 
@@ -260,7 +274,7 @@ def main():
         print(json.dumps({"served_model": args.model_name, "objective": args.objective, "rows_needed": need,
                           "server_command": shlex.join(utils.server_cmd(args)) if args.start_server else f"existing server at {args.api_url}",
                           "jobs_dir": args.jobs_dir, "train_args": train_args_base, "output_dir": run_dir,
-                          "verify": args.verify}, indent=1))
+                          "policy_sync_supported": args.adapter_type == "lora", "verify": args.verify}, indent=1))
         return
 
     os.makedirs(os.path.join(run_dir, "rollouts"), exist_ok=True)

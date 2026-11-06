@@ -3,7 +3,7 @@ import torch
 
 def prepare_training_precision(model, storage_dtype="float32"):
     compute_dtype = next(
-        (p.dtype for p in model.parameters() if p.requires_grad and p.dtype == torch.bfloat16),
+        (p.dtype for p in model.parameters() if p.dtype == torch.bfloat16),
         None,
     )
     if storage_dtype not in ("float32", "bfloat16"):

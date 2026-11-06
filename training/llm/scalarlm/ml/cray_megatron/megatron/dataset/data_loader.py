@@ -28,11 +28,16 @@ class DataLoader:
         self.loader = self._make_loader()
 
     def _make_loader(self):
-        # Variable-length datasets (grpo) bring their own padding collate; packed ones stack.
+        job_config = get_job_config()
+        seed = job_config.get("seed")
+        if seed is None:
+            seed = job_config.get("sampling_seed", 42)
+        generator = torch.Generator().manual_seed(seed + self.epoch)
         return torch.utils.data.DataLoader(
             self.dataset,
             batch_size=self.batch_size,
             collate_fn=getattr(self.dataset, "collate_fn", None),
+            generator=generator,
         )
 
     def __iter__(self):
