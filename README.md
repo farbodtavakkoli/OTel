@@ -101,7 +101,7 @@ of the stack. Always use the exact install and launch commands from the folder y
 |   |-- ktransformers/        # CPU-GPU hybrid MoE serving
 |   |-- tensorrtllm/          # NVIDIA LLM serving
 |   |-- mlx/                  # Apple silicon (Metal) LLM, embedding, reranker
-|   `-- tenstorrent/          # Tenstorrent tt-inference-server LLM serving
+|   `-- tenstorrent/          # Tenstorrent tt-inference-server LLM and reranker serving
 `-- docs/                     # OTel paper, hardware platform notes (MI355X and H100), project coverage
 ```
 
@@ -132,7 +132,7 @@ the workloads beneath it.
 | KTransformers | MoE | No | No | CPU-GPU expert offload on supported systems |
 | TensorRT-LLM | Yes | No | No | NVIDIA-specific optimized serving |
 | MLX | Yes | Yes | Yes | Apple silicon: served LLM, in-process embedding and reranking |
-| Tenstorrent | Yes | No | No | Tenstorrent hardware through tt-inference-server (vLLM on TT-Metalium) |
+| Tenstorrent | Yes | No | Yes | Tenstorrent hardware through tt-inference-server (vLLM on TT-Metalium) |
 
 ## Hardware Support
 
