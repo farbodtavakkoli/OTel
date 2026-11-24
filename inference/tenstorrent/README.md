@@ -2,8 +2,8 @@
 
 Tenstorrent serves models through `tt-inference-server`, which runs vLLM with the
 `vllm-tt-plugin` on top of `TT-Metalium`. The endpoint is OpenAI compatible, so the clients
-here only need the standard library and `python-dotenv`. The shared setup lives here; the
-workload is documented in [`llm/`](llm/).
+here only need the standard library and `python-dotenv`. The shared setup lives here; each
+workload is documented in its own folder.
 
 **Hardware:** Tenstorrent Blackhole Galaxy (32 Blackhole chips, firmware bundle 19.16.0, KMD
 2.11.0), verified. Tenstorrent also documents Gemma 4 31B on P300X2 (BH QuietBox 2); we have
@@ -14,20 +14,22 @@ not verified it.
 | Leaf | Validated model | Port |
 |---|---|---|
 | [`llm/`](llm/) | `google/gemma-4-31B-it` on Blackhole Galaxy | 8000 |
+| [`embedding/`](embedding/) | `google/embeddinggemma-2` on Blackhole Galaxy, 32 chips (DP=32) | 8132 |
 
 The `llm/` clients work with any chat model the server runs; pass its name with `--model`.
 
 On Blackhole Galaxy, v0.25.0 serves Gemma 4 31B and 12B, Qwen3 32B and gpt-oss 120B. 
 
-Tenstorrent ships embedding models as tt-metal demos, not servers: `bge-m3` on tt-metal
-`main`, and Qwen3-Embedding 0.6B and 4B on branch `arg/embed-4b-pplx-qwen3`. On one
+Besides the served EmbeddingGemma-2 in [`embedding/`](embedding/), Tenstorrent ships embedding models as
+tt-metal demos: `bge-m3` on tt-metal `main`, and Qwen3-Embedding 0.6B and 4B on branch `arg/embed-4b-pplx-qwen3`. On one
 Blackhole chip at 512 tokens we measured 360 embeddings/s for bge-m3, 164 for Qwen3-Embedding-0.6B and 98 for Qwen3-Embedding-4B. Their mean cosine
 similarity to the Hugging Face embeddings was 0.938 and 0.949 on a 100 sample MTEB subset.
 
 ## What you install
 
 There is no pip wheel for this engine. One prebuilt Docker image holds the whole engine
-(TT-Metalium, vllm-tt-plugin and vLLM) and serves the model on port 8000. On the host you
+(TT-Metalium, vllm-tt-plugin and vLLM) and serves the model on port 8000. The embedding server has
+its own image and setup, in [`embedding/`](embedding/); the host setup below applies to it too. On the host you
 install only the Tenstorrent system software, Docker, and the small client venv below.
 
 Pinned stack, as deployed on our test system:
