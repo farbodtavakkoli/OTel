@@ -2,8 +2,8 @@
 
 Tenstorrent serves models through `tt-inference-server`, which runs vLLM with the
 `vllm-tt-plugin` on top of `TT-Metalium`. The endpoint is OpenAI compatible, so the clients
-here only need the standard library and `python-dotenv`. The shared setup lives here; the
-workload is documented in [`llm/`](llm/).
+here only need the standard library and `python-dotenv`. The shared setup lives here; each
+workload is documented in its own folder.
 
 **Hardware:** Tenstorrent Blackhole Galaxy (32 Blackhole chips, firmware bundle 19.16.0, KMD
 2.11.0), verified. Tenstorrent also documents Gemma 4 31B on P300X2 (BH QuietBox 2); we have
@@ -14,6 +14,7 @@ not verified it.
 | Leaf | Validated model | Port |
 |---|---|---|
 | [`llm/`](llm/) | `google/gemma-4-31B-it` on Blackhole Galaxy | 8000 |
+| [`reranker/`](reranker/) | `nvidia/llama-nemotron-rerank-1b-v2` on Blackhole Galaxy, 1 to 32 chips | 8000 |
 
 The `llm/` clients work with any chat model the server runs; pass its name with `--model`.
 
@@ -27,7 +28,8 @@ similarity to the Hugging Face embeddings was 0.938 and 0.949 on a 100 sample MT
 ## What you install
 
 There is no pip wheel for this engine. One prebuilt Docker image holds the whole engine
-(TT-Metalium, vllm-tt-plugin and vLLM) and serves the model on port 8000. On the host you
+(TT-Metalium, vllm-tt-plugin and vLLM) and serves the model on port 8000. The reranker has its
+own image and setup, in [`reranker/`](reranker/); the host setup below applies to it too. On the host you
 install only the Tenstorrent system software, Docker, and the small client venv below.
 
 Pinned stack, as deployed on our test system:
